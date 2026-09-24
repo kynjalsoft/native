@@ -220,6 +220,11 @@ export function AttachmentChips({ email, jmapAccountId, calendarBannerShown, tne
       <View style={styles.row}>
         {visible.map((item) => {
           const busy = busyKey === item.key;
+          const tapAction = mailAttachmentAction === 'download'
+            ? 'save'
+            : previewKindFor({ name: item.name, type: item.type }) !== 'none'
+              ? 'preview'
+              : 'open';
           return (
             <Pressable
               key={item.key}
@@ -227,12 +232,18 @@ export function AttachmentChips({ email, jmapAccountId, calendarBannerShown, tne
               onPress={() => onTap(item)}
               onLongPress={() => setSheetItem(item)}
               disabled={!!busyKey}
+              accessibilityRole="button"
               accessibilityLabel={item.name}
+              accessibilityHint={t(`email_viewer.attachment_actions.${tapAction}`, tapAction)}
             >
               {busy ? <ActivityIndicator size="small" color={c.textMuted} /> : <Paperclip size={14} color={c.textMuted} />}
               <Text style={styles.name} numberOfLines={1}>{item.name}</Text>
               <Text style={styles.size}>{formatSize(item.size)}</Text>
-              <Download size={14} color={c.textMuted} />
+              {tapAction === 'preview'
+                ? <Eye size={14} color={c.textMuted} />
+                : tapAction === 'open'
+                  ? <ExternalLink size={14} color={c.textMuted} />
+                  : <Download size={14} color={c.textMuted} />}
             </Pressable>
           );
         })}
