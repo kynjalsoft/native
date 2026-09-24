@@ -73,6 +73,8 @@ export default function LoginShell({
         <ScrollView
           style={styles.flex}
           contentContainerStyle={styles.content}
+          automaticallyAdjustContentInsets={false}
+          contentInsetAdjustmentBehavior="never"
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
