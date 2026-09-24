@@ -30,6 +30,10 @@ module.exports = {
     // mailto: lets Android/iOS offer the app for mail links in other apps.
     scheme: ['zyndmailpreview', 'mailto'],
     version: VERSION,
+    updates: {
+      url: 'https://u.expo.dev/654a0262-9785-4753-8f37-9b0947b537a2',
+      requestHeaders: { 'expo-channel-name': 'preview' },
+    },
     orientation: 'portrait',
     icon: './assets/icon.png',
     userInterfaceStyle: 'automatic',
@@ -44,6 +48,7 @@ module.exports = {
       },
     },
     ios: {
+      runtimeVersion: { policy: 'appVersion' },
       supportsTablet: true,
       bundleIdentifier: 'io.zyndpay.mail.preview',
       buildNumber: IOS_BUILD_NUMBER,
@@ -55,6 +60,7 @@ module.exports = {
       },
     },
     android: {
+      runtimeVersion: '1.0.0',
       adaptiveIcon: {
         foregroundImage: './assets/adaptive-icon.png',
         backgroundColor: '#FFFFFF',

@@ -152,6 +152,9 @@ about a day the first time and is usually waved through afterwards.
 - **Client certificates.** `BulwarkClientCertModule` is Android-only.
   `secureFetch` falls back to plain `fetch`, so cert-authenticated servers will
   not connect.
-- **OTA updates.** `expo-updates` is installed, but the separate EAS preview
-  runtime and channel have not been configured or verified. Native changes still
-  require a signed TestFlight build. Do not promise automatic OTA on this app yet.
+- **OTA updates.** The separate EAS preview project, runtime, and `preview`
+  channel are configured in source and generated `Expo.plist`. A signed build
+  and a preview-only update still need device verification. Native changes
+  require a new signed build and an incompatible runtime version; see
+  [zyndmail-preview-push.md](zyndmail-preview-push.md). Do not claim automatic
+  physical-device OTA acceptance yet.
