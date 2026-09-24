@@ -32,15 +32,6 @@ module.exports = {
     icon: './assets/icon.png',
     userInterfaceStyle: 'automatic',
     newArchEnabled: true,
-    splash: {
-      image: './assets/splash-icon.png',
-      resizeMode: 'contain',
-      backgroundColor: '#ffffff',
-      dark: {
-        image: './assets/splash-icon.png',
-        backgroundColor: '#09090b',
-      },
-    },
     ios: {
       runtimeVersion: { policy: 'appVersion' },
       supportsTablet: true,
@@ -70,6 +61,12 @@ module.exports = {
       favicon: './assets/favicon.png',
     },
     plugins: [
+      ['expo-splash-screen', {
+        image: './assets/splash-icon.png',
+        imageWidth: 200,
+        backgroundColor: '#ffffff',
+        dark: { image: './assets/splash-icon.png', backgroundColor: '#09090b' },
+      }],
       ['expo-build-properties', { ios: { deploymentTarget: '16.4', enableSceneSupport: true } }],
       'expo-secure-store',
       ['expo-local-authentication', { faceIDPermission: 'Use Face ID to unlock ZyndMail.' }],
