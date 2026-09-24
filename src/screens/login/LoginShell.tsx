@@ -11,6 +11,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { ArrowLeft, X } from 'lucide-react-native';
 import { spacing, componentSizes, type ThemePalette } from '../../theme/tokens';
 import { useColors } from '../../theme/colors';
+import { useLocaleStore } from '../../stores/locale-store';
 
 interface LoginShellProps {
   children: React.ReactNode;
@@ -32,6 +33,7 @@ export default function LoginShell({
 }: LoginShellProps) {
   const c = useColors();
   const styles = React.useMemo(() => makeStyles(c), [c]);
+  const t = useLocaleStore((s) => s.t);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -41,14 +43,26 @@ export default function LoginShell({
       >
         <View style={styles.header}>
           {onBack ? (
-            <Pressable onPress={onBack} hitSlop={12} style={styles.headerButton}>
+            <Pressable
+              onPress={onBack}
+              hitSlop={12}
+              accessibilityRole="button"
+              accessibilityLabel={t('login.mobile.back', 'Go back')}
+              style={styles.headerButton}
+            >
               <ArrowLeft size={22} color={c.textSecondary} />
             </Pressable>
           ) : (
             <View style={styles.headerButton} />
           )}
           {onClose ? (
-            <Pressable onPress={onClose} hitSlop={12} style={styles.headerButton}>
+            <Pressable
+              onPress={onClose}
+              hitSlop={12}
+              accessibilityRole="button"
+              accessibilityLabel={t('login.mobile.close', 'Close sign-in')}
+              style={styles.headerButton}
+            >
               <X size={22} color={c.textSecondary} />
             </Pressable>
           ) : (
@@ -64,7 +78,6 @@ export default function LoginShell({
         >
           {children}
         </ScrollView>
-
       </KeyboardAvoidingView>
     </SafeAreaView>
   );

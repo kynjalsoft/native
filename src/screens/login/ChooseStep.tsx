@@ -143,7 +143,15 @@ export default function ChooseStep({
         ) : null}
       </View>
 
-      <Pressable onPress={onManualSetup} disabled={disabled} hitSlop={8} style={styles.manual}>
+      <Pressable
+        onPress={onManualSetup}
+        disabled={disabled}
+        hitSlop={8}
+        accessibilityRole="button"
+        accessibilityState={{ disabled }}
+        accessibilityLabel={t('login.mobile.manual', 'Enter server details manually')}
+        style={styles.manual}
+      >
         <Server size={14} color={c.textMuted} />
         <Text style={styles.manualText}>{t('login.mobile.manual', 'Enter server details manually')}</Text>
       </Pressable>
