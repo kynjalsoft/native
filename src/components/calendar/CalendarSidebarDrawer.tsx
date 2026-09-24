@@ -3,7 +3,6 @@ import {
   Animated,
   Dimensions,
   Easing,
-  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -22,6 +21,7 @@ import { CALENDAR_COLOR_PALETTE, getCalendarColor } from '../../lib/calendar-uti
 import { BIRTHDAY_CALENDAR_ID } from '../../lib/birthday-calendar';
 import { isWritableCalendar } from '../../lib/calendar-editability';
 import { useLocaleStore } from '../../stores/locale-store';
+import { SafeAreaModal } from '../SafeAreaModal';
 
 interface CalendarSidebarDrawerProps {
   visible: boolean;
@@ -135,7 +135,7 @@ export function CalendarSidebarDrawer({
   };
 
   return (
-    <Modal
+    <SafeAreaModal
       visible={visible}
       transparent
       animationType="none"
@@ -209,7 +209,7 @@ export function CalendarSidebarDrawer({
           </ScrollView>
         </SafeAreaView>
       </Animated.View>
-    </Modal>
+    </SafeAreaModal>
   );
 }
 

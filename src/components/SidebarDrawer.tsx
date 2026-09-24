@@ -36,6 +36,7 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation/types';
 import type { Mailbox } from '../api/types';
+import { SafeAreaModal } from './SafeAreaModal';
 
 const CHEVRON_SLOT = 20;
 const INDENT_STEP = 12;
@@ -739,7 +740,7 @@ export default function SidebarDrawer({ visible, onClose }: SidebarDrawerProps) 
   const tagViewActive = !!filters.keyword;
 
   return (
-    <Modal
+    <SafeAreaModal
       visible={visible}
       transparent
       animationType="none"
@@ -1131,7 +1132,7 @@ export default function SidebarDrawer({ visible, onClose }: SidebarDrawerProps) 
           onClose={() => setPrompt(null)}
         />
       )}
-    </Modal>
+    </SafeAreaModal>
   );
 }
 
