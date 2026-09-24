@@ -1113,6 +1113,14 @@ export interface SendEmailOptions {
   accountId?: string;
 }
 
+/** A submission request may have reached the server even if its reply is incomplete. */
+export class SubmissionOutcomeUnknownError extends Error {
+  constructor() {
+    super('The submission outcome is unknown. Check Sent before sending again.');
+    this.name = 'SubmissionOutcomeUnknownError';
+  }
+}
+
 export async function sendEmail(
   email: OutgoingEmail,
   identityId: string,
@@ -1212,6 +1220,11 @@ export async function sendEmail(
       sendAt = created?.sendAt;
     }
   }
+
+  // A successful HTTP/JMAP envelope is not proof of a send. Conversely, an
+  // incomplete reply can mean the server accepted it but lost the result. Do
+  // not close the composer or invite a second submission in either case.
+  if (!emailId || !emailSubmissionId) throw new SubmissionOutcomeUnknownError();
 
   // The message is out (or scheduled). Ordinary accounts clean up the old
   // draft; company accounts retain it until the non-destructive draft-version

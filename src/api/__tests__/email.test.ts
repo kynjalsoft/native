@@ -334,6 +334,32 @@ describe('email operations', () => {
   });
 
   describe('sendEmail', () => {
+    it('does not report success when the server omits the submission result', async () => {
+      mockRequest.mockResolvedValue({ methodResponses: [
+        ['Email/set', { created: { draft: { id: 'e-new' } } }, '0'],
+        ['EmailSubmission/set', {}, '1'],
+      ] });
+
+      await expect(sendEmail(
+        { from: [{ email: 'me@example.com' }], to: [{ email: 'you@example.com' }], subject: 'Hello', textBody: 'Hi' },
+        'identity-1', 'sent-mb', undefined, { draftsMailboxId: 'drafts-mb' },
+      )).rejects.toThrow('submission outcome');
+      expect(mockRequest).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not report success when submission is acknowledged without the created message id', async () => {
+      mockRequest.mockResolvedValue({ methodResponses: [
+        ['Email/set', {}, '0'],
+        ['EmailSubmission/set', { created: { 'sub-1': { id: 's-1' } } }, '1'],
+      ] });
+
+      await expect(sendEmail(
+        { from: [{ email: 'me@example.com' }], to: [{ email: 'you@example.com' }], subject: 'Hello', textBody: 'Hi' },
+        'identity-1', 'sent-mb', undefined, { draftsMailboxId: 'drafts-mb' },
+      )).rejects.toThrow('submission outcome');
+      expect(mockRequest).toHaveBeenCalledTimes(1);
+    });
+
     it('does not attempt forbidden cleanup of a retained company draft after submission', async () => {
       (jmapClient as typeof jmapClient & { hasCompanyNoDeletePolicy: boolean }).hasCompanyNoDeletePolicy = true;
       mockRequest.mockResolvedValue({ methodResponses: [
