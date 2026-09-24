@@ -220,6 +220,9 @@ async function ensureFreshCredentials(
 interface AccountEntry {
   accountId: string;
   noDelete: boolean;
+  /** Detached credentials are rechecked before reusing a cached transport. */
+  authHeader?: string;
+  baseUrl?: string;
   transport: Transport;
   primaryJmapId: string;
   shared: { id: string; name: string }[];
@@ -251,7 +254,7 @@ function isLiveAccount(accountId: string): boolean {
 async function entryFor(accountId: string): Promise<AccountEntry> {
   const live = isLiveAccount(accountId);
   const cached = entries.get(accountId);
-  if (cached && cached.live === live && Date.now() - cached.discoveredAt < SESSION_CACHE_TTL_MS) {
+  if (live && cached?.live && Date.now() - cached.discoveredAt < SESSION_CACHE_TTL_MS) {
     return cached;
   }
 
@@ -271,10 +274,17 @@ async function entryFor(accountId: string): Promise<AccountEntry> {
   }
 
   let creds = await jmapClient.getStoredCredentials(accountId);
-  if (!creds) throw new Error('No stored credentials');
+  if (!creds) {
+    entries.delete(accountId);
+    throw new Error('No stored credentials');
+  }
   creds = await ensureFreshCredentials(accountId, creds);
   const baseUrl = creds.serverUrl.replace(/\/+$/, '');
   const authHeader = authHeaderFor(creds);
+  const sameCredentials = cached?.baseUrl === baseUrl && cached?.authHeader === authHeader;
+  if (cached && !cached.live && sameCredentials && Date.now() - cached.discoveredAt < SESSION_CACHE_TTL_MS) {
+    return cached;
+  }
 
   // Session discovery.
   const sessionRes = await fetchWithDeadline(`${baseUrl}/.well-known/jmap`, {
@@ -292,6 +302,8 @@ async function entryFor(accountId: string): Promise<AccountEntry> {
     accountId,
     noDelete: hasCompanyNoDeletePolicy(creds),
     live: false,
+    authHeader,
+    baseUrl,
     transport: {
       post: async (calls) => {
         try {
@@ -306,7 +318,7 @@ async function entryFor(accountId: string): Promise<AccountEntry> {
     primaryJmapId,
     shared: sharedMailAccountsOf(session, primaryJmapId),
     discoveredAt: Date.now(),
-    mailboxes: cached?.mailboxes ?? new Map(),
+    mailboxes: sameCredentials ? cached?.mailboxes ?? new Map() : new Map(),
   };
   entries.set(accountId, entry);
   return entry;

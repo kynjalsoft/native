@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { jmapClient, AuthenticationError, NetworkError } from '../api/jmap-client';
+import { resetUnifiedCache } from '../api/unified-inbox';
 import type { JMAPSession } from '../api/types';
 import { getIdentities } from '../api/identity';
 import { fetchPrincipal, isStalwartSupported } from '../api/account-security';
@@ -80,6 +81,7 @@ export interface AuthState {
 // the user is signing out of everything — we don't want stale snapshots
 // lingering on disk for accounts that no longer exist.
 function clearAllFeatureStores(): void {
+  resetUnifiedCache();
   useEmailStore.getState().clearAllAccounts();
   useContactsStore.getState().reset();
   useCalendarStore.getState().reset();
@@ -90,6 +92,7 @@ function clearAllFeatureStores(): void {
 // not yet per-account) contacts and calendar stores. Used by logout when
 // signing one account out while others remain.
 function clearAccountFeatureStores(accountId: string | null): void {
+  resetUnifiedCache(accountId ?? undefined);
   if (accountId) {
     useEmailStore.getState().removeAccount(accountId);
   } else {
@@ -237,6 +240,9 @@ function applyConnectedState(
   username: string,
   accountId: string,
 ): void {
+  // A new JMAP session can have different shared-account grants and mailbox
+  // rights even when the registry account id has not changed.
+  resetUnifiedCache(accountId);
   set({
     isAuthenticated: true,
     isLoading: false,
@@ -664,6 +670,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
     await revokeStoredRefreshToken(accountId);
     await jmapClient.clearAccountCredentials(accountId).catch(() => undefined);
+    resetUnifiedCache(accountId);
     useEmailStore.getState().removeAccount(accountId);
     accountStore.removeAccount(accountId);
   },
