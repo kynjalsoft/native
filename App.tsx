@@ -4,6 +4,7 @@ import { StatusBar } from 'expo-status-bar';
 import * as Notifications from 'expo-notifications';
 import * as Updates from 'expo-updates';
 import { useColorScheme } from 'react-native';
+import { initialWindowMetrics, SafeAreaProvider } from 'react-native-safe-area-context';
 import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator, type NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -54,6 +55,7 @@ import { useUpdatesStore } from './src/stores/updates-store';
 import { UpdateBanner } from './src/components/UpdateBanner';
 import { PushOnboardingPrompt } from './src/components/PushOnboardingPrompt';
 import { ToastHost } from './src/components/ToastHost';
+import { AdaptiveGlassSurface } from './src/components/AdaptiveGlassSurface';
 import { getEmails } from './src/api/email';
 import { handleDeepLink, parseDeepLink, shareToDeepLink, type DeepLink } from './src/navigation/linking';
 import { addShareListener, getInitialShare, shareAttachments } from './src/lib/share-intent';
@@ -156,13 +158,14 @@ function MainTabsNavigator({ navigation, onMailListBusyChange }: NativeStackScre
         tabBarActiveTintColor: c.text,
         tabBarInactiveTintColor: c.textSecondary,
         tabBarStyle: {
-          backgroundColor: c.background,
+          backgroundColor: 'transparent',
           borderTopColor: c.border,
           borderTopWidth: 1,
           elevation: 0,
           shadowOpacity: 0,
           shadowColor: 'transparent',
         },
+        tabBarBackground: () => <AdaptiveGlassSurface style={{ flex: 1 }} fallbackColor={c.background} />,
         tabBarLabelStyle: {
           fontSize: 10,
           fontWeight: '500',
@@ -257,7 +260,7 @@ function MainTabsNavigator({ navigation, onMailListBusyChange }: NativeStackScre
   );
 }
 
-export default function App() {
+function AppContent() {
   const { isUpdatePending } = Updates.useUpdates();
   const hasRestoredSession = useAuthStore((state) => state.hasRestoredSession);
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
@@ -781,6 +784,14 @@ export default function App() {
         </Stack.Screen>
       </Stack.Navigator>
     </NavigationContainer>
+  );
+}
+
+export default function App() {
+  return (
+    <SafeAreaProvider initialMetrics={initialWindowMetrics}>
+      <AppContent />
+    </SafeAreaProvider>
   );
 }
 

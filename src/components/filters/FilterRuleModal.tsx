@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, Pressable, Modal, Alert,
+  View, Text, StyleSheet, ScrollView, Pressable, Alert,
   KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -11,6 +11,7 @@ import { Select, ToggleSwitch } from '../settings/settings-section';
 import Input from '../Input';
 import Button from '../Button';
 import { useLocaleStore } from '../../stores/locale-store';
+import { SafeAreaModal } from '../SafeAreaModal';
 import { useKeywordsStore } from '../../stores/keywords-store';
 import { buildMailboxTree, type MailboxNode } from '../../lib/mailbox-tree';
 import { generateUUID } from '../../lib/uuid';
@@ -223,7 +224,7 @@ export function FilterRuleModal({ visible, rule, mailboxes, onSave, onClose }: F
   }, [name, conditions, actions, matchType, stopProcessing, rule, onSave, t]);
 
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose} statusBarTranslucent>
+    <SafeAreaModal visible={visible} animationType="slide" onRequestClose={onClose} statusBarTranslucent>
       <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
         <View style={styles.header}>
           <Pressable onPress={onClose} hitSlop={8} style={styles.headerClose}>
@@ -434,18 +435,17 @@ export function FilterRuleModal({ visible, rule, mailboxes, onSave, onClose }: F
               <ToggleSwitch checked={stopProcessing} onChange={setStopProcessing} />
             </View>
           </ScrollView>
+          <View style={styles.footer}>
+            <Button variant="outline" onPress={onClose}>
+              {t('settings.filters.cancel', 'Cancel')}
+            </Button>
+            <Button onPress={handleSave} disabled={!name.trim()}>
+              {t('settings.filters.save', 'Save')}
+            </Button>
+          </View>
         </KeyboardAvoidingView>
-
-        <View style={styles.footer}>
-          <Button variant="outline" onPress={onClose}>
-            {t('settings.filters.cancel', 'Cancel')}
-          </Button>
-          <Button onPress={handleSave} disabled={!name.trim()}>
-            {t('settings.filters.save', 'Save')}
-          </Button>
-        </View>
       </SafeAreaView>
-    </Modal>
+    </SafeAreaModal>
   );
 }
 

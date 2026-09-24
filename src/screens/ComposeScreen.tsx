@@ -4,6 +4,7 @@ import {
   Keyboard, Dimensions, Platform, ActivityIndicator, Alert, Modal, Switch,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { KeyboardSafeModal } from '../components/KeyboardSafeModal';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import {
   X, Send, Paperclip, ChevronDown, Bold, Italic, Underline, Strikethrough,
@@ -2374,7 +2375,7 @@ export default function ComposeScreen({ route, navigation }: Props) {
         </ScrollView>
       </View>
 
-      <Modal
+      <KeyboardSafeModal
         visible={linkPromptVisible}
         transparent
         animationType="fade"
@@ -2422,7 +2423,7 @@ export default function ComposeScreen({ route, navigation }: Props) {
             </View>
           </View>
         </View>
-      </Modal>
+      </KeyboardSafeModal>
 
       {/* Text colour palette */}
       <Modal visible={colorPickerOpen} transparent animationType="fade" onRequestClose={() => setColorPickerOpen(false)}>
@@ -2553,7 +2554,7 @@ export default function ComposeScreen({ route, navigation }: Props) {
       )}
 
       {/* Template placeholders */}
-      <Modal
+      <KeyboardSafeModal
         visible={!!placeholderPrompt}
         transparent
         animationType="fade"
@@ -2605,10 +2606,10 @@ export default function ComposeScreen({ route, navigation }: Props) {
             </View>
           </View>
         </View>
-      </Modal>
+      </KeyboardSafeModal>
 
       {/* From options: sub-address tag / From override */}
-      <Modal visible={fromOptionsOpen} transparent animationType="fade" onRequestClose={() => setFromOptionsOpen(false)}>
+      <KeyboardSafeModal visible={fromOptionsOpen} transparent animationType="fade" onRequestClose={() => setFromOptionsOpen(false)}>
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>{t('email_composer.from', 'From')}</Text>
@@ -2685,7 +2686,7 @@ export default function ComposeScreen({ route, navigation }: Props) {
             </View>
           </View>
         </View>
-      </Modal>
+      </KeyboardSafeModal>
 
       <TemplateSheet
         visible={templateSheetOpen}

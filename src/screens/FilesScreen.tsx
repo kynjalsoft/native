@@ -4,7 +4,8 @@ import {
   Alert,
   FlatList,
   Image,
-  Modal,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -15,6 +16,7 @@ import {
   TouchableWithoutFeedback,
   View,
 } from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ChevronLeft, FileText, Folder, FolderPlus, HardDrive, FileImage, FileVideo,
   FileAudio, FileArchive, FileSpreadsheet, FileCode2, LayoutGrid, List as ListIcon,
@@ -24,6 +26,7 @@ import {
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import JSZip from 'jszip';
+import { SafeAreaModal } from '../components/SafeAreaModal';
 
 // expo-document-picker is loaded lazily on first upload. Its native module
 // is registered at app launch via Expo autolinking; on builds that predate
@@ -973,7 +976,7 @@ export default function FilesScreen() {
   }
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       {renderHeader()}
       {body}
 
@@ -1082,7 +1085,7 @@ export default function FilesScreen() {
         onConfirm={() => void performDelete()}
         onCancel={() => setConfirmDelete(null)}
       />
-    </View>
+    </SafeAreaView>
   );
 }
 
@@ -1102,14 +1105,15 @@ function PromptModal(props: PromptModalProps) {
   const c = useColors();
   const styles = React.useMemo(() => makePromptStyles(c), [c]);
   return (
-    <Modal
+    <SafeAreaModal
       visible={props.visible}
       transparent
       animationType="fade"
       onRequestClose={props.onCancel}
     >
+      <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
       <TouchableWithoutFeedback onPress={props.onCancel}>
-        <View style={styles.backdrop}>
+        <KeyboardAvoidingView style={styles.backdrop} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <TouchableWithoutFeedback>
             <View style={styles.dialog}>
               <Text style={styles.title}>{props.title}</Text>
@@ -1137,9 +1141,10 @@ function PromptModal(props: PromptModalProps) {
               </View>
             </View>
           </TouchableWithoutFeedback>
-        </View>
+        </KeyboardAvoidingView>
       </TouchableWithoutFeedback>
-    </Modal>
+      </SafeAreaView>
+    </SafeAreaModal>
   );
 }
 
@@ -1162,6 +1167,7 @@ function ActionsSheet({
 }: ActionsSheetProps) {
   const c = useColors();
   const styles = React.useMemo(() => makeSheetStyles(c), [c]);
+  const insets = useSafeAreaInsets();
   if (!target) return null;
   const isDir = isFolder(target);
   // Owned nodes report full rights (or no myRights at all); shared-with-me
@@ -1170,11 +1176,11 @@ function ActionsSheet({
   const canShare = sharingEnabled && !target.isShared && (target.myRights?.mayShare ?? true);
   const modified = modifiedOf(target);
   return (
-    <Modal visible transparent animationType="slide" onRequestClose={onClose}>
+    <SafeAreaModal visible transparent animationType="slide" onRequestClose={onClose}>
       <TouchableWithoutFeedback onPress={onClose}>
         <View style={styles.backdrop}>
           <TouchableWithoutFeedback>
-            <View style={styles.sheet}>
+            <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, spacing.md) }]}>
               <Text style={styles.sheetTitle} numberOfLines={1}>
                 {target.displayName}
               </Text>
@@ -1231,7 +1237,7 @@ function ActionsSheet({
           </TouchableWithoutFeedback>
         </View>
       </TouchableWithoutFeedback>
-    </Modal>
+    </SafeAreaModal>
   );
 }
 
@@ -1250,6 +1256,7 @@ interface FolderPickerSheetProps {
 function FolderPickerSheet({ target, allNodes, rootLabel, t, onClose, onPick }: FolderPickerSheetProps) {
   const c = useColors();
   const styles = React.useMemo(() => makeSheetStyles(c), [c]);
+  const insets = useSafeAreaInsets();
   const options = useMemo(() => {
     if (!target) return [];
     const excluded = new Set<string>([target.id]);
@@ -1286,11 +1293,11 @@ function FolderPickerSheet({ target, allNodes, rootLabel, t, onClose, onPick }: 
   if (!target) return null;
   const currentParent = target.parentId ?? null;
   return (
-    <Modal visible transparent animationType="slide" onRequestClose={onClose}>
+    <SafeAreaModal visible transparent animationType="slide" onRequestClose={onClose}>
       <TouchableWithoutFeedback onPress={onClose}>
         <View style={styles.backdrop}>
           <TouchableWithoutFeedback>
-            <View style={styles.sheet}>
+            <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, spacing.md) }]}>
               <Text style={styles.sheetTitle} numberOfLines={1}>
                 {t('files.move_to', 'Move to…')} · {target.displayName}
               </Text>
@@ -1321,7 +1328,7 @@ function FolderPickerSheet({ target, allNodes, rootLabel, t, onClose, onPick }: 
           </TouchableWithoutFeedback>
         </View>
       </TouchableWithoutFeedback>
-    </Modal>
+    </SafeAreaModal>
   );
 }
 
@@ -1338,14 +1345,15 @@ interface SortSheetProps {
 function SortSheet({ visible, sortKey, sortDir, t, onClose, onChangeKey, onChangeDir }: SortSheetProps) {
   const c = useColors();
   const styles = React.useMemo(() => makeSheetStyles(c), [c]);
+  const insets = useSafeAreaInsets();
   if (!visible) return null;
   const keys: FilesSortKey[] = ['name', 'size', 'modified'];
   return (
-    <Modal visible transparent animationType="slide" onRequestClose={onClose}>
+    <SafeAreaModal visible transparent animationType="slide" onRequestClose={onClose}>
       <TouchableWithoutFeedback onPress={onClose}>
         <View style={styles.backdrop}>
           <TouchableWithoutFeedback>
-            <View style={styles.sheet}>
+            <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, spacing.md) }]}>
               <Text style={styles.sheetTitle}>{t('files.settings_default_sort', 'Sort')}</Text>
               {keys.map((k) => (
                 <Pressable key={k} style={styles.action} onPress={() => { onChangeKey(k); onClose(); }}>
@@ -1371,7 +1379,7 @@ function SortSheet({ visible, sortKey, sortDir, t, onClose, onChangeKey, onChang
           </TouchableWithoutFeedback>
         </View>
       </TouchableWithoutFeedback>
-    </Modal>
+    </SafeAreaModal>
   );
 }
 
@@ -1382,7 +1390,7 @@ function makeStyles(c: ThemePalette) {
       backgroundColor: c.background,
     },
     header: {
-      paddingTop: 60,
+      paddingTop: spacing.sm,
       paddingHorizontal: spacing.md,
       paddingBottom: spacing.sm,
       borderBottomWidth: 1,

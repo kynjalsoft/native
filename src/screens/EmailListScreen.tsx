@@ -15,6 +15,7 @@ import { spacing, radius, typography, componentSizes, type ThemePalette } from '
 import { useColors } from '../theme/colors';
 import { useTypography, useDensity } from '../theme/dynamic';
 import SidebarDrawer from '../components/SidebarDrawer';
+import { KeyboardSafeModal } from '../components/KeyboardSafeModal';
 import SenderAvatar from '../components/SenderAvatar';
 import { SwipeableRow } from '../components/SwipeableRow';
 import { MoveSheet } from '../components/MoveSheet';
@@ -1329,7 +1330,7 @@ export default function EmailListScreen({ onEmailPress, onComposePress, onIntera
         ]}
       />
 
-      <Modal
+      <KeyboardSafeModal
         visible={filterMenuOpen}
         transparent
         animationType="fade"
@@ -1513,7 +1514,7 @@ export default function EmailListScreen({ onEmailPress, onComposePress, onIntera
             </TouchableWithoutFeedback>
           </View>
         </TouchableWithoutFeedback>
-      </Modal>
+      </KeyboardSafeModal>
 
       {datePickerField !== null && (() => {
         const current = filters[datePickerField];

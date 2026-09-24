@@ -1,5 +1,5 @@
 <resources>
   <string name="app_name">ZyndMail Preview</string>
-  <string name="expo_runtime_version">0.1.62</string>
+  <string name="expo_runtime_version">0.1.63</string>
   <string name="expo_system_ui_user_interface_style" translatable="false">automatic</string>
 </resources>

@@ -1,6 +1,6 @@
 {
   "name": "bulwark-mobile",
-  "version": "0.1.62",
+  "version": "0.1.63",
   "license": "AGPL-3.0-only",
   "main": "index.ts",
   "scripts": {
@@ -34,6 +34,7 @@
     "expo-device": "~57.0.2",
     "expo-document-picker": "~57.0.2",
     "expo-file-system": "~57.0.7",
+    "expo-glass-effect": "~57.0.4",
     "expo-haptics": "~57.0.3",
     "expo-image-manipulator": "~57.0.19",
     "expo-image-picker": "~57.0.19",

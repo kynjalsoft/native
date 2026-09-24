@@ -1,7 +1,8 @@
 import React from 'react';
 import {
   ActivityIndicator,
-  Modal,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -10,6 +11,7 @@ import {
   TouchableWithoutFeedback,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Check } from 'lucide-react-native';
 import type { Calendar } from '../../api/types';
 import { radius, spacing, typography, type ThemePalette } from '../../theme/tokens';
@@ -17,6 +19,7 @@ import { useColors } from '../../theme/colors';
 import { useLocaleStore } from '../../stores/locale-store';
 import { CALENDAR_COLOR_PALETTE, getCalendarColor } from '../../lib/calendar-utils';
 import Button from '../Button';
+import { SafeAreaModal } from '../SafeAreaModal';
 
 export interface CalendarEditValues {
   name: string;
@@ -38,6 +41,7 @@ export function CalendarEditSheet({ visible, calendar, onSave, onClose }: Calend
   const c = useColors();
   const styles = React.useMemo(() => makeStyles(c), [c]);
   const t = useLocaleStore((s) => s.t);
+  const insets = useSafeAreaInsets();
   const [name, setName] = React.useState('');
   const [color, setColor] = React.useState<string>(CALENDAR_COLOR_PALETTE[0]);
   const [description, setDescription] = React.useState('');
@@ -69,11 +73,12 @@ export function CalendarEditSheet({ visible, calendar, onSave, onClose }: Calend
   };
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+    <SafeAreaModal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <TouchableWithoutFeedback onPress={onClose}>
         <View style={styles.backdrop}>
           <TouchableWithoutFeedback>
-            <View style={styles.sheet}>
+            <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, spacing.md) }]}>
               <Text style={styles.title}>
                 {calendar
                   ? t('calendar.management.edit_calendar', 'Edit calendar')
@@ -132,7 +137,8 @@ export function CalendarEditSheet({ visible, calendar, onSave, onClose }: Calend
           </TouchableWithoutFeedback>
         </View>
       </TouchableWithoutFeedback>
-    </Modal>
+      </KeyboardAvoidingView>
+    </SafeAreaModal>
   );
 }
 

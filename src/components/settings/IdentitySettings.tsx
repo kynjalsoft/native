@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -13,6 +12,7 @@ import {
 import { Plus, Star, Trash2, X } from 'lucide-react-native';
 import { SettingsSection } from './settings-section';
 import Button from '../Button';
+import { KeyboardSafeModal } from '../KeyboardSafeModal';
 import { typography, spacing, radius, type ThemePalette } from '../../theme/tokens';
 import { useColors } from '../../theme/colors';
 import { useSettingsStore } from '../../stores/settings-store';
@@ -298,7 +298,7 @@ export function IdentitySettings() {
         </Pressable>
       ))}
 
-      <Modal visible={!!editing} animationType="slide" transparent onRequestClose={closeEditor}>
+      <KeyboardSafeModal visible={!!editing} animationType="slide" transparent onRequestClose={closeEditor}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalSheet}>
             <View style={styles.modalHeader}>
@@ -395,7 +395,7 @@ export function IdentitySettings() {
             </View>
           </View>
         </View>
-      </Modal>
+      </KeyboardSafeModal>
     </SettingsSection>
   );
 }

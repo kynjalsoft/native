@@ -2,7 +2,8 @@ import React from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Modal,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -11,12 +12,14 @@ import {
   TouchableWithoutFeedback,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Trash2, UserPlus, Users } from 'lucide-react-native';
 import { getPrincipals, ownPrincipalId } from '../../api/files';
 import type { Calendar, CalendarRights, Principal } from '../../api/types';
 import { spacing, radius, typography, type ThemePalette } from '../../theme/tokens';
 import { useColors } from '../../theme/colors';
 import { useLocaleStore } from '../../stores/locale-store';
+import { SafeAreaModal } from '../SafeAreaModal';
 
 type RolePreset = 'freeBusy' | 'read' | 'readWrite' | 'manager';
 
@@ -71,6 +74,7 @@ export function CalendarShareSheet({ calendar, onShare, onClose }: CalendarShare
   const c = useColors();
   const styles = React.useMemo(() => makeStyles(c), [c]);
   const t = useLocaleStore((s) => s.t);
+  const insets = useSafeAreaInsets();
 
   const [principals, setPrincipals] = React.useState<Principal[]>([]);
   const [loading, setLoading] = React.useState(false);
@@ -151,11 +155,12 @@ export function CalendarShareSheet({ calendar, onShare, onClose }: CalendarShare
   };
 
   return (
-    <Modal visible transparent animationType="slide" onRequestClose={onClose}>
+    <SafeAreaModal visible transparent animationType="slide" onRequestClose={onClose}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <TouchableWithoutFeedback onPress={onClose}>
         <View style={styles.backdrop}>
           <TouchableWithoutFeedback>
-            <View style={styles.sheet}>
+            <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, spacing.md) }]}>
               <View style={styles.titleRow}>
                 <Users size={18} color={c.textMuted} />
                 <Text style={styles.title} numberOfLines={1}>
@@ -254,7 +259,8 @@ export function CalendarShareSheet({ calendar, onShare, onClose }: CalendarShare
           </TouchableWithoutFeedback>
         </View>
       </TouchableWithoutFeedback>
-    </Modal>
+      </KeyboardAvoidingView>
+    </SafeAreaModal>
   );
 }
 
