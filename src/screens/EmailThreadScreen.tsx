@@ -2,7 +2,7 @@ import React from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator,
   Modal, useWindowDimensions, Animated, Easing, Alert, FlatList,
-  KeyboardAvoidingView, Platform,
+  KeyboardAvoidingView, Keyboard, Platform,
 } from 'react-native';
 import type { NativeSyntheticEvent, NativeScrollEvent, StyleProp, ViewStyle } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -64,6 +64,12 @@ export default function EmailThreadScreen({ route, navigation }: Props) {
   const [activeEmailId, setActiveEmailId] = React.useState(route.params.emailId);
   const insets = useSafeAreaInsets();
   const { width: windowWidth } = useWindowDimensions();
+  const [keyboardVisible, setKeyboardVisible] = React.useState(Keyboard.isVisible());
+  React.useEffect(() => {
+    const shown = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', () => setKeyboardVisible(true));
+    const hidden = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide', () => setKeyboardVisible(false));
+    return () => { shown.remove(); hidden.remove(); };
+  }, []);
   const getEmailDetail = useEmailStore((s) => s.getEmailDetail);
   const markRead = useEmailStore((s) => s.markRead);
   const deleteEmail = useEmailStore((s) => s.deleteEmail);
@@ -430,7 +436,7 @@ export default function EmailThreadScreen({ route, navigation }: Props) {
   };
 
   // Reply / forward the given message (a thread card's own, or the active one).
-  const navigateCompose = React.useCallback((mode: 'reply' | 'replyAll' | 'forward', target?: Email) => {
+  const navigateCompose = React.useCallback((mode: 'reply' | 'replyAll' | 'forward', target?: Email, draft?: string) => {
     const source = target ?? email;
     if (!source) return;
     const from = source.from?.[0];
@@ -445,6 +451,7 @@ export default function EmailThreadScreen({ route, navigation }: Props) {
     const body = !quoteHtml || picked.text ? plainTextBody(source) : undefined;
     navigation.navigate('Compose', {
       mode,
+      prefillBody: draft,
       replyTo: {
         from: from ?? { email: '' },
         to: source.to,
@@ -563,7 +570,6 @@ export default function EmailThreadScreen({ route, navigation }: Props) {
     },
   };
 
-  const bottomBarHeight = 60 + Math.max(insets.bottom, 4);
   // Drop optional toolbar buttons on narrow screens.
   const showMarkUnread = windowWidth >= 340;
   const showArchive = windowWidth >= 400 && !!archiveMailbox;
@@ -658,11 +664,12 @@ export default function EmailThreadScreen({ route, navigation }: Props) {
             windowSize={3}
             initialNumToRender={1}
             maxToRenderPerBatch={2}
-            removeClippedSubviews
+            removeClippedSubviews={false}
+            keyboardShouldPersistTaps="handled"
             scrollEnabled={!pagerLocked}
             onMomentumScrollEnd={onMomentumEnd}
             renderItem={({ item, index }) => (
-              <View style={{ width: windowWidth }}>
+              <View style={{ width: windowWidth, flex: 1 }}>
                 <EmailPane
                   id={item.id}
                   threadIdHint={item.threadId}
@@ -682,7 +689,6 @@ export default function EmailThreadScreen({ route, navigation }: Props) {
                   ensureThread={ensureThread}
                   scheduleMarkRead={scheduleMarkRead}
                   styles={styles}
-                  bottomBarHeight={bottomBarHeight}
                   onToggleStar={toggleStarFor}
                   onAddressPress={setAddressSheet}
                   onEmailPatched={onEmailPatched}
@@ -695,7 +701,7 @@ export default function EmailThreadScreen({ route, navigation }: Props) {
           />
 
           {/* Bottom action bar */}
-          <View style={[styles.bottomBar, { paddingBottom: Math.max(insets.bottom, 4) }]}>
+          <View style={[styles.bottomBar, keyboardVisible && { display: 'none' }, { paddingBottom: Math.max(insets.bottom, 4) }]}>
             <BottomBarButton
               icon={<ChevronLeft size={20} color={c.textMuted} />}
               label={t('email_viewer.previous', 'Prev')}
@@ -818,11 +824,10 @@ interface EmailPaneProps {
   ensureThread: (threadId: string) => Promise<string[]>;
   scheduleMarkRead: (email: Email) => () => void;
   styles: ReturnType<typeof makeStyles>;
-  bottomBarHeight: number;
   onToggleStar: (email: Email) => void;
   onAddressPress: (address: EmailAddress) => void;
   onEmailPatched: (email: Email) => void;
-  onReply: (mode: 'reply' | 'replyAll' | 'forward', email: Email) => void;
+  onReply: (mode: 'reply' | 'replyAll' | 'forward', email: Email, draft?: string) => void;
   onSwipe: (direction: 'prev' | 'next') => void;
   onZoomChange: (zoom: { pinching: boolean; zoomed: boolean }) => void;
 }
@@ -833,7 +838,7 @@ interface EmailPaneProps {
 // swipe slides ready content into view.
 function EmailPane({
   id, threadIdHint, email, detailCache, threadIds, threading, jmapAccountId, currentMailboxRole,
-  identities, themeOverrides, ensureDetail, ensureThread, scheduleMarkRead, styles, bottomBarHeight,
+  identities, themeOverrides, ensureDetail, ensureThread, scheduleMarkRead, styles,
   onToggleStar, onAddressPress, onEmailPatched, onReply, onSwipe, onZoomChange,
 }: EmailPaneProps) {
   const c = useColors();
@@ -841,11 +846,6 @@ function EmailPane({
   // Freeze the pane's vertical scroll while a pinch is in flight so a two-
   // finger zoom can't fling the page.
   const [pinching, setPinching] = React.useState(false);
-  const scrollRef = React.useRef<ScrollView>(null);
-  const replyFocused = React.useRef(false);
-  const scrollToReply = React.useCallback(() => {
-    requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
-  }, []);
   // Which cards are open. Seeded once the conversation arrives: the opened
   // message, the newest one and every unread one, like the webmail.
   const [expanded, setExpanded] = React.useState<Set<string> | null>(null);
@@ -902,87 +902,83 @@ function EmailPane({
   const newest = conversation ? conversation[conversation.length - 1] : email;
 
   return (
-    <ScrollView
-      ref={scrollRef}
-      style={styles.scroll}
-      contentContainerStyle={{ paddingBottom: bottomBarHeight + spacing.lg }}
-      scrollEnabled={!pinching}
-      keyboardShouldPersistTaps="handled"
-      keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
-      onLayout={() => { if (replyFocused.current) scrollToReply(); }}
-      onContentSizeChange={() => { if (replyFocused.current) scrollToReply(); }}
-    >
-      {/* Subject block */}
-      <View style={styles.subjectBlock}>
-        <View style={styles.subjectRow}>
-          <Text style={styles.subjectText}>{subject}</Text>
-          {conversation ? (
-            <View style={styles.threadCount}>
-              <Text style={styles.threadCountText}>{conversation.length}</Text>
-            </View>
-          ) : (
-            <Pressable onPress={() => onToggleStar(email)} hitSlop={8} style={styles.subjectStar}>
-              <Star
-                size={18}
-                color={email.keywords?.$flagged ? c.starred : c.textMuted}
-                fill={email.keywords?.$flagged ? c.starred : 'transparent'}
-              />
-            </Pressable>
-          )}
+    <View style={styles.container}>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={{ paddingBottom: spacing.md }}
+        scrollEnabled={!pinching}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+      >
+        {/* Subject block */}
+        <View style={styles.subjectBlock}>
+          <View style={styles.subjectRow}>
+            <Text style={styles.subjectText}>{subject}</Text>
+            {conversation ? (
+              <View style={styles.threadCount}>
+                <Text style={styles.threadCountText}>{conversation.length}</Text>
+              </View>
+            ) : (
+              <Pressable onPress={() => onToggleStar(email)} hitSlop={8} style={styles.subjectStar}>
+                <Star
+                  size={18}
+                  color={email.keywords?.$flagged ? c.starred : c.textMuted}
+                  fill={email.keywords?.$flagged ? c.starred : 'transparent'}
+                />
+              </Pressable>
+            )}
+          </View>
         </View>
-      </View>
 
-      {threading && threadId && !threadIds && (
-        <View style={styles.threadLoading}>
-          <ActivityIndicator size="small" color={c.textMuted} />
-          <Text style={styles.threadLoadingText}>{t('threads.loading', 'Loading conversation...')}</Text>
-        </View>
-      )}
+        {threading && threadId && !threadIds && (
+          <View style={styles.threadLoading}>
+            <ActivityIndicator size="small" color={c.textMuted} />
+            <Text style={styles.threadLoadingText}>{t('threads.loading', 'Loading conversation...')}</Text>
+          </View>
+        )}
 
-      {conversation ? (
-        conversation.map((m) => (
-          <ThreadMessageCard
-            key={m.id}
-            email={m}
-            expanded={expanded?.has(m.id) ?? m.id === id}
-            onToggleExpanded={() => toggleCard(m.id)}
-            onReply={onReply}
+        {conversation ? (
+          conversation.map((m) => (
+            <ThreadMessageCard
+              key={m.id}
+              email={m}
+              expanded={expanded?.has(m.id) ?? m.id === id}
+              onToggleExpanded={() => toggleCard(m.id)}
+              onReply={onReply}
+              jmapAccountId={jmapAccountId}
+              identities={identities}
+              currentMailboxRole={currentMailboxRole}
+              themeOverride={themeOverrides[m.id] ?? null}
+              onSwipe={onSwipe}
+              onZoomChange={(z) => { setPinching(z.pinching); onZoomChange(z); }}
+              onToggleStar={onToggleStar}
+              onAddressPress={onAddressPress}
+              onEmailPatched={onEmailPatched}
+            />
+          ))
+        ) : (
+          <MessageContent
+            email={email}
             jmapAccountId={jmapAccountId}
             identities={identities}
             currentMailboxRole={currentMailboxRole}
-            themeOverride={themeOverrides[m.id] ?? null}
+            themeOverride={themeOverrides[email.id] ?? null}
             onSwipe={onSwipe}
             onZoomChange={(z) => { setPinching(z.pinching); onZoomChange(z); }}
-            onToggleStar={onToggleStar}
             onAddressPress={onAddressPress}
             onEmailPatched={onEmailPatched}
           />
-        ))
-      ) : (
-        <MessageContent
-          email={email}
-          jmapAccountId={jmapAccountId}
-          identities={identities}
-          currentMailboxRole={currentMailboxRole}
-          themeOverride={themeOverrides[email.id] ?? null}
-          onSwipe={onSwipe}
-          onZoomChange={(z) => { setPinching(z.pinching); onZoomChange(z); }}
-          onAddressPress={onAddressPress}
-          onEmailPatched={onEmailPatched}
-        />
-      )}
+        )}
 
+      </ScrollView>
+      {/* Keep the editor mounted outside the message scroller as the keyboard resizes it. */}
       <QuickReplyBox
         email={newest}
         jmapAccountId={jmapAccountId}
-        onMoreOptions={() => onReply('reply', newest)}
+        onMoreOptions={(draft) => onReply('reply', newest, draft)}
         onSent={onEmailPatched}
-        onFocusChange={(focused) => {
-          replyFocused.current = focused;
-          if (focused) scrollToReply();
-        }}
       />
-    </ScrollView>
+    </View>
   );
 }
 
@@ -1451,10 +1447,6 @@ function makeStyles(c: ThemePalette) {
 
   // Bottom bar
   bottomBar: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
     flexDirection: 'row',
     alignItems: 'stretch',
     backgroundColor: c.background,
