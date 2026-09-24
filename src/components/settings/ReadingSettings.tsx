@@ -18,8 +18,10 @@ import { useEmailStore } from '../../stores/email-store';
 import { archiveEmails, queryEmails, getEmails } from '../../api/email';
 import { ownMailboxes } from '../../lib/mailbox-tree';
 import { useLocaleStore } from '../../stores/locale-store';
+import { jmapClient } from '../../api/jmap-client';
 
 export function ReadingSettings() {
+  const companyNoDelete = jmapClient.hasCompanyNoDeletePolicy;
   const c = useColors();
   const styles = React.useMemo(() => makeStyles(c), [c]);
   const hydrated = useSettingsStore((s) => s.hydrated);
@@ -125,7 +127,7 @@ export function ReadingSettings() {
         />
       </SettingItem>
 
-      <View style={styles.group}>
+      {!companyNoDelete && <View style={styles.group}>
         <SettingItem label={t('settings.email_behavior.delete_action.label', "Delete Action")} description={t('settings.email_behavior.delete_action.description', "What happens when you delete an email")} noBorder />
         <Select
           value={deleteAction}
@@ -143,7 +145,7 @@ export function ReadingSettings() {
           </View>
         )}
         <View style={styles.divider} />
-      </View>
+      </View>}
 
       <View style={styles.group}>
         <SettingItem label={t('settings.email_behavior.archive_mode.label', "Archive in")} description={t('settings.email_behavior.archive_mode.description', "How to organize emails when archiving")} noBorder />
@@ -180,9 +182,11 @@ export function ReadingSettings() {
         <View style={styles.divider} />
       </View>
 
-      <SettingItem label={t('settings.email_behavior.permanently_delete_junk.label', "Permanently Delete Junk")} description={t('settings.email_behavior.permanently_delete_junk.description', "Permanently delete emails from the Junk/Spam folder instead of moving them to Trash")}>
-        <ToggleSwitch checked={permanentlyDeleteJunk} onChange={(v) => update('permanentlyDeleteJunk', v)} />
-      </SettingItem>
+      {!companyNoDelete && (
+        <SettingItem label={t('settings.email_behavior.permanently_delete_junk.label', "Permanently Delete Junk")} description={t('settings.email_behavior.permanently_delete_junk.description', "Permanently delete emails from the Junk/Spam folder instead of moving them to Trash")}>
+          <ToggleSwitch checked={permanentlyDeleteJunk} onChange={(v) => update('permanentlyDeleteJunk', v)} />
+        </SettingItem>
+      )}
 
       <SettingItem label={t('settings.email_behavior.show_preview.label', "Show Preview Text")} description={t('settings.email_behavior.show_preview.description', "Display email preview in the list")}>
         <ToggleSwitch checked={showPreview} onChange={(v) => update('showPreview', v)} />

@@ -7,6 +7,7 @@ import { toWildcardQuery } from '../lib/search-utils';
 import { sanitizeDisplayName } from '../lib/rfc5322-mailbox';
 import { generateMessageId, stripMessageIdBrackets } from '../lib/email-threading';
 import { buildMdnMessage, type MdnOptions } from '../lib/mdn';
+import { assertCompanyDeleteActionAllowed } from '../lib/zyndmail-mail-policy';
 
 export const EMAIL_LIST_PROPERTIES = [
   'id', 'threadId', 'mailboxIds', 'keywords', 'size',
@@ -706,6 +707,7 @@ export async function deleteEmails(
   accountIdOverride?: string,
 ): Promise<void> {
   if (ids.length === 0) return;
+  assertCompanyDeleteActionAllowed(jmapClient.hasCompanyNoDeletePolicy);
   if (currentMailboxId === trashMailboxId) {
     await destroyEmails(ids, accountIdOverride);
   } else {
@@ -1105,7 +1107,7 @@ export interface SendEmailOptions {
    * leaves it in Drafts instead of faking a sent copy.
    */
   draftsMailboxId?: string;
-  /** Previous draft version to destroy once the submission succeeded (#849). */
+  /** Previous draft version, retained when company no-delete policy applies. */
   draftId?: string;
   /** Submitting account (shared/group account); defaults to the primary. */
   accountId?: string;
@@ -1157,8 +1159,10 @@ export async function sendEmail(
   if (viaDrafts) {
     submissionArgs.onSuccessUpdateEmail = {
       '#sub-1': {
-        mailboxIds: { [sentMailboxId]: true },
+        [mailboxPointer(sentMailboxId)]: true,
+        [mailboxPointer(opts!.draftsMailboxId!)]: null,
         [keywordPointer('$draft')]: null,
+        [keywordPointer('$seen')]: true,
       },
     };
   }
@@ -1209,10 +1213,10 @@ export async function sendEmail(
     }
   }
 
-  // The message is out (or scheduled) - now it is safe to drop the old draft.
-  // A failure here leaves an orphan in Drafts, which is a filing warning
-  // rather than a failed send (#849).
-  if (opts?.draftId && emailSubmissionId) {
+  // The message is out (or scheduled). Ordinary accounts clean up the old
+  // draft; company accounts retain it until the non-destructive draft-version
+  // lifecycle is qualified. Never attempt a known-forbidden destroy there.
+  if (opts?.draftId && emailSubmissionId && !jmapClient.hasCompanyNoDeletePolicy) {
     try {
       await destroyEmails([opts.draftId], accountId);
     } catch (err) {
@@ -1230,11 +1234,10 @@ export async function sendEmail(
 }
 
 /**
- * Save a draft into the Drafts folder (`$draft` + `$seen`). When `previousDraftId`
- * is given it is destroyed only AFTER the replacement was created (#849): a
- * combined create+destroy would delete the last good copy when the create
- * fails (e.g. blobNotFound on a re-opened draft's attachments). Returns the
- * new draft id.
+ * Save a draft into the Drafts folder (`$draft` + `$seen`). Ordinary accounts
+ * destroy the previous draft only AFTER creating its replacement (#849).
+ * Company accounts retain prior versions under their no-delete policy until
+ * their non-destructive draft-version lifecycle is qualified.
  */
 export async function createDraft(
   email: OutgoingEmail,
@@ -1254,7 +1257,7 @@ export async function createDraft(
   if (notCreated) throw new Error(notCreated.description || notCreated.type || 'Failed to save draft');
   const id = body.created?.draft?.id as string | undefined;
   if (!id) throw new Error('Draft save returned no id');
-  if (previousDraftId && previousDraftId !== id) {
+  if (previousDraftId && previousDraftId !== id && !jmapClient.hasCompanyNoDeletePolicy) {
     try {
       await destroyEmails([previousDraftId], accountId);
     } catch (err) {

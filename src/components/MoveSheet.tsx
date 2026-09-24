@@ -14,6 +14,7 @@ import { useSheetDrag } from '../lib/use-sheet-drag';
 import { useLocaleStore } from '../stores/locale-store';
 import { localizeMailboxName } from '../lib/mailbox-label';
 import type { Mailbox } from '../api/types';
+import { jmapClient } from '../api/jmap-client';
 
 function moveTargetIcon(role: string | null | undefined, name: string): LucideIcon {
   const lower = name.toLowerCase();
@@ -38,6 +39,7 @@ interface MoveSheetProps {
 export function MoveSheet({
   visible, onClose, mailboxes, currentMailboxId, onPick,
 }: MoveSheetProps) {
+  const companyNoDelete = jmapClient.hasCompanyNoDeletePolicy;
   const c = useColors();
   const styles = React.useMemo(() => makeStyles(c), [c]);
   const t = useLocaleStore((s) => s.t);
@@ -105,7 +107,7 @@ export function MoveSheet({
             // Drafts is never a move target (the webmail excludes it too).
             const canTarget =
               !node.isAccountNode && node.myRights?.mayAddItems !== false && !isCurrent
-              && node.role !== 'drafts';
+              && node.role !== 'drafts' && !(companyNoDelete && node.role === 'trash');
             return (
               <Pressable
                 key={node.id}

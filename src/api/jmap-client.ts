@@ -16,6 +16,7 @@ import {
 } from '../lib/oauth';
 import type { CompanyIdentity } from '../lib/zyndmail-company';
 import { FirstTouchGate } from './first-touch-gate';
+import { assertMailDeletionAllowed, hasCompanyNoDeletePolicy } from '../lib/zyndmail-mail-policy';
 
 // Refresh OAuth access tokens this many ms before they actually expire so
 // in-flight requests don't race the expiry window.
@@ -145,6 +146,10 @@ export class JMAPClient {
 
   get serverUrl(): string | null {
     return this.credentials?.serverUrl ?? null;
+  }
+
+  get hasCompanyNoDeletePolicy(): boolean {
+    return hasCompanyNoDeletePolicy(this.credentials);
   }
 
   // True when the session authenticates with a Bearer token (OAuth handoff or
@@ -820,6 +825,7 @@ export class JMAPClient {
     using?: string[],
   ): Promise<JMAPResponseBody> {
     if (!this.session) throw new Error('Not connected');
+    assertMailDeletionAllowed(methodCalls, this.hasCompanyNoDeletePolicy);
 
     const body: JMAPRequestBody = {
       using: using ?? [CAPABILITIES.CORE, CAPABILITIES.MAIL],

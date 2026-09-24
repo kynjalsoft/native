@@ -261,7 +261,7 @@ export function FolderSettings() {
                 <Pressable
                   key={mb.id}
                   onPress={() => openEdit(mb)}
-                  onLongPress={() => !mb.role && confirmDelete(mb)}
+                  onLongPress={() => !jmapClient.hasCompanyNoDeletePolicy && !mb.role && confirmDelete(mb)}
                   style={({ pressed }) => [
                     styles.folderRow,
                     pressed && styles.folderRowPressed,
@@ -363,7 +363,7 @@ export function FolderSettings() {
                 </>
               )}
 
-              {editor?.kind === 'edit' && !editor.mailbox.role && (
+              {editor?.kind === 'edit' && !editor.mailbox.role && !jmapClient.hasCompanyNoDeletePolicy && (
                 <Pressable
                   onPress={() => {
                     closeEditor();

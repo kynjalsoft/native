@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('../jmap-client', () => ({
   jmapClient: {
     accountId: 'acc-1',
+    hasCompanyNoDeletePolicy: false,
     request: vi.fn(),
     getAccountName: vi.fn(() => 'me@example.com'),
     getSharedMailAccounts: vi.fn(() => []),
@@ -26,12 +27,14 @@ import {
   deleteEmail,
   searchEmails,
   sendEmail,
+  createDraft,
 } from '../email';
 
 const mockRequest = jmapClient.request as ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  (jmapClient as typeof jmapClient & { hasCompanyNoDeletePolicy: boolean }).hasCompanyNoDeletePolicy = false;
 });
 
 describe('email operations', () => {
@@ -331,6 +334,41 @@ describe('email operations', () => {
   });
 
   describe('sendEmail', () => {
+    it('does not attempt forbidden cleanup of a retained company draft after submission', async () => {
+      (jmapClient as typeof jmapClient & { hasCompanyNoDeletePolicy: boolean }).hasCompanyNoDeletePolicy = true;
+      mockRequest.mockResolvedValue({ methodResponses: [
+        ['Email/set', { created: { draft: { id: 'e-new' } } }, '0'],
+        ['EmailSubmission/set', { created: { 'sub-1': { id: 's-1' } } }, '1'],
+      ] });
+
+      const result = await sendEmail(
+        { from: [{ email: 'me@example.com' }], to: [{ email: 'you@example.com' }], subject: 'Hello', textBody: 'Hi' },
+        'identity-1', 'sent-mb', undefined, { draftsMailboxId: 'drafts-mb', draftId: 'old-draft' },
+      );
+
+      expect(result.emailSubmissionId).toBe('s-1');
+      expect(result.filingWarning).toBeUndefined();
+      expect(mockRequest).toHaveBeenCalledTimes(1);
+    });
+    it('files a submitted draft with patches that preserve unrelated mailbox membership', async () => {
+      mockRequest.mockResolvedValue({ methodResponses: [
+        ['Email/set', { created: { draft: { id: 'e-new' } } }, '0'],
+        ['EmailSubmission/set', { created: { 'sub-1': { id: 's-1' } } }, '1'],
+      ] });
+
+      await sendEmail(
+        { from: [{ email: 'me@example.com' }], to: [{ email: 'you@example.com' }], subject: 'Hello', textBody: 'Hi' },
+        'identity-1', 'sent~box', undefined, { draftsMailboxId: 'draft/box' },
+      );
+
+      const submission = mockRequest.mock.calls[0][0][1][1];
+      expect(submission.onSuccessUpdateEmail['#sub-1']).toEqual({
+        'mailboxIds/sent~0box': true,
+        'mailboxIds/draft~1box': null,
+        'keywords/$draft': null,
+        'keywords/$seen': true,
+      });
+    });
     it('should create email and submission in one request', async () => {
       mockRequest.mockResolvedValue({
         methodResponses: [
@@ -409,5 +447,20 @@ describe('email operations', () => {
       expect(emailCreate.references).toEqual(['msg-0@example.com', 'msg-1@example.com']);
       expect(emailCreate['header:In-Reply-To:asText']).toBeUndefined();
     });
+  });
+
+  it('retains earlier company draft versions without attempting destructive cleanup', async () => {
+    (jmapClient as typeof jmapClient & { hasCompanyNoDeletePolicy: boolean }).hasCompanyNoDeletePolicy = true;
+    mockRequest.mockResolvedValue({ methodResponses: [
+      ['Email/set', { created: { draft: { id: 'new-draft' } } }, '0'],
+    ] });
+
+    const id = await createDraft(
+      { from: [{ email: 'me@example.com' }], to: [], subject: 'Draft', textBody: 'Body' },
+      'drafts-mb', 'old-draft',
+    );
+
+    expect(id).toBe('new-draft');
+    expect(mockRequest).toHaveBeenCalledTimes(1);
   });
 });
