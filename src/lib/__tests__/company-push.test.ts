@@ -91,4 +91,19 @@ describe('company Expo push boundary', () => {
     expect((await registerCompanyPush(accountId, true)).status).toBe('UNAVAILABLE');
     expect(expoToken).not.toHaveBeenCalled();
   });
+
+  it('keeps opt-out local when relay revocation cannot authenticate', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true, status: 200, json: async () => ({ registrationId: 'registration-1' }),
+    })));
+    expect(await registerCompanyPush(accountId, true)).toEqual({ status: 'ACTIVE' });
+    const activeTokens = await session.getStoredOAuthTokens() as Record<string, unknown>;
+    session.getStoredOAuthTokens.mockResolvedValueOnce(activeTokens);
+    session.getStoredOAuthTokens.mockResolvedValueOnce({
+      ...activeTokens,
+      accessToken: 'expired-token',
+    });
+    expect(await revokeCompanyPush(accountId)).toBe(false);
+    expect(await registerCompanyPush(accountId, false)).toEqual({ status: 'OFF' });
+  });
 });

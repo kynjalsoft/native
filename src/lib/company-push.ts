@@ -245,9 +245,16 @@ async function registerCompanyPushInner(accountId: string, requestPermission: bo
 export async function revokeCompanyPush(accountId: string): Promise<boolean> {
   const pending = inFlight.get(accountId);
   if (pending) await pending.catch(() => undefined);
+  // A failed token refresh or relay outage must not silently re-enable push
+  // after opt-out. Only clear this account's preference, since a different
+  // staff account may be active on the same device.
+  const tokens = await jmapClient.getStoredOAuthTokens(accountId).catch(() => null);
+  if (tokens?.companyIdentity?.subject &&
+      await preferenceSubject() === tokens.companyIdentity.subject) {
+    await SecureStore.deleteItemAsync(PREFERENCE_KEY, storageOptions);
+  }
   const session = await storedCompanySession(accountId).catch(() => null);
   if (!session) return false;
-  await SecureStore.deleteItemAsync(PREFERENCE_KEY, storageOptions);
   const registration = await readRegistration();
   if (!registration || registration.subject !== session.subject) return true;
   try {
