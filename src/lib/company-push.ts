@@ -79,6 +79,8 @@ async function relayFetch(path: string, bearer: string, init: RequestInit): Prom
         'Content-Type': 'application/json',
       },
     });
+  } catch {
+    throw new Error(RELAY_UNAVAILABLE);
   } finally {
     clearTimeout(timeout);
   }

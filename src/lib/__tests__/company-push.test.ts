@@ -98,6 +98,17 @@ describe('company Expo push boundary', () => {
     expect(expoToken).not.toHaveBeenCalled();
   });
 
+  it('does not expose a native redirect exception if registration redirects after a healthy probe', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.endsWith('/v1/push-health')) return { ok: true, json: async () => ({ status: 'ok' }) };
+      throw new TypeError('FetchRedirectException: Redirect is not allowed');
+    }));
+    const result = await registerCompanyPush(accountId, true);
+    expect(result).toEqual({
+      status: 'ERROR', reason: 'Company mail alerts are temporarily unavailable. Please try again later.',
+    });
+  });
+
   it('rejects a non-company OAuth client before asking Expo for a token', async () => {
     session.getStoredOAuthTokens.mockResolvedValue({
       accessToken: jwt('staff-subject'), clientId: 'bulwark-webmail',
