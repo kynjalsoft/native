@@ -14,6 +14,9 @@ interface Props extends MessageContentProps {
   expanded: boolean;
   onToggleExpanded: () => void;
   onReply: (mode: 'reply' | 'replyAll' | 'forward', email: Email) => void;
+  position: number;
+  total: number;
+  folderLabel: string | null;
 }
 
 /**
@@ -21,7 +24,7 @@ interface Props extends MessageContentProps {
  * preview) that expands into the full message with its own reply / forward
  * actions - the webmail's thread-conversation-view cards.
  */
-export function ThreadMessageCard({ expanded, onToggleExpanded, onReply, ...content }: Props) {
+export function ThreadMessageCard({ expanded, onToggleExpanded, onReply, position, total, folderLabel, ...content }: Props) {
   const { email, onToggleStar } = content;
   const c = useColors();
   const styles = React.useMemo(() => makeStyles(c), [c]);
@@ -32,12 +35,14 @@ export function ThreadMessageCard({ expanded, onToggleExpanded, onReply, ...cont
   const unread = !email.keywords?.$seen;
   const starred = !!email.keywords?.$flagged;
   const date = emailDisplayDate(email);
+  const context = `${position} / ${total}${folderLabel ? ` · ${folderLabel}` : ''}`;
 
   if (!expanded) {
     return (
       <Pressable onPress={onToggleExpanded} style={({ pressed }) => [styles.collapsed, pressed && styles.pressed]}>
         <SenderAvatar name={from?.name} email={from?.email} size={componentSizes.avatarSm} />
         <View style={styles.collapsedInfo}>
+          <Text style={styles.context}>{context}</Text>
           <View style={styles.collapsedTop}>
             <Text style={[styles.collapsedName, unread && styles.unread]} numberOfLines={1}>
               {from?.name || from?.email || t('email_viewer.unknown_sender', 'Unknown')}
@@ -55,6 +60,7 @@ export function ThreadMessageCard({ expanded, onToggleExpanded, onReply, ...cont
   return (
     <View style={styles.expanded}>
       <Pressable onPress={onToggleExpanded} style={styles.collapseHandle} hitSlop={6} accessibilityLabel={t('threads.collapse', 'Collapse conversation')} />
+      <Text style={styles.expandedContext}>{context}</Text>
       <MessageContent {...content} compact={false} onToggleStar={onToggleStar} />
       <View style={styles.actions}>
         <Pressable style={styles.actionBtn} onPress={() => onReply('reply', email)} hitSlop={4}>
@@ -88,6 +94,7 @@ function makeStyles(c: ThemePalette) {
     },
     pressed: { backgroundColor: c.surfaceHover },
     collapsedInfo: { flex: 1, minWidth: 0 },
+    context: { ...typography.small, color: c.textMuted, marginBottom: 2 },
     collapsedTop: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
     collapsedName: { ...typography.body, color: c.text, flex: 1 },
     unread: { fontWeight: '700' },
@@ -102,6 +109,13 @@ function makeStyles(c: ThemePalette) {
       height: 6,
       backgroundColor: c.surfaceHover,
       borderRadius: radius.xs,
+    },
+    expandedContext: {
+      ...typography.small,
+      color: c.textSecondary,
+      fontWeight: '600',
+      paddingHorizontal: spacing.lg,
+      paddingTop: spacing.sm,
     },
     actions: {
       flexDirection: 'row',

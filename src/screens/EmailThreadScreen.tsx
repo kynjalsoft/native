@@ -34,8 +34,9 @@ import { useSheetDrag } from '../lib/use-sheet-drag';
 import { useLocaleStore } from '../stores/locale-store';
 import { findTrashMailbox, mailboxesForSiblingOf } from '../lib/mailbox-tree';
 import { pickEmailBody, plainTextBody } from '../lib/email-body';
+import { initiallyExpandedThreadMessage, threadMessageFolder } from '../lib/thread-presentation';
 import { buildForwardAsAttachmentPayload } from '../lib/forward-as-attachment';
-import type { Email, EmailAddress, Identity } from '../api/types';
+import type { Email, EmailAddress, Identity, Mailbox } from '../api/types';
 import type { RootStackParamList } from '../navigation/types';
 import { jmapClient } from '../api/jmap-client';
 
@@ -134,6 +135,12 @@ export default function EmailThreadScreen({ route, navigation }: Props) {
   const currentMailboxRole = React.useMemo(
     () => (currentMailboxId ? mailboxes.find((m) => m.id === currentMailboxId)?.role ?? null : null),
     [mailboxes, currentMailboxId],
+  );
+  const conversationMailboxes = React.useMemo(
+    () => mailboxes.filter((mailbox) => ownerAccountId
+      ? mailbox.accountId === ownerAccountId
+      : !mailbox.isShared),
+    [mailboxes, ownerAccountId],
   );
 
   const currentIndex = emails.findIndex((e) => e.id === activeEmailId);
@@ -684,6 +691,8 @@ export default function EmailThreadScreen({ route, navigation }: Props) {
                   threading={!disableThreading}
                   jmapAccountId={ownerAccountId}
                   currentMailboxRole={currentMailboxRole}
+                  mailboxes={conversationMailboxes}
+                  openedMailboxId={currentMailboxId}
                   identities={identities}
                   themeOverrides={themeOverrides}
                   ensureDetail={ensureDetail}
@@ -819,6 +828,8 @@ interface EmailPaneProps {
   threading: boolean;
   jmapAccountId?: string;
   currentMailboxRole: string | null;
+  mailboxes: Mailbox[];
+  openedMailboxId: string | null;
   identities: Identity[];
   themeOverrides: Record<string, 'light' | 'dark'>;
   ensureDetail: (id: string) => Promise<Email | null>;
@@ -834,11 +845,12 @@ interface EmailPaneProps {
 }
 
 // One swipeable page: the subject plus either a single message or the whole
-// conversation as collapsible cards (newest + unread expanded, mark-read on
-// expand). The pager keeps three of these mounted (prev, current, next) so a
+// conversation as collapsible cards (only the opened message expanded,
+// mark-read on expand). The pager keeps three of these mounted (prev, current, next) so a
 // swipe slides ready content into view.
 function EmailPane({
   id, threadIdHint, email, detailCache, threadIds, threading, jmapAccountId, currentMailboxRole,
+  mailboxes, openedMailboxId,
   identities, themeOverrides, ensureDetail, ensureThread, scheduleMarkRead, styles,
   onToggleStar, onAddressPress, onEmailPatched, onReply, onSwipe, onZoomChange,
 }: EmailPaneProps) {
@@ -847,8 +859,8 @@ function EmailPane({
   // Freeze the pane's vertical scroll while a pinch is in flight so a two-
   // finger zoom can't fling the page.
   const [pinching, setPinching] = React.useState(false);
-  // Which cards are open. Seeded once the conversation arrives: the opened
-  // message, the newest one and every unread one, like the webmail.
+  // Which cards are open. Seed only the message the user opened; expanding
+  // unread and Sent replies too made the Inbox conversation hard to follow.
   const [expanded, setExpanded] = React.useState<Set<string> | null>(null);
   const readTimers = React.useRef(new Map<string, () => void>()).current;
 
@@ -863,14 +875,8 @@ function EmailPane({
 
   React.useEffect(() => {
     if (!threadIds || expanded) return;
-    const seed = new Set<string>();
-    for (const mid of threadIds) {
-      const m = detailCache.get(mid);
-      if (m && !m.keywords?.$seen) seed.add(mid);
-    }
-    seed.add(id);
-    if (threadIds.length > 0) seed.add(threadIds[threadIds.length - 1]);
-    setExpanded(seed);
+    const messages = threadIds.map((mid) => detailCache.get(mid)).filter((m): m is Email => !!m);
+    setExpanded(new Set([initiallyExpandedThreadMessage(id, messages)]));
   }, [threadIds, expanded, detailCache, id]);
 
   React.useEffect(() => () => { readTimers.forEach((cancel) => cancel()); readTimers.clear(); }, [readTimers]);
@@ -915,11 +921,7 @@ function EmailPane({
         <View style={styles.subjectBlock}>
           <View style={styles.subjectRow}>
             <Text style={styles.subjectText}>{subject}</Text>
-            {conversation ? (
-              <View style={styles.threadCount}>
-                <Text style={styles.threadCountText}>{conversation.length}</Text>
-              </View>
-            ) : (
+            {!conversation && (
               <Pressable onPress={() => onToggleStar(email)} hitSlop={8} style={styles.subjectStar}>
                 <Star
                   size={18}
@@ -929,6 +931,11 @@ function EmailPane({
               </Pressable>
             )}
           </View>
+          {conversation && (
+            <Text style={styles.conversationSummary}>
+              {t('threads.messages_other', '{count} messages', { count: conversation.length })}
+            </Text>
+          )}
         </View>
 
         {threading && threadId && !threadIds && (
@@ -939,13 +946,16 @@ function EmailPane({
         )}
 
         {conversation ? (
-          conversation.map((m) => (
+          conversation.map((m, index) => (
             <ThreadMessageCard
               key={m.id}
               email={m}
               expanded={expanded?.has(m.id) ?? m.id === id}
               onToggleExpanded={() => toggleCard(m.id)}
               onReply={onReply}
+              position={index + 1}
+              total={conversation.length}
+              folderLabel={threadMessageFolder(m, mailboxes, openedMailboxId)}
               jmapAccountId={jmapAccountId}
               identities={identities}
               currentMailboxRole={currentMailboxRole}
@@ -1401,17 +1411,7 @@ function makeStyles(c: ThemePalette) {
     color: c.text,
     letterSpacing: -0.2,
   },
-  threadCount: {
-    minWidth: 24,
-    height: 24,
-    borderRadius: 12,
-    paddingHorizontal: 6,
-    backgroundColor: c.surfaceHover,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 2,
-  },
-  threadCountText: { ...typography.small, color: c.textSecondary, fontWeight: '600' },
+  conversationSummary: { ...typography.caption, color: c.textMuted, marginTop: spacing.xs },
   threadLoading: {
     flexDirection: 'row',
     alignItems: 'center',

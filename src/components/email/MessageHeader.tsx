@@ -84,8 +84,8 @@ function DetailRow({ label, value, styles, mono }: { label: string; value?: stri
 
 /**
  * Sender / recipient / date block of a message, with the collapsible
- * "Show details" panel (recipients & routing, authentication, identifiers,
- * mailing list, properties) the webmail viewer shows.
+ * "Show details" panel (recipients, authentication, mailing list and
+ * properties). Raw transport identifiers stay in View Source.
  */
 export function MessageHeader({ email, identities, headerInfo, onToggleStar, onAddressPress, compact }: Props) {
   const c = useColors();
@@ -268,12 +268,6 @@ export function MessageHeader({ email, identities, headerInfo, onToggleStar, onA
               />
             </>
           )}
-
-          <Text style={styles.detailsSection}>{t('email_viewer.details.identifiers_threading', 'Identifiers & threading')}</Text>
-          <DetailRow label={t('email_viewer.headers.message_id', 'Message ID')} value={info.messageId} styles={styles} mono />
-          <DetailRow label={t('email_viewer.details.in_reply_to', 'In-Reply-To')} value={email.inReplyTo?.join(', ')} styles={styles} mono />
-          <DetailRow label={t('email_viewer.details.references', 'References')} value={email.references?.length ? `${email.references.length}` : undefined} styles={styles} />
-          <DetailRow label={t('email_viewer.details.thread_id', 'Thread ID')} value={email.threadId} styles={styles} mono />
 
           {(info.list.listId || info.list.listHelp || info.list.listPost || info.list.listUnsubscribe) && (
             <>
