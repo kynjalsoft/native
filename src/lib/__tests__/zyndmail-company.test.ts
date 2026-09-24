@@ -21,6 +21,11 @@ const access = () => jwt({
 });
 
 describe('ZyndPay Staff mail boundary', () => {
+  it('uses a candidate client and callback distinct from the installed ZyndMail app', () => {
+    expect(ZYNDMAIL_COMPANY.clientId).toBe('zyndmail-native-preview');
+    expect(ZYNDMAIL_COMPANY.redirectUri).toBe('zyndmailpreview://oauth/callback');
+  });
+
   it('matches only the configured company mail origin', () => {
     expect(isCompanyMailServer('https://mail.zyndpay.io/')).toBe(true);
     expect(isCompanyMailServer('https://mail.zyndpay.io.evil.example')).toBe(false);
@@ -44,7 +49,8 @@ describe('ZyndPay Staff mail boundary', () => {
   });
 
   it('allows only the approved mobile or company webmail client at the pinned token endpoint', () => {
-    expect(() => validateCompanyTokenEndpoint(ZYNDMAIL_COMPANY.tokenEndpoint, 'zyndmail-mobile')).not.toThrow();
+    expect(() => validateCompanyTokenEndpoint(ZYNDMAIL_COMPANY.tokenEndpoint, ZYNDMAIL_COMPANY.clientId)).not.toThrow();
+    expect(() => validateCompanyTokenEndpoint(ZYNDMAIL_COMPANY.tokenEndpoint, 'zyndmail-mobile')).toThrow();
     expect(() => validateCompanyTokenEndpoint(ZYNDMAIL_COMPANY.tokenEndpoint, 'bulwark-webmail')).not.toThrow();
     expect(() => validateCompanyTokenEndpoint('https://evil.example/token', 'bulwark-webmail')).toThrow();
     expect(() => validateCompanyTokenEndpoint(ZYNDMAIL_COMPANY.tokenEndpoint, 'unapproved-client')).toThrow();

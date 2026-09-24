@@ -2,9 +2,9 @@
 export const ZYNDMAIL_COMPANY = {
   mailOrigin: 'https://mail.zyndpay.io',
   issuer: 'https://webmail.zyndpay.io/auth/realms/zyndpay-staff',
-  clientId: 'zyndmail-mobile',
+  clientId: 'zyndmail-native-preview',
   audience: 'stalwart',
-  redirectUri: 'zyndmail://oauth/callback',
+  redirectUri: 'zyndmailpreview://oauth/callback',
   tokenEndpoint: 'https://webmail.zyndpay.io/auth/realms/zyndpay-staff/protocol/openid-connect/token',
 } as const;
 
