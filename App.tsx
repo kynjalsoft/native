@@ -70,7 +70,7 @@ import { spacing, typography, type ThemePalette } from './src/theme/tokens';
 import { useColors } from './src/theme/colors';
 import { isCompanyMailServer } from './src/lib/zyndmail-company';
 import { canAutoReloadMailUpdate } from './src/lib/auto-ota';
-import { AppUnlockGate } from './src/lib/app-unlock-gate';
+import { AppUnlockGate, shouldHideMailForAppState } from './src/lib/app-unlock-gate';
 import {
   isCompanyPushPresentation,
   registerCompanyPush,
@@ -273,6 +273,7 @@ function AppContent() {
   const outboxFlushing = useOutboxStore((state) => state.flushing);
   const sendUndoPending = useSendUndoStore((state) => state.pending != null || state.busy);
   const [appIsActive, setAppIsActive] = React.useState(AppState.currentState === 'active');
+  const [privacyHidden, setPrivacyHidden] = React.useState(shouldHideMailForAppState(AppState.currentState));
   const [appLocked, setAppLocked] = React.useState(true);
   const [unlockBusy, setUnlockBusy] = React.useState(false);
   const [unlockError, setUnlockError] = React.useState<string | null>(null);
@@ -291,6 +292,7 @@ function AppContent() {
   const resolvedScheme: 'light' | 'dark' =
     themePref === 'system' ? (systemScheme === 'light' ? 'light' : 'dark') : themePref;
   const statusBarStyle: 'light' | 'dark' = resolvedScheme === 'light' ? 'dark' : 'light';
+  const appColors = useColors();
   // Persisted active account is the signal that the user was already signed
   // in on the previous launch. When present we render the main UI with the
   // cached mail list instead of the "Restoring session" spinner; the real
@@ -394,6 +396,7 @@ function AppContent() {
     // from the background, without making a network request on every focus.
     const subscription = AppState.addEventListener('change', (state) => {
       setAppIsActive(state === 'active');
+      setPrivacyHidden(shouldHideMailForAppState(state));
       if (state === 'background') {
         unlockGate.current.background();
         setAppLocked(true);
@@ -854,6 +857,10 @@ function AppContent() {
       onUnlock={() => { void unlockMailbox(); }}
       onSignOut={confirmSignOut}
     /> : null}
+    {privacyHidden ? <View
+      accessible={false}
+      style={[styles.privacyCover, { backgroundColor: appColors.background }]}
+    /> : null}
     </View>
   );
 }
@@ -867,6 +874,7 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
+  privacyCover: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, zIndex: 101 },
   loadingContainer: {
     flex: 1,
     alignItems: 'center',

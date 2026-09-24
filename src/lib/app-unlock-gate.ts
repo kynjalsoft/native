@@ -38,3 +38,8 @@ export class AppUnlockGate {
     this.verifiedWhileInactive = false;
   }
 }
+
+/** Hide private mail in the app-switcher snapshot, including Face ID's inactive interval. */
+export function shouldHideMailForAppState(appState: string | null): boolean {
+  return appState !== 'active';
+}

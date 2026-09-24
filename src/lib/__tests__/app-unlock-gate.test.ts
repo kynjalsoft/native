@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { AppUnlockGate } from '../app-unlock-gate';
+import { AppUnlockGate, shouldHideMailForAppState } from '../app-unlock-gate';
 
 describe('mailbox device unlock', () => {
+  it('covers the app-switcher snapshot without treating Face ID inactivity as a lock', () => {
+    expect(shouldHideMailForAppState('inactive')).toBe(true);
+    expect(shouldHideMailForAppState('background')).toBe(true);
+    expect(shouldHideMailForAppState('active')).toBe(false);
+  });
   it('waits for focus after Face ID makes iOS inactive', () => {
     const gate = new AppUnlockGate();
     const attempt = gate.begin();
