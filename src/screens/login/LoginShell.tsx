@@ -47,7 +47,7 @@ export default function LoginShell({
               onPress={onBack}
               hitSlop={12}
               accessibilityRole="button"
-              accessibilityLabel={t('login.mobile.back', 'Go back')}
+              accessibilityLabel={t('common.back', 'Back')}
               style={styles.headerButton}
             >
               <ArrowLeft size={22} color={c.textSecondary} />
@@ -60,7 +60,7 @@ export default function LoginShell({
               onPress={onClose}
               hitSlop={12}
               accessibilityRole="button"
-              accessibilityLabel={t('login.mobile.close', 'Close sign-in')}
+              accessibilityLabel={t('common.close', 'Close')}
               style={styles.headerButton}
             >
               <X size={22} color={c.textSecondary} />
