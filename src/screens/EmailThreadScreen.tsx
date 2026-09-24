@@ -665,7 +665,7 @@ export default function EmailThreadScreen({ route, navigation }: Props) {
             initialNumToRender={1}
             maxToRenderPerBatch={2}
             removeClippedSubviews={false}
-            keyboardShouldPersistTaps="always"
+            keyboardShouldPersistTaps="handled"
             keyboardDismissMode="none"
             scrollEnabled={!pagerLocked}
             onMomentumScrollEnd={onMomentumEnd}
@@ -908,7 +908,7 @@ function EmailPane({
         style={styles.scroll}
         contentContainerStyle={{ paddingBottom: spacing.md }}
         scrollEnabled={!pinching}
-        keyboardShouldPersistTaps="always"
+        keyboardShouldPersistTaps="handled"
         keyboardDismissMode="none"
       >
         {/* Subject block */}
