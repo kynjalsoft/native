@@ -1451,7 +1451,7 @@ function makeStyles(c: ThemePalette) {
 
   // Bottom sheet (More menu / Tag picker)
   sheetOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(0,0,0,0.5)',
   },
   sheetOverlayPress: { flex: 1 },

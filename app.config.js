@@ -58,7 +58,6 @@ module.exports = {
         foregroundImage: './assets/adaptive-icon.png',
         backgroundColor: '#09090b',
       },
-      edgeToEdgeEnabled: true,
       predictiveBackGestureEnabled: false,
       package: 'com.anonymous.bulwarkmobile',
       // The AsyncStorage database holds cached message bodies, the outbox and
@@ -71,7 +70,7 @@ module.exports = {
       favicon: './assets/favicon.png',
     },
     plugins: [
-      ['expo-build-properties', { ios: { deploymentTarget: '15.1' } }],
+      ['expo-build-properties', { ios: { deploymentTarget: '16.4', enableSceneSupport: true } }],
       'expo-secure-store',
       '@react-native-community/datetimepicker',
       'expo-localization',

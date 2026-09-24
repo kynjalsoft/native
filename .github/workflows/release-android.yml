@@ -30,7 +30,7 @@ jobs:
           java-version: 17
           cache: gradle
 
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4
 
       - name: Cache Android NDK / CMake
         uses: actions/cache@v4

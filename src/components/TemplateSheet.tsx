@@ -133,7 +133,7 @@ export function TemplateSheet({ visible, onClose, onPick }: TemplateSheetProps) 
 
 function makeStyles(c: ThemePalette) {
   return StyleSheet.create({
-    sheetOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.5)' },
+    sheetOverlay: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(0,0,0,0.5)' },
     sheetOverlayPress: { flex: 1 },
     sheet: {
       position: 'absolute',
