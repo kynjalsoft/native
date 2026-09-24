@@ -13,6 +13,7 @@ const INSTALLATION_KEY = 'zyndmail.production.push.installation.v1';
 const REGISTRATION_KEY = 'zyndmail.production.push.registration.v1';
 const PREFERENCE_KEY = 'zyndmail.production.push.preference.v1';
 const RENEW_AFTER_MS = 30 * 60_000;
+const RELAY_UNAVAILABLE = 'Company mail alerts are temporarily unavailable. Please try again later.';
 const OPAQUE_REFERENCE = /^[A-Za-z0-9_-]{22,256}$/;
 const storageOptions: SecureStore.SecureStoreOptions = {
   keychainAccessible: SecureStore.WHEN_PASSCODE_SET_THIS_DEVICE_ONLY,
@@ -78,6 +79,28 @@ async function relayFetch(path: string, bearer: string, init: RequestInit): Prom
         'Content-Type': 'application/json',
       },
     });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/** Probe the relay before asking for OS permission or an Expo token. Never follow
+ * a redirect from the mail host to webmail with a staff bearer token. */
+async function relayReady(): Promise<boolean> {
+  const origin = companyPushRelayOrigin();
+  if (!origin) return false;
+  const abort = new AbortController();
+  const timeout = setTimeout(() => abort.abort(), 5_000);
+  try {
+    const response = await fetch(`${origin}/v1/push-health`, {
+      method: 'GET', redirect: 'error', signal: abort.signal,
+      headers: { Accept: 'application/json' },
+    });
+    if (!response.ok) return false;
+    const body = await response.json() as Record<string, unknown>;
+    return body.status === 'ok';
+  } catch {
+    return false;
   } finally {
     clearTimeout(timeout);
   }
@@ -157,6 +180,7 @@ export async function companyPushStatus(accountId: string): Promise<CompanyPushS
   if (registration && registration.subject !== session.subject) {
     return { status: 'ERROR', reason: 'An earlier staff registration must be revoked first.' };
   }
+  if (!registration && !await relayReady()) return { status: 'UNAVAILABLE', reason: RELAY_UNAVAILABLE };
   if (await preferenceSubject() !== session.subject) return { status: 'OFF' };
   const permission = await Notifications.getPermissionsAsync();
   if (permission.status === 'undetermined') return { status: 'NOT_REQUESTED' };
@@ -189,6 +213,7 @@ async function registerCompanyPushInner(accountId: string, requestPermission: bo
   }
   if (!requestPermission && await preferenceSubject() !== session.subject) return { status: 'OFF' };
   if (previous && !force && !requestPermission && Date.now() - previous.renewedAt < RENEW_AFTER_MS) return companyPushStatus(accountId);
+  if (!await relayReady()) return { status: 'UNAVAILABLE', reason: RELAY_UNAVAILABLE };
   if (Platform.OS === 'android') {
     await Notifications.setNotificationChannelAsync('mail-activity', {
       name: 'Mail activity',
