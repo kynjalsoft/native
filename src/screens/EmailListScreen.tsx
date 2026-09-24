@@ -246,9 +246,10 @@ const emailKeyExtractor = (item: Email) => item.id;
 interface EmailListScreenProps {
   onEmailPress?: (email: Email) => void;
   onComposePress?: () => void;
+  onInteractionStateChange?: (busy: boolean) => void;
 }
 
-export default function EmailListScreen({ onEmailPress, onComposePress }: EmailListScreenProps) {
+export default function EmailListScreen({ onEmailPress, onComposePress, onInteractionStateChange }: EmailListScreenProps) {
   const c = useColors();
   const styles = React.useMemo(() => makeStyles(c), [c]);
   const { t } = useLocaleStore();
@@ -843,6 +844,13 @@ export default function EmailListScreen({ onEmailPress, onComposePress }: EmailL
   // "Empty folder" for Trash and Junk (webmail banner; #711 pagination lives
   // in the api helper).
   const [emptying, setEmptying] = React.useState(false);
+  const interactionBusy = loading || drawerOpen || filterMenuOpen || importing ||
+    pendingMoveId !== null || batchMoveOpen || tagSheetOpen || selectionMode ||
+    openingDraftId !== null || searchFocused || datePickerField !== null || emptying;
+  React.useEffect(() => {
+    onInteractionStateChange?.(interactionBusy);
+  }, [onInteractionStateChange, interactionBusy]);
+  React.useEffect(() => () => onInteractionStateChange?.(true), [onInteractionStateChange]);
   const canEmptyFolder =
     (currentRole === 'trash' || inJunk) && !!currentMailbox && (currentMailbox.totalEmails > 0 || emails.length > 0);
   const handleEmptyFolder = () => {
