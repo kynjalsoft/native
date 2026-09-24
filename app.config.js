@@ -71,6 +71,7 @@ module.exports = {
       favicon: './assets/favicon.png',
     },
     plugins: [
+      ['expo-build-properties', { ios: { deploymentTarget: '15.1' } }],
       'expo-secure-store',
       '@react-native-community/datetimepicker',
       'expo-localization',
