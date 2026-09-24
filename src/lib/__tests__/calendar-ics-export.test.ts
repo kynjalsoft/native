@@ -27,6 +27,7 @@ describe('eventToICS', () => {
   it('serialises a timed event with zone, organizer, attendees, rule and alarm', () => {
     const ics = eventToICS(event);
     expect(ics).toContain('BEGIN:VCALENDAR\r\n');
+    expect(ics).toContain('PRODID:-//ZyndMail//EN\r\n');
     expect(ics).toContain('UID:uid-1');
     expect(ics).toContain('DTSTART;TZID=Europe/Berlin:20260302T090000');
     expect(ics).toContain('DTEND:20260302T083000Z');
