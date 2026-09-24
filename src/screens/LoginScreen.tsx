@@ -336,7 +336,7 @@ export default function LoginScreen({ onLogin, isAddMode = false, onCancel }: Lo
     const chooseNotice = notice ?? (storeError ? { title: storeError } : null);
     return (
       <>
-        <LoginShell {...shellProps} centered showFooter>
+        <LoginShell {...shellProps}>
           <ChooseStep
             isAddMode={isAddMode}
             accounts={accounts}
