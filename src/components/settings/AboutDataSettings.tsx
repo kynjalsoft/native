@@ -22,6 +22,9 @@ import { supportsSideloadUpdates } from '../../lib/platform-capabilities';
 const APP_VERSION = Constants.expoConfig?.version ?? '0.0.0';
 const GIT_COMMIT = (Constants.expoConfig?.extra as { commit?: string } | undefined)?.commit ?? 'dev';
 const APP_STORE_URL = 'https://github.com/kynjalsoft/native/releases';
+const SOURCE_REF = /^[0-9a-f]{7,40}$/i.test(GIT_COMMIT) ? GIT_COMMIT : 'main';
+const SOURCE_URL = `https://github.com/kynjalsoft/native/tree/${SOURCE_REF}`;
+const LICENSE_URL = `https://github.com/kynjalsoft/native/blob/${SOURCE_REF}/LICENSE`;
 
 export function AboutDataSettings() {
   const c = useColors();
@@ -206,10 +209,24 @@ export function AboutDataSettings() {
           <Pressable
             style={styles.ghLink}
             accessibilityRole="link"
-            onPress={() => Linking.openURL('https://github.com/bulwarkmail/native')}
+            accessibilityLabel={t('settings.advanced.about.source_link', 'ZyndMail source code')}
+            onPress={() => void Linking.openURL(SOURCE_URL)}
           >
-            <Text style={styles.ghText}>Upstream</Text>
+            <Text style={styles.ghText}>{t('settings.advanced.about.source', 'Source')}</Text>
             <ExternalLink size={12} color={c.mutedForeground} />
+          </Pressable>
+        </View>
+        <View style={styles.sourceNotice}>
+          <Text style={styles.sourceNoticeText}>
+            {t('settings.advanced.about.upstream_notice', 'Based on Bulwark Native. ZyndMail Native Preview is licensed under AGPL-3.0-only.')}
+          </Text>
+          <Pressable
+            accessibilityRole="link"
+            accessibilityLabel={t('settings.advanced.about.license_link', 'Read the AGPL-3.0 license')}
+            onPress={() => void Linking.openURL(LICENSE_URL)}
+            hitSlop={8}
+          >
+            <Text style={styles.sourceNoticeLink}>{t('settings.advanced.about.license', 'Read the license')}</Text>
           </Pressable>
         </View>
       </View>
@@ -439,6 +456,9 @@ function makeStyles(c: ThemePalette) {
     gap: 4,
   },
   ghText: { ...typography.caption, color: c.mutedForeground },
+  sourceNotice: { marginTop: spacing.md, gap: spacing.xs },
+  sourceNoticeText: { ...typography.caption, color: c.mutedForeground },
+  sourceNoticeLink: { ...typography.caption, color: c.primary },
   debugCategoriesBox: {
     marginStart: spacing.lg,
     paddingStart: spacing.lg,
