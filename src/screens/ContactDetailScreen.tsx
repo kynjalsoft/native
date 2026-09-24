@@ -951,7 +951,7 @@ function makeStyles(c: ThemePalette) {
     missingText: { ...typography.body, color: c.textMuted },
 
     sheetOverlay: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
       backgroundColor: 'rgba(0,0,0,0.5)',
     },
     sheet: {

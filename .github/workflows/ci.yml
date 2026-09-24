@@ -24,3 +24,28 @@ jobs:
 
       - name: Unit tests
         run: npm test
+
+  android-native:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+
+      - uses: android-actions/setup-android@v3
+
+      - run: npm ci
+
+      - name: Compile Android without publishing
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon

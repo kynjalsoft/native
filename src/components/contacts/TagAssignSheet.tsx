@@ -125,7 +125,7 @@ export default function TagAssignSheet({
 
 function makeStyles(c: ThemePalette) {
   return StyleSheet.create({
-    overlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.5)' },
+    overlay: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(0,0,0,0.5)' },
     sheet: {
       position: 'absolute',
       left: 0,

@@ -133,7 +133,7 @@ export function TagSheet({ visible, onClose, keywords, selectedEmails, onToggle 
 
 function makeStyles(c: ThemePalette) {
   return StyleSheet.create({
-    overlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.5)' },
+    overlay: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(0,0,0,0.5)' },
     overlayPress: { flex: 1 },
     sheet: {
       position: 'absolute',

@@ -137,7 +137,7 @@ export function MoveSheet({
 function makeStyles(c: ThemePalette) {
   return StyleSheet.create({
     sheetOverlay: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
       backgroundColor: 'rgba(0,0,0,0.5)',
     },
     sheetOverlayPress: { flex: 1 },

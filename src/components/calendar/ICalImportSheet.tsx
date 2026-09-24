@@ -283,7 +283,7 @@ export function ICalImportSheet({ visible, onClose, calendars, onImport, onImpor
 
 function makeStyles(c: ThemePalette) {
   return StyleSheet.create({
-    overlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.5)' },
+    overlay: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(0,0,0,0.5)' },
     sheet: {
       position: 'absolute',
       left: 0,

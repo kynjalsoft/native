@@ -96,7 +96,7 @@ export function ActionSheet({ visible, title, subtitle, items, onClose, children
 
 function makeStyles(c: ThemePalette) {
   return StyleSheet.create({
-    overlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.5)' },
+    overlay: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(0,0,0,0.5)' },
     overlayPress: { flex: 1 },
     sheet: {
       position: 'absolute',
