@@ -2,6 +2,7 @@ import React from 'react';
 import { ActivityIndicator, AppState, Linking, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import * as Notifications from 'expo-notifications';
+import * as Updates from 'expo-updates';
 import { useColorScheme } from 'react-native';
 import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -59,10 +60,12 @@ import { addShareListener, getInitialShare, shareAttachments } from './src/lib/s
 import { OfflineCacheBanner } from './src/components/OfflineCacheBanner';
 import { useOfflineCacheStore } from './src/stores/offline-cache-store';
 import { useOutboxStore } from './src/stores/outbox-store';
+import { useSendUndoStore } from './src/stores/send-undo-store';
 import { runOfflineSync } from './src/lib/offline-sync';
 import { spacing, typography, type ThemePalette } from './src/theme/tokens';
 import { useColors } from './src/theme/colors';
 import { isCompanyMailServer } from './src/lib/zyndmail-company';
+import { canAutoReloadMailUpdate } from './src/lib/auto-ota';
 import {
   isCompanyPushPresentation,
   registerCompanyPush,
@@ -129,7 +132,9 @@ function LoadingScreen({ message }: { message: string }) {
   );
 }
 
-function MainTabsNavigator({ navigation }: NativeStackScreenProps<RootStackParamList, 'MainTabs'>) {
+function MainTabsNavigator({ navigation, onMailListBusyChange }: NativeStackScreenProps<RootStackParamList, 'MainTabs'> & {
+  onMailListBusyChange: (busy: boolean) => void;
+}) {
   const c = useColors();
   const mailboxes = useEmailStore((state) => state.mailboxes);
   const logout = useAuthStore((state) => state.logout);
@@ -185,6 +190,7 @@ function MainTabsNavigator({ navigation }: NativeStackScreenProps<RootStackParam
       >
         {() => (
           <EmailListScreen
+            onInteractionStateChange={onMailListBusyChange}
             onComposePress={() => navigation.navigate('Compose')}
             onEmailPress={(email) => {
               navigation.navigate('EmailThread', {
@@ -252,10 +258,19 @@ function MainTabsNavigator({ navigation }: NativeStackScreenProps<RootStackParam
 }
 
 export default function App() {
+  const { isUpdatePending } = Updates.useUpdates();
   const hasRestoredSession = useAuthStore((state) => state.hasRestoredSession);
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const isAuthenticating = useAuthStore((state) => state.isLoading);
   const client = useAuthStore((state) => state.client);
   const restoreSession = useAuthStore((state) => state.restoreSession);
+  const outboxFlushing = useOutboxStore((state) => state.flushing);
+  const sendUndoPending = useSendUndoStore((state) => state.pending != null || state.busy);
+  const [appIsActive, setAppIsActive] = React.useState(AppState.currentState === 'active');
+  const [routeName, setRouteName] = React.useState<string | null>(null);
+  const [mailListBusy, setMailListBusy] = React.useState(true);
+  const lastForegroundCheck = React.useRef(0);
+  const lastReloadAttempt = React.useRef(0);
 
   // Resolve the user's theme preference to a concrete light/dark style for the
   // system status bar. The rest of the app's colors are still hard-coded dark
@@ -315,6 +330,35 @@ export default function App() {
   const offlineCacheDays = useSettingsStore((s) => s.offlineCacheDays);
   const offlineCacheMaxMB = useSettingsStore((s) => s.offlineCacheMaxMB);
   const haveLiveSession = useAuthStore((s) => s.session != null);
+  React.useEffect(() => {
+    // Native startup already checks for updates. Check again when returning
+    // from the background, without making a network request on every focus.
+    const subscription = AppState.addEventListener('change', (state) => {
+      setAppIsActive(state === 'active');
+      if (state !== 'active' || !Updates.isEnabled || __DEV__ ||
+          !useNetworkStore.getState().online ||
+          Date.now() - lastForegroundCheck.current < 15 * 60_000) return;
+      lastForegroundCheck.current = Date.now();
+      void Updates.checkForUpdateAsync()
+        .then(async (result) => { if (result.isAvailable) await Updates.fetchUpdateAsync(); })
+        .catch((error) => console.warn('[updates] foreground check failed', error));
+    });
+    return () => subscription.remove();
+  }, []);
+
+  React.useEffect(() => {
+    if (!Updates.isEnabled || __DEV__ || !isUpdatePending ||
+        !canAutoReloadMailUpdate({
+          appIsActive, routeName, authRestored: hasRestoredSession,
+          authenticated: isAuthenticated, authenticating: isAuthenticating,
+          liveSession: haveLiveSession, outboxFlushing, sendUndoPending, mailListBusy,
+        }) || Date.now() - lastReloadAttempt.current < 5 * 60_000) return;
+    lastReloadAttempt.current = Date.now();
+    void Updates.reloadAsync().catch((error) => {
+      console.warn('[updates] idle reload failed', error);
+    });
+  }, [appIsActive, routeName, hasRestoredSession, isAuthenticated,
+    isAuthenticating, haveLiveSession, outboxFlushing, sendUndoPending, mailListBusy, isUpdatePending]);
   React.useEffect(() => {
     void useOfflineCacheStore.getState().hydrate();
     // Attachments shared out of the app linger in the cache dir; drop the
@@ -688,10 +732,16 @@ export default function App() {
   }
 
   return (
-    <NavigationContainer ref={navigationRef}>
+    <NavigationContainer
+      ref={navigationRef}
+      onReady={() => setRouteName(navigationRef.getCurrentRoute()?.name ?? null)}
+      onStateChange={() => setRouteName(navigationRef.getCurrentRoute()?.name ?? null)}
+    >
       <StatusBar style={statusBarStyle} />
       <Stack.Navigator screenOptions={{ headerShown: false }}>
-        <Stack.Screen name="MainTabs" component={MainTabsNavigator} />
+        <Stack.Screen name="MainTabs">
+          {(props) => <MainTabsNavigator {...props} onMailListBusyChange={setMailListBusy} />}
+        </Stack.Screen>
         <Stack.Screen name="EmailThread" component={EmailThreadScreen} />
         <Stack.Screen name="EmailSource" component={EmailSourceScreen} />
         <Stack.Screen
