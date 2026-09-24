@@ -25,7 +25,9 @@ describe('ZyndPay Staff mail boundary', () => {
     expect(isCompanyMailServer('https://mail.zyndpay.io/')).toBe(true);
     expect(isCompanyMailServer('https://mail.zyndpay.io.evil.example')).toBe(false);
     expect(isCompanyMailServer('http://mail.zyndpay.io')).toBe(false);
-    expect(isCompanyMailServer('https://mail.zyndpay.io/other')).toBe(false);
+    expect(isCompanyMailServer('https://mail.zyndpay.io/other')).toBe(true);
+    expect(isCompanyMailServer('https://mail.zyndpay.io/.well-known/jmap')).toBe(true);
+    expect(isCompanyMailServer('https://mail.zyndpay.io:8443/')).toBe(false);
   });
 
   it('pins discovery to the exact staff issuer and its HTTPS origin', () => {
