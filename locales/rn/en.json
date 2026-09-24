@@ -700,7 +700,9 @@
     "show_unread": "Show unread"
   },
   "unified_mailbox": {
-    "accounts_failed": "{count} account(s) could not be loaded"
+    "accounts_failed": "{count} account(s) could not be loaded",
+    "mailbox_failed": "1 mailbox could not be loaded",
+    "mailboxes_failed": "{count} mailboxes could not be loaded"
   },
   "updates": {
     "advisory": "Security advisory",

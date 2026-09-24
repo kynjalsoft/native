@@ -123,6 +123,7 @@ export default function UnifiedInboxScreen({ navigation, route }: Props) {
         for (const e of result.emails) if (!seen.has(rowKey(e))) merged.push(e);
         return merged.sort((a, b) => new Date(b.receivedAt).getTime() - new Date(a.receivedAt).getTime());
       });
+      setErrors(result.errors);
     } finally {
       setLoadingMore(false);
     }
@@ -416,7 +417,9 @@ export default function UnifiedInboxScreen({ navigation, route }: Props) {
         <View style={styles.errorBanner}>
           <AlertTriangle size={14} color={c.error} />
           <Text style={styles.errorBannerText} numberOfLines={2}>
-            {t('unified_mailbox.accounts_failed', `${errorCount} account(s) could not be loaded`, { count: errorCount })}
+            {errorCount === 1
+              ? t('unified_mailbox.mailbox_failed', '1 mailbox could not be loaded')
+              : t('unified_mailbox.mailboxes_failed', '{count} mailboxes could not be loaded', { count: errorCount })}
             {': '}
             {Object.values(errors)[0]}
           </Text>
