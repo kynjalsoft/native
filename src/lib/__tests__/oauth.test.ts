@@ -9,6 +9,7 @@ vi.mock('../client-cert', () => ({
 }));
 
 import { refreshOAuthAccessToken, type OAuthTokens } from '../oauth';
+import { ZYNDMAIL_COMPANY } from '../zyndmail-company';
 
 describe('oauth token refresh deduplication', () => {
   beforeEach(() => {
@@ -85,5 +86,27 @@ describe('oauth token refresh deduplication', () => {
     await expect(promise2).rejects.toThrow('Token refresh failed: 400');
 
     expect(mockSecureFetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('company token refresh', () => {
+  it('refuses to replace a stored staff token with another subject', async () => {
+    const payload = btoa(JSON.stringify({
+      iss: ZYNDMAIL_COMPANY.issuer,
+      aud: ZYNDMAIL_COMPANY.audience,
+      sub: 'different-staff',
+      exp: Math.floor(Date.now() / 1000) + 3600,
+    })).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
+    mockSecureFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ access_token: `eyJhbGciOiJub25lIn0.${payload}.signature` }),
+    } as Response);
+    await expect(refreshOAuthAccessToken({
+      accessToken: 'old',
+      refreshToken: 'company-refresh',
+      tokenEndpoint: `${ZYNDMAIL_COMPANY.issuer}/protocol/openid-connect/token`,
+      clientId: ZYNDMAIL_COMPANY.clientId,
+      companyIdentity: { issuer: ZYNDMAIL_COMPANY.issuer, audience: ZYNDMAIL_COMPANY.audience, subject: 'staff-123' },
+    })).rejects.toThrow('identity changed');
   });
 });
