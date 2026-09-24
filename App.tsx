@@ -333,6 +333,13 @@ function AppContent() {
     }
   }, []);
 
+  React.useEffect(() => {
+    if (hasRestoredSession && !isAuthenticated) {
+      unlockGate.current.cancel();
+      setAppLocked(true);
+    }
+  }, [hasRestoredSession, isAuthenticated]);
+
   const confirmSignOut = React.useCallback(() => {
     Alert.alert(
       'Sign out on this device?',
@@ -399,10 +406,10 @@ function AppContent() {
       setPrivacyHidden(shouldHideMailForAppState(state));
       if (state === 'background') {
         unlockGate.current.background();
-        setAppLocked(true);
         setUnlockError(null);
-      } else if (state === 'active' && unlockGate.current.active()) {
-        setAppLocked(false);
+      } else if (state === 'active') {
+        unlockGate.current.active();
+        setAppLocked(unlockGate.current.isLocked);
       }
       if (state !== 'active' || !Updates.isEnabled || __DEV__ ||
           !useNetworkStore.getState().online ||

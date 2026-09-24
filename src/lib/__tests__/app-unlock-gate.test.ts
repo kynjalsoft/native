@@ -35,3 +35,62 @@ describe('mailbox device unlock', () => {
     expect(gate.verified(next, 'active')).toBe(true);
   });
 });
+
+
+describe('mailbox return window', () => {
+  it('preserves a verified unlock across a brief link or app switch', () => {
+    const gate = new AppUnlockGate();
+    gate.verified(gate.begin(), 'active');
+    gate.background(1_000);
+    gate.active(6_000);
+    expect(gate.isLocked).toBe(false);
+  });
+
+  it('requires verification after a minute away, but never times out active reading', () => {
+    const gate = new AppUnlockGate();
+    gate.verified(gate.begin(), 'active');
+    gate.active(600_000);
+    expect(gate.isLocked).toBe(false);
+    gate.background(600_000);
+    gate.active(660_000);
+    expect(gate.isLocked).toBe(true);
+  });
+
+  it('does not extend the return window on duplicate background events', () => {
+    const gate = new AppUnlockGate();
+    gate.verified(gate.begin(), 'active');
+    gate.background(1_000);
+    gate.background(59_000);
+    gate.active(61_000);
+    expect(gate.isLocked).toBe(true);
+  });
+
+  it('never grants a return window to an unverified launch or pending Face ID result', () => {
+    const gate = new AppUnlockGate();
+    gate.background(1_000);
+    gate.active(2_000);
+    expect(gate.isLocked).toBe(true);
+    const attempt = gate.begin();
+    gate.verified(attempt, 'inactive');
+    gate.background(3_000);
+    gate.active(4_000);
+    expect(gate.isLocked).toBe(true);
+    expect(gate.verified(attempt, 'active')).toBe(false);
+  });
+
+  it('invalidates an in-flight verification on sign-out', () => {
+    const gate = new AppUnlockGate();
+    const attempt = gate.begin();
+    gate.cancel();
+    expect(gate.verified(attempt, 'active')).toBe(false);
+    expect(gate.isLocked).toBe(true);
+  });
+
+  it('fails closed if the clock moves backwards while away', () => {
+    const gate = new AppUnlockGate();
+    gate.verified(gate.begin(), 'active');
+    gate.background(2_000);
+    gate.active(1_000);
+    expect(gate.isLocked).toBe(true);
+  });
+});
