@@ -74,6 +74,8 @@ export interface UnifiedFetchOptions {
   query?: string;
   /** Cursors from the previous page (`UnifiedInboxResult.positions`). */
   positions?: Record<string, number>;
+  /** Re-read JMAP sessions so newly granted or revoked shared accounts appear. */
+  refreshSessions?: boolean;
 }
 
 // ── Detached transport ──────────────────────────────────────────────────
@@ -251,14 +253,15 @@ function isLiveAccount(accountId: string): boolean {
   return `${username}@${host}` === accountId;
 }
 
-async function entryFor(accountId: string): Promise<AccountEntry> {
+async function entryFor(accountId: string, refreshSession = false): Promise<AccountEntry> {
   const live = isLiveAccount(accountId);
   const cached = entries.get(accountId);
-  if (live && cached?.live && Date.now() - cached.discoveredAt < SESSION_CACHE_TTL_MS) {
+  if (live && cached?.live && !refreshSession && Date.now() - cached.discoveredAt < SESSION_CACHE_TTL_MS) {
     return cached;
   }
 
   if (live && jmapClient.currentSession) {
+    if (refreshSession || cached?.live) await jmapClient.refreshSession();
     const entry: AccountEntry = {
       accountId,
       noDelete: jmapClient.hasCompanyNoDeletePolicy,
@@ -282,7 +285,7 @@ async function entryFor(accountId: string): Promise<AccountEntry> {
   const baseUrl = creds.serverUrl.replace(/\/+$/, '');
   const authHeader = authHeaderFor(creds);
   const sameCredentials = cached?.baseUrl === baseUrl && cached?.authHeader === authHeader;
-  if (cached && !cached.live && sameCredentials && Date.now() - cached.discoveredAt < SESSION_CACHE_TTL_MS) {
+  if (cached && !cached.live && sameCredentials && !refreshSession && Date.now() - cached.discoveredAt < SESSION_CACHE_TTL_MS) {
     return cached;
   }
 
@@ -462,7 +465,7 @@ export async function fetchUnifiedInbox(
   const settled = await Promise.all(
     accountIds.map(async (accountId) => {
       try {
-        const entry = await entryFor(accountId);
+        const entry = await entryFor(accountId, opts.refreshSessions);
         const targets: { jmapId: string; isShared: boolean; label?: string }[] = [
           { jmapId: entry.primaryJmapId, isShared: false },
         ];

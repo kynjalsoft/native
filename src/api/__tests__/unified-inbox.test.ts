@@ -10,6 +10,7 @@ vi.mock('../jmap-client', () => ({
     hasCompanyNoDeletePolicy: false,
     getStoredCredentials: vi.fn(),
     getSharedMailAccounts: vi.fn(() => [{ id: 'shared', name: 'Finance' }]),
+    refreshSession: vi.fn(),
     request: vi.fn(),
   },
   REQUEST_TIMEOUT_MS: 30_000,
@@ -253,4 +254,36 @@ it('does not reuse a detached session after its stored credentials are removed',
   expect(afterLogout.emails).toEqual([]);
   expect(afterLogout.errors['other@other.example.com']).toBe('No stored credentials');
   expect(posts).toHaveLength(2);
+});
+
+it('discovers a newly granted shared mailbox on explicit refresh', async () => {
+  let grantAdded = false;
+  (jmapClient.getSharedMailAccounts as ReturnType<typeof vi.fn>).mockImplementation(() => grantAdded
+    ? [{ id: 'new-shared', name: 'Support' }]
+    : []);
+  request.mockImplementation(async (calls: Array<[string, { accountId: string }]>) => {
+    const [method, args] = calls[0];
+    if (method === 'Mailbox/get') {
+      return { methodResponses: [['Mailbox/get', {
+        list: [{ id: `${args.accountId}-inbox`, role: 'inbox', name: 'Inbox' }],
+      }, '0']] };
+    }
+    return { methodResponses: [
+      ['Email/query', { ids: [`${args.accountId}-message`] }, '0'],
+      ['Email/get', { list: [{
+        id: `${args.accountId}-message`,
+        mailboxIds: { [`${args.accountId}-inbox`]: true },
+        receivedAt: '2026-09-24T10:00:00Z',
+      }] }, '1'],
+    ] };
+  });
+
+  const before = await fetchUnifiedInbox(['me@mail.example.com'], 25, { includeGroup: true });
+  expect(before.emails.map((email) => email.id)).toEqual(['own-message']);
+  grantAdded = true;
+  const after = await fetchUnifiedInbox(['me@mail.example.com'], 25, {
+    includeGroup: true, refreshSessions: true,
+  });
+  expect(jmapClient.refreshSession).toHaveBeenCalledOnce();
+  expect(after.emails.map((email) => email.id)).toContain('new-shared-message');
 });

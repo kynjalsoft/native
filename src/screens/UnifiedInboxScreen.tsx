@@ -100,14 +100,16 @@ export default function UnifiedInboxScreen({ navigation, route }: Props) {
     [includeGroup, query, role, view],
   );
 
-  const load = React.useCallback(async () => {
+  const load = React.useCallback(async (refreshSessions = false) => {
     const seq = ++loadSeq.current;
     pageLoadInFlight.current = false;
     hasMoreRef.current = false;
     setLoadingMore(false);
     setLoading(true);
     try {
-      const result = await fetchUnifiedInbox(accountIds, PAGE_SIZE, { ...fetchOpts, positions: {} });
+      const result = await fetchUnifiedInbox(accountIds, PAGE_SIZE, {
+        ...fetchOpts, positions: {}, refreshSessions,
+      });
       if (seq !== loadSeq.current) return;
       positionsRef.current = result.positions;
       hasMoreRef.current = result.hasMore;
@@ -123,7 +125,7 @@ export default function UnifiedInboxScreen({ navigation, route }: Props) {
     manualRefreshInFlight.current = true;
     setManualRefreshing(true);
     try {
-      await load();
+      await load(true);
     } finally {
       manualRefreshInFlight.current = false;
       setManualRefreshing(false);
