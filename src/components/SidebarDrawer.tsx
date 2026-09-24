@@ -1,10 +1,10 @@
 import React from 'react';
 import {
   View, Text, StyleSheet, Pressable, ScrollView, Modal, TextInput, Alert,
-  Animated, Dimensions, Easing, ActivityIndicator,
+  ActivityIndicator,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   Inbox, Send, File as FileIcon, Trash2, Ban, Archive, Star,
   Folder, FolderOpen, ChevronDown, ChevronRight, X, Settings, LogOut, Check, Plus,
@@ -14,7 +14,7 @@ import {
 } from 'lucide-react-native';
 import { spacing, radius, typography, type ThemePalette } from '../theme/tokens';
 import { useColors } from '../theme/colors';
-import { useAnimDuration } from '../theme/dynamic';
+import { useShouldAnimate } from '../theme/dynamic';
 import { useEmailStore } from '../stores/email-store';
 import { useAuthStore } from '../stores/auth-store';
 import { useAccountStore } from '../stores/account-store';
@@ -37,6 +37,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation/types';
 import type { Mailbox } from '../api/types';
 import { SafeAreaModal } from './SafeAreaModal';
+import { setPendingSettingsTab } from '../navigation/pending-settings-tab';
 import { KeyboardSafeModal } from './KeyboardSafeModal';
 
 const CHEVRON_SLOT = 20;
@@ -303,6 +304,7 @@ interface SidebarDrawerProps {
 }
 
 export default function SidebarDrawer({ visible, onClose }: SidebarDrawerProps) {
+  const insets = useSafeAreaInsets();
   const companyNoDelete = jmapClient.hasCompanyNoDeletePolicy;
   const c = useColors();
   const styles = React.useMemo(() => makeStyles(c), [c]);
@@ -677,33 +679,15 @@ export default function SidebarDrawer({ visible, onClose }: SidebarDrawerProps) 
 
   const unifiedIcon = (role: UnifiedRole): LucideIcon => iconFor(role, undefined, false, false);
 
-  const slideX = React.useRef(new Animated.Value(-Dimensions.get('window').width)).current;
-  const overlayOpacity = React.useRef(new Animated.Value(0)).current;
-  const openDuration = useAnimDuration(240);
-  const closeDuration = useAnimDuration(200);
-
-  // Runs the slide-in. Kicked from both the visible effect and the Modal's
-  // onShow: on the very first open the modal's native view is not attached yet
-  // when the effect fires, so that first animation is dropped and the drawer
-  // stays parked off-screen. Re-running it once the modal is on screen commits
-  // the final offset (a no-op on every subsequent open).
-  const runOpen = React.useCallback(() => {
-    Animated.parallel([
-      Animated.timing(slideX, { toValue: 0, duration: openDuration, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
-      Animated.timing(overlayOpacity, { toValue: 1, duration: openDuration, useNativeDriver: true }),
-    ]).start();
-  }, [slideX, overlayOpacity, openDuration]);
-
+  // Native modal presentation owns both transitions; no animation runs on a detached view.
+  const animate = useShouldAnimate();
   React.useEffect(() => {
-    if (visible) {
-      runOpen();
-    } else {
-      Animated.parallel([
-        Animated.timing(slideX, { toValue: -Dimensions.get('window').width, duration: closeDuration, easing: Easing.in(Easing.cubic), useNativeDriver: true }),
-        Animated.timing(overlayOpacity, { toValue: 0, duration: closeDuration, useNativeDriver: true }),
-      ]).start();
+    if (!visible) {
+      setAccountMenuOpen(false);
+      setSheet(null);
+      setPrompt(null);
     }
-  }, [visible, runOpen, slideX, overlayOpacity, closeDuration]);
+  }, [visible]);
 
   const accountEmail = username || '';
   const initials = React.useMemo(
@@ -746,17 +730,18 @@ export default function SidebarDrawer({ visible, onClose }: SidebarDrawerProps) 
     <SafeAreaModal
       visible={visible}
       transparent
-      animationType="none"
+      presentationStyle="overFullScreen"
+      animationType={animate ? "fade" : "none"}
       statusBarTranslucent
       onRequestClose={onClose}
-      onShow={runOpen}
     >
-      <Animated.View style={[styles.overlay, { opacity: overlayOpacity }]}>
+      <View style={styles.overlay}>
         <Pressable style={styles.overlayPress} onPress={onClose} />
-      </Animated.View>
+      </View>
 
-      <Animated.View style={[styles.drawer, { transform: [{ translateX: slideX }] }]}>
-        <SafeAreaView style={styles.drawerSafe} edges={['top', 'bottom', 'left']}>
+      <View style={styles.drawer} accessibilityViewIsModal onAccessibilityEscape={onClose}>
+        {/* Read stable screen insets outside the modal root, which can report zero during presentation. */}
+        <View style={[styles.drawerSafe, { paddingTop: insets.top, paddingBottom: insets.bottom, paddingLeft: insets.left }]}>
           {/* Header: close + account switcher */}
           <View style={styles.header}>
             <Pressable onPress={onClose} style={styles.headerClose} hitSlop={8}>
@@ -1030,7 +1015,7 @@ export default function SidebarDrawer({ visible, onClose }: SidebarDrawerProps) 
               <Pressable
                 style={styles.sectionSettings}
                 hitSlop={8}
-                onPress={() => { onClose(); navigation.navigate('MainTabs'); }}
+                onPress={() => { setPendingSettingsTab('folders'); onClose(); navigation.navigate('MainTabs', { screen: 'Settings' }); }}
                 accessibilityLabel={t('sidebar.settings', 'Settings')}
               >
                 <Settings size={14} color={c.textMuted} />
@@ -1121,8 +1106,8 @@ export default function SidebarDrawer({ visible, onClose }: SidebarDrawerProps) 
               </>
             )}
           </ScrollView>
-        </SafeAreaView>
-      </Animated.View>
+        </View>
+      </View>
 
       {sheet && <ActionSheet title={sheet.title} actions={sheet.actions} onClose={() => setSheet(null)} />}
       {prompt && (

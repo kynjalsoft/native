@@ -1,8 +1,8 @@
 import React from 'react';
 import {
-  View, Text, StyleSheet, Pressable, ScrollView, Animated, Dimensions, Easing, TextInput, Alert,
+  View, Text, StyleSheet, Pressable, ScrollView, TextInput, Alert,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
@@ -16,6 +16,7 @@ import { getContactDisplayName, getContactKeywords, isGroup } from '../../lib/co
 import { spacing, radius, typography, componentSizes, type ThemePalette } from '../../theme/tokens';
 import { useColors } from '../../theme/colors';
 import { SafeAreaModal } from '../SafeAreaModal';
+import { useShouldAnimate } from '../../theme/dynamic';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
@@ -34,6 +35,7 @@ function isSameCategory(a: ContactCategory, b: ContactCategory): boolean {
 
 export default function ContactsSidebarDrawer({ visible, onClose }: Props) {
   const c = useColors();
+  const insets = useSafeAreaInsets();
   const styles = React.useMemo(() => makeStyles(c), [c]);
   const navigation = useNavigation<Nav>();
   const selectedCategory = useContactsStore((s) => s.selectedCategory);
@@ -100,29 +102,9 @@ export default function ContactsSidebarDrawer({ visible, onClose }: Props) {
   const [renameValue, setRenameValue] = React.useState('');
   const [renameBusy, setRenameBusy] = React.useState(false);
 
-  const slideX = React.useRef(new Animated.Value(-Dimensions.get('window').width)).current;
-  const overlay = React.useRef(new Animated.Value(0)).current;
-
-  // Also kicked from the Modal's onShow — the first open fires this effect
-  // before the modal's native view exists, so that animation is dropped and
-  // the drawer stays parked off-screen until the second open.
-  const runOpen = React.useCallback(() => {
-    Animated.parallel([
-      Animated.timing(slideX, { toValue: 0, duration: 240, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
-      Animated.timing(overlay, { toValue: 1, duration: 240, useNativeDriver: true }),
-    ]).start();
-  }, [slideX, overlay]);
-
-  React.useEffect(() => {
-    if (visible) {
-      runOpen();
-    } else {
-      Animated.parallel([
-        Animated.timing(slideX, { toValue: -Dimensions.get('window').width, duration: 200, easing: Easing.in(Easing.cubic), useNativeDriver: true }),
-        Animated.timing(overlay, { toValue: 0, duration: 200, useNativeDriver: true }),
-      ]).start();
-    }
-  }, [visible, runOpen, slideX, overlay]);
+  // Native modal presentation owns both transitions; no animation runs on a detached view.
+  const animate = useShouldAnimate();
+  React.useEffect(() => { if (!visible) setRenaming(null); }, [visible]);
 
   const select = (cat: ContactCategory) => {
     setSelectedCategory(cat);
@@ -158,13 +140,14 @@ export default function ContactsSidebarDrawer({ visible, onClose }: Props) {
   );
 
   return (
-    <SafeAreaModal visible={visible} transparent animationType="none" statusBarTranslucent onRequestClose={onClose} onShow={runOpen}>
-      <Animated.View style={[styles.overlay, { opacity: overlay }]}>
+    <SafeAreaModal visible={visible} transparent presentationStyle="overFullScreen" animationType={animate ? "fade" : "none"} statusBarTranslucent onRequestClose={onClose}>
+      <View style={styles.overlay}>
         <Pressable style={styles.overlayPress} onPress={onClose} />
-      </Animated.View>
+      </View>
 
-      <Animated.View style={[styles.drawer, { transform: [{ translateX: slideX }] }]}>
-        <SafeAreaView style={styles.drawerSafe} edges={['top', 'bottom', 'left']}>
+      <View style={styles.drawer} accessibilityViewIsModal onAccessibilityEscape={onClose}>
+        {/* Read stable screen insets outside the modal root, which can report zero during presentation. */}
+        <View style={[styles.drawerSafe, { paddingTop: insets.top, paddingBottom: insets.bottom, paddingLeft: insets.left }]}>
           <View style={styles.header}>
             <Pressable onPress={onClose} style={styles.headerClose} hitSlop={8}>
               <X size={20} color={c.text} />
@@ -282,8 +265,8 @@ export default function ContactsSidebarDrawer({ visible, onClose }: Props) {
               <Text style={styles.hint}>Long-press a tag to rename it</Text>
             )}
           </ScrollView>
-        </SafeAreaView>
-      </Animated.View>
+        </View>
+      </View>
     </SafeAreaModal>
   );
 }
