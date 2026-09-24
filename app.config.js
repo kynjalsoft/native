@@ -60,7 +60,7 @@ module.exports = {
       },
     },
     android: {
-      runtimeVersion: '1.0.0',
+      runtimeVersion: VERSION,
       adaptiveIcon: {
         foregroundImage: './assets/adaptive-icon.png',
         backgroundColor: '#FFFFFF',

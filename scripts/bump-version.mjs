@@ -8,6 +8,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const versionFile = path.join(root, 'VERSION');
 const pkgFile = path.join(root, 'package.json');
 const lockFile = path.join(root, 'package-lock.json');
+const androidStringsFile = path.join(root, 'android/app/src/main/res/values/strings.xml');
 
 const git = (...args) =>
   execFileSync('git', args, { cwd: root, stdio: ['ignore', 'pipe', 'inherit'] }).toString().trim();
@@ -41,6 +42,12 @@ if (parts.length !== 3 || parts.some(Number.isNaN)) {
 }
 parts[2] += 1;
 const next = parts.join('.');
+const androidStrings = fs.readFileSync(androidStringsFile, 'utf8');
+const previousRuntime = `<string name="expo_runtime_version">${current}</string>`;
+if (!androidStrings.includes(previousRuntime)) {
+  console.error('Android native runtime does not match VERSION; refusing to release.');
+  process.exit(1);
+}
 
 const existingTags = new Set(git('tag', '--list').split(/\r?\n/).filter(Boolean));
 if (existingTags.has(next)) {
@@ -49,6 +56,7 @@ if (existingTags.has(next)) {
 }
 
 fs.writeFileSync(versionFile, `${next}\n`);
+fs.writeFileSync(androidStringsFile, androidStrings.replace(previousRuntime, `<string name="expo_runtime_version">${next}</string>`));
 
 const pkg = JSON.parse(fs.readFileSync(pkgFile, 'utf8'));
 pkg.version = next;
@@ -61,7 +69,7 @@ fs.writeFileSync(lockFile, `${JSON.stringify(lock, null, 2)}\n`);
 
 console.log(`${current} -> ${next}`);
 
-gitInherit('add', 'VERSION', 'package.json', 'package-lock.json');
+gitInherit('add', 'VERSION', 'package.json', 'package-lock.json', 'android/app/src/main/res/values/strings.xml');
 gitInherit('commit', '-m', `chore: update version number to ${next}`);
 gitInherit('tag', '-a', next, '-m', next);
 gitInherit('push', '--follow-tags');
