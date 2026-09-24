@@ -130,3 +130,64 @@ it('pages without a full server count and advances past the displayed ids', asyn
     { position: 2, limit: 3, calculateTotal: false },
   ]);
 });
+
+it('keeps aggregate pages globally ordered when one mailbox has newer mail', async () => {
+  const idsByAccount: Record<string, string[]> = {
+    own: ['own-10', 'own-9', 'own-8', 'own-7'],
+    shared: ['shared-6', 'shared-5'],
+  };
+  request.mockImplementation(async (calls: Array<[string, { accountId: string; position?: number; limit?: number }]>) => {
+    const [method, args] = calls[0];
+    if (method === 'Mailbox/get') {
+      return { methodResponses: [['Mailbox/get', {
+        list: [{ id: `${args.accountId}-inbox`, role: 'inbox', name: 'Inbox' }],
+      }, '0']] };
+    }
+    const ids = idsByAccount[args.accountId].slice(args.position, args.position! + args.limit!);
+    return { methodResponses: [
+      ['Email/query', { ids }, '0'],
+      ['Email/get', { list: ids.map((id) => ({
+        id,
+        mailboxIds: { [`${args.accountId}-inbox`]: true },
+        receivedAt: `2026-09-24T10:00:${id.split('-')[1].padStart(2, '0')}Z`,
+      })) }, '1'],
+    ] };
+  });
+
+  const opts = { includeGroup: true };
+  const first = await fetchUnifiedInbox(['me@mail.example.com'], 2, opts);
+  const second = await fetchUnifiedInbox(['me@mail.example.com'], 2, { ...opts, positions: first.positions });
+  const third = await fetchUnifiedInbox(['me@mail.example.com'], 2, { ...opts, positions: second.positions });
+
+  expect(first.emails.map((email) => email.id)).toEqual(['own-10', 'own-9']);
+  expect(second.emails.map((email) => email.id)).toEqual(['own-8', 'own-7']);
+  expect(third.emails.map((email) => email.id)).toEqual(['shared-6', 'shared-5']);
+  expect(first.positions).toEqual({ 'me@mail.example.com|own': 2, 'me@mail.example.com|shared': 0 });
+  expect(second.positions).toEqual({ 'me@mail.example.com|own': 4, 'me@mail.example.com|shared': 0 });
+  expect(third.hasMore).toBe(false);
+});
+
+it('moves past a message deleted between query and get', async () => {
+  request.mockImplementation(async (calls: Array<[string, { position?: number; limit?: number }]>) => {
+    const [method, args] = calls[0];
+    if (method === 'Mailbox/get') {
+      return { methodResponses: [['Mailbox/get', { list: [{ id: 'inbox', role: 'inbox', name: 'Inbox' }] }, '0']] };
+    }
+    const ids = ['deleted', 'remaining'].slice(args.position, args.position! + args.limit!);
+    return { methodResponses: [
+      ['Email/query', { ids }, '0'],
+      ['Email/get', { list: ids.filter((id) => id !== 'deleted').map((id) => ({
+        id, mailboxIds: { inbox: true }, receivedAt: '2026-09-24T10:00:00Z',
+      })) }, '1'],
+    ] };
+  });
+
+  const first = await fetchUnifiedInbox(['me@mail.example.com'], 1);
+  expect(first.emails).toEqual([]);
+  expect(first.hasMore).toBe(true);
+  expect(first.positions['me@mail.example.com|own']).toBe(1);
+
+  const second = await fetchUnifiedInbox(['me@mail.example.com'], 1, { positions: first.positions });
+  expect(second.emails.map((email) => email.id)).toEqual(['remaining']);
+  expect(second.hasMore).toBe(false);
+});
