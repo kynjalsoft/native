@@ -27,7 +27,7 @@ module.exports = {
     name: 'Bulwark Mobile',
     slug: 'bulwark-mobile',
     // mailto: lets Android/iOS offer the app for mail links in other apps.
-    scheme: ['bulwarkmobile', 'mailto'],
+    scheme: ['bulwarkmobile', 'zyndmail', 'mailto'],
     version: VERSION,
     orientation: 'portrait',
     icon: './assets/icon.png',
