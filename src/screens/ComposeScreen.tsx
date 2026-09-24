@@ -33,12 +33,14 @@ import { useLocaleStore } from '../stores/locale-store';
 import { useSettingsStore } from '../stores/settings-store';
 import { useAccountStore } from '../stores/account-store';
 import { useSendUndoStore } from '../stores/send-undo-store';
+import { toast } from '../stores/toast-store';
 import { type EmailTemplate } from '../stores/templates-store';
 import { getIdentities } from '../api/identity';
 import {
-  sendEmail, createDraft, destroyEmails, patchKeywordsForEmails, type OutgoingAttachment, type OutgoingEmail,
+  sendEmail, createDraft, destroyEmails, patchKeywordsForEmails, SubmissionOutcomeUnknownError,
+  type OutgoingAttachment, type OutgoingEmail,
 } from '../api/email';
-import { jmapClient, RequestTimeoutError } from '../api/jmap-client';
+import { jmapClient, NetworkError, RequestTimeoutError } from '../api/jmap-client';
 import { uploadBlob, uploadBytes } from '../api/blob';
 import { buildReplyRecipients, type ReplySource } from '../lib/reply-recipients';
 import { buildReplySubject, buildForwardSubject } from '../lib/subject-prefix';
@@ -964,8 +966,10 @@ export default function ComposeScreen({ route, navigation }: Props) {
   );
   const hasBodyContent = bodyPlain.trim().length > 0
     || attachments.some((a) => a.blobId && !a.error);
+  const [sendOutcomeUnknown, setSendOutcomeUnknown] = React.useState(false);
   const canSend =
     !sending &&
+    !sendOutcomeUnknown &&
     !hasUploadInFlight &&
     !hasUploadError &&
     hasValidRecipients &&
@@ -1989,6 +1993,10 @@ export default function ComposeScreen({ route, navigation }: Props) {
       lastSavedRef.current = null;
       if (result.filingWarning) {
         console.warn('[compose] post-send filing warning:', result.filingWarning);
+        toast.warning(
+          t('email_composer.filing_warning_title', 'Message submitted'),
+          t('email_composer.filing_warning_body', 'Sent filing needs attention. Check Sent and Drafts before sending again.'),
+        );
       }
       // Flag the original so the list shows the reply/forward arrow; best
       // effort - the message already left.
@@ -2030,18 +2038,21 @@ export default function ComposeScreen({ route, navigation }: Props) {
           delaySeconds: holdForSeconds,
           createdAt: Date.now(),
         });
+      } else if (!result.filingWarning) {
+        toast.success(t('email_composer.submitted', 'Submitted to mail server'));
       }
       allowLeaveRef.current = true;
       navigation.goBack();
     } catch (e) {
-      if (e instanceof RequestTimeoutError) {
-        // The request may have reached the server; a blind retry would send
-        // the message twice (#702).
+      if (e instanceof RequestTimeoutError || e instanceof NetworkError || e instanceof SubmissionOutcomeUnknownError) {
+        // A lost or malformed reply may follow a successful submission. Hold
+        // this composer rather than allow a second tap to duplicate the mail.
+        setSendOutcomeUnknown(true);
         Alert.alert(
-          t('email_composer.send_timeout_title', 'No answer from the server'),
+          t('email_composer.send_unknown_title', 'Send needs review'),
           t(
-            'email_composer.send_timeout_body',
-            'The message may already have gone out. Check your Sent folder before sending it again.',
+            'email_composer.send_unknown_body',
+            'The server did not confirm whether it submitted this message. Sending is paused here to avoid a duplicate. Check Sent before composing another message.',
           ),
         );
         return;
@@ -2199,6 +2210,14 @@ export default function ComposeScreen({ route, navigation }: Props) {
           </Button>
         </View>
       </View>
+
+      {sendOutcomeUnknown && (
+        <View style={styles.sendReviewBanner} accessibilityRole="alert">
+          <Text style={styles.sendReviewText}>
+            {t('email_composer.send_unknown_banner', 'Send paused. Check Sent before composing another message.')}
+          </Text>
+        </View>
+      )}
 
       <View style={[styles.flex, { paddingBottom: bottomPad }]}>
         <ScrollView
@@ -2713,6 +2732,12 @@ function makeStyles(c: ThemePalette) {
   headerSubtitle: { ...typography.caption, color: c.textMuted, marginTop: -2 },
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   sendButtonDisabled: { opacity: 0.5 },
+  sendReviewBanner: {
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    backgroundColor: c.warningBg,
+  },
+  sendReviewText: { ...typography.bodyMedium, color: c.text },
 
   fieldRow: {
     flexDirection: 'row',
