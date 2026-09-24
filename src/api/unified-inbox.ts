@@ -382,10 +382,10 @@ async function fetchTarget(
   opts: UnifiedFetchOptions,
   position: number,
   limit: number,
-): Promise<{ emails: UnifiedEmail[]; hasMore: boolean }> {
+): Promise<{ emails: UnifiedEmail[]; hasMore: boolean; consumed: number }> {
   const mailboxes = await mailboxesFor(entry, target.jmapId);
   const filter = buildFilter(mailboxes, opts);
-  if (!filter) return { emails: [], hasMore: false };
+  if (!filter) return { emails: [], hasMore: false, consumed: 0 };
 
   const res = await entry.transport.post([
     ['Email/query', {
@@ -393,8 +393,10 @@ async function fetchTarget(
       filter,
       sort: [{ property: 'receivedAt', isAscending: false }],
       position,
-      limit,
-      calculateTotal: true,
+      // One lookahead id proves whether another page exists without asking
+      // every mailbox server to count its full result set on each fetch.
+      limit: limit + 1,
+      calculateTotal: false,
     }, '0'],
     ['Email/get', {
       accountId: target.jmapId,
@@ -406,8 +408,8 @@ async function fetchTarget(
   if (qName !== 'Email/query') throw new Error(qBody?.description || 'Email/query failed');
   const [getName, getBody] = res[1] ?? [];
   if (getName !== 'Email/get') throw new Error(getBody?.description || 'Email/get failed');
-  const ids = (qBody.ids as string[]) ?? [];
-  const total = typeof qBody.total === 'number' ? qBody.total : undefined;
+  const queryIds = (qBody.ids as string[]) ?? [];
+  const ids = queryIds.slice(0, limit);
   const list = ((getBody.list as Email[]) ?? []);
   const byId = new Map(list.map((e) => [e.id, e]));
   const nameOf = (e: Email): string | undefined =>
@@ -424,8 +426,7 @@ async function fetchTarget(
       sourceFolder: opts.view ? nameOf(e) : undefined,
     } as UnifiedEmail];
   });
-  const hasMore = total !== undefined ? position + ids.length < total : ids.length === limit;
-  return { emails, hasMore };
+  return { emails, hasMore: queryIds.length > limit, consumed: ids.length };
 }
 
 /**
@@ -460,7 +461,7 @@ export async function fetchUnifiedInbox(
           const position = positions[key] ?? 0;
           try {
             const page = await fetchTarget(entry, target, opts, position, perAccountLimit);
-            positions[key] = position + page.emails.length;
+            positions[key] = position + page.consumed;
             if (page.hasMore) hasMore = true;
             return page.emails;
           } catch (err) {

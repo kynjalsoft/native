@@ -101,3 +101,32 @@ describe('shared mail in All inboxes', () => {
     expect(result.positions['me@mail.example.com|shared']).toBeUndefined();
   });
 });
+
+it('pages without a full server count and advances past the displayed ids', async () => {
+  const seenQueries: Array<{ position: number; limit: number; calculateTotal: boolean }> = [];
+  request.mockImplementation(async (calls: Array<[string, { accountId: string; position?: number; limit?: number; calculateTotal?: boolean }]>) => {
+    const [method, args] = calls[0];
+    if (method === 'Mailbox/get') {
+      return { methodResponses: [['Mailbox/get', { list: [{ id: 'inbox', role: 'inbox', name: 'Inbox' }] }, '0']] };
+    }
+    seenQueries.push({ position: args.position!, limit: args.limit!, calculateTotal: args.calculateTotal! });
+    const ids = ['m1', 'm2', 'm3'].slice(args.position, args.position! + args.limit!);
+    return { methodResponses: [
+      ['Email/query', { ids }, '0'],
+      ['Email/get', { list: ids.map((id) => ({ id, mailboxIds: { inbox: true }, receivedAt: '2026-09-24T10:00:00Z' })) }, '1'],
+    ] };
+  });
+
+  const first = await fetchUnifiedInbox(['me@mail.example.com'], 2);
+  expect(first.emails.map((email) => email.id)).toEqual(['m1', 'm2']);
+  expect(first.hasMore).toBe(true);
+  expect(first.positions['me@mail.example.com|own']).toBe(2);
+
+  const second = await fetchUnifiedInbox(['me@mail.example.com'], 2, { positions: first.positions });
+  expect(second.emails.map((email) => email.id)).toEqual(['m3']);
+  expect(second.hasMore).toBe(false);
+  expect(seenQueries).toEqual([
+    { position: 0, limit: 3, calculateTotal: false },
+    { position: 2, limit: 3, calculateTotal: false },
+  ]);
+});
