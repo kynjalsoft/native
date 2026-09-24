@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { DARK_COLORS, LIGHT_COLORS } from '../tokens';
+import { BUILTIN_THEMES } from '../builtin-themes';
+import { withReadableBodyText } from '../contrast';
 
 function luminance(hex: string): number {
   const channels = [1, 3, 5].map((index) => {
@@ -21,5 +23,15 @@ describe('small-text palette contrast', () => {
   ] as const)('%s muted labels remain readable on list and card backgrounds', (_name, palette) => {
     expect(contrast(palette.textMuted, palette.background)).toBeGreaterThanOrEqual(4.5);
     expect(contrast(palette.textMuted, palette.surface)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it.each(BUILTIN_THEMES.flatMap((theme) => [
+    [`${theme.name} light`, withReadableBodyText({ ...LIGHT_COLORS, ...theme.light })],
+    [`${theme.name} dark`, withReadableBodyText({ ...DARK_COLORS, ...theme.dark })],
+  ] as const))('%s muted labels remain readable', (_name, palette) => {
+    expect(contrast(palette.textMuted, palette.background)).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(palette.textMuted, palette.surface)).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(palette.textSecondary, palette.background)).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(palette.textSecondary, palette.surface)).toBeGreaterThanOrEqual(4.5);
   });
 });
