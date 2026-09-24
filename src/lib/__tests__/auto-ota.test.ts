@@ -3,7 +3,8 @@ import { canAutoReloadMailUpdate } from '../auto-ota';
 
 const idle = {
   appIsActive: true,
-  appLocked: false,
+  appLocked: true,
+  unlockBusy: false,
   routeName: 'Mail',
   authRestored: true,
   authenticated: true,
@@ -15,7 +16,7 @@ const idle = {
 };
 
 describe('automatic OTA activation', () => {
-  it('applies a downloaded update from the idle mail list', () => {
+  it('applies a downloaded update before unlocking an idle mailbox', () => {
     expect(canAutoReloadMailUpdate(idle)).toBe(true);
   });
 
@@ -31,7 +32,8 @@ describe('automatic OTA activation', () => {
     expect(canAutoReloadMailUpdate({ ...idle, authenticating: true })).toBe(false);
     expect(canAutoReloadMailUpdate({ ...idle, liveSession: false })).toBe(false);
     expect(canAutoReloadMailUpdate({ ...idle, appIsActive: false })).toBe(false);
-    expect(canAutoReloadMailUpdate({ ...idle, appLocked: true })).toBe(false);
+    expect(canAutoReloadMailUpdate({ ...idle, appLocked: false })).toBe(false);
+    expect(canAutoReloadMailUpdate({ ...idle, unlockBusy: true })).toBe(false);
     expect(canAutoReloadMailUpdate({ ...idle, outboxFlushing: true })).toBe(false);
     expect(canAutoReloadMailUpdate({ ...idle, sendUndoPending: true })).toBe(false);
     expect(canAutoReloadMailUpdate({ ...idle, mailListBusy: true })).toBe(false);

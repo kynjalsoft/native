@@ -6,13 +6,14 @@ import { useColors } from '../theme/colors';
 
 interface AppLockOverlayProps {
   busy: boolean;
+  updating?: boolean;
   error: string | null;
   onUnlock: () => void;
   onSignOut: () => void;
 }
 
 /** Opaque cover keeps cached messages out of view until device verification. */
-export function AppLockOverlay({ busy, error, onUnlock, onSignOut }: AppLockOverlayProps) {
+export function AppLockOverlay({ busy, updating = false, error, onUnlock, onSignOut }: AppLockOverlayProps) {
   const c = useColors();
   const insets = useSafeAreaInsets();
 
@@ -31,12 +32,12 @@ export function AppLockOverlay({ busy, error, onUnlock, onSignOut }: AppLockOver
         </View>
         <Text style={[styles.title, { color: c.text }]}>Your mailbox is locked</Text>
         <Text style={[styles.description, { color: c.textSecondary }]}>
-          Verify with Face ID, Touch ID or your device passcode to continue.
+          {updating ? 'Applying an update before you unlock…' : 'Verify with Face ID, Touch ID or your device passcode to continue.'}
         </Text>
         {error ? <Text accessibilityRole="alert" style={[styles.error, { color: c.error }]}>{error}</Text> : null}
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Unlock mailbox"
+          accessibilityLabel={updating ? 'Applying update' : 'Unlock mailbox'}
           disabled={busy}
           onPress={onUnlock}
           style={[styles.unlockButton, { backgroundColor: c.primary, opacity: busy ? 0.65 : 1 }]}
@@ -46,7 +47,7 @@ export function AppLockOverlay({ busy, error, onUnlock, onSignOut }: AppLockOver
           )}
         </Pressable>
       </View>
-      <Pressable accessibilityRole="button" onPress={onSignOut} style={styles.signOutButton}>
+      <Pressable accessibilityRole="button" disabled={busy} onPress={onSignOut} style={styles.signOutButton}>
         <Text style={[styles.signOutText, { color: c.textSecondary }]}>Sign out on this device</Text>
       </Pressable>
     </View>

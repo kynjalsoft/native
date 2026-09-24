@@ -54,7 +54,6 @@ import { useLocaleStore } from './src/stores/locale-store';
 import { useNetworkStore } from './src/stores/network-store';
 import { useUpdatesStore } from './src/stores/updates-store';
 import { UpdateBanner } from './src/components/UpdateBanner';
-import { PushOnboardingPrompt } from './src/components/PushOnboardingPrompt';
 import { ToastHost } from './src/components/ToastHost';
 import { AdaptiveGlassSurface } from './src/components/AdaptiveGlassSurface';
 import { AppLockOverlay } from './src/components/AppLockOverlay';
@@ -153,7 +152,6 @@ function MainTabsNavigator({ navigation, onMailListBusyChange }: NativeStackScre
     <View style={{ flex: 1, backgroundColor: c.background }}>
       <UpdateBanner />
       <OfflineCacheBanner />
-      <PushOnboardingPrompt />
       <ToastHost />
     <Tab.Navigator
       screenOptions={{
@@ -278,6 +276,8 @@ function AppContent() {
   const [unlockBusy, setUnlockBusy] = React.useState(false);
   const [unlockError, setUnlockError] = React.useState<string | null>(null);
   const unlockInFlight = React.useRef(false);
+  const updateReloadInFlight = React.useRef(false);
+  const [updateReloading, setUpdateReloading] = React.useState(false);
   const unlockGate = React.useRef(new AppUnlockGate());
   const [routeName, setRouteName] = React.useState<string | null>(null);
   const [mailListBusy, setMailListBusy] = React.useState(true);
@@ -300,7 +300,7 @@ function AppContent() {
   const hasPersistedAccount = useAccountStore((state) => state.activeAccountId != null);
 
   const unlockMailbox = React.useCallback(async () => {
-    if (unlockInFlight.current) return;
+    if (unlockInFlight.current || updateReloadInFlight.current || AppState.currentState !== 'active') return;
     unlockInFlight.current = true;
     setUnlockBusy(true);
     setUnlockError(null);
@@ -417,16 +417,21 @@ function AppContent() {
 
   React.useEffect(() => {
     if (!Updates.isEnabled || __DEV__ || !isUpdatePending ||
+        unlockInFlight.current || updateReloadInFlight.current ||
         !canAutoReloadMailUpdate({
-          appIsActive, appLocked, routeName, authRestored: hasRestoredSession,
+          appIsActive, appLocked, unlockBusy, routeName, authRestored: hasRestoredSession,
           authenticated: isAuthenticated, authenticating: isAuthenticating,
           liveSession: haveLiveSession, outboxFlushing, sendUndoPending, mailListBusy,
         }) || Date.now() - lastReloadAttempt.current < 5 * 60_000) return;
     lastReloadAttempt.current = Date.now();
+    updateReloadInFlight.current = true;
+    setUpdateReloading(true);
     void Updates.reloadAsync().catch((error) => {
+      updateReloadInFlight.current = false;
+      setUpdateReloading(false);
       console.warn('[updates] idle reload failed', error);
     });
-  }, [appIsActive, appLocked, routeName, hasRestoredSession, isAuthenticated,
+  }, [appIsActive, appLocked, unlockBusy, routeName, hasRestoredSession, isAuthenticated,
     isAuthenticating, haveLiveSession, outboxFlushing, sendUndoPending, mailListBusy, isUpdatePending]);
   React.useEffect(() => {
     void useOfflineCacheStore.getState().hydrate();
@@ -852,7 +857,8 @@ function AppContent() {
       </Stack.Navigator>
     </NavigationContainer>
     {appLocked ? <AppLockOverlay
-      busy={unlockBusy}
+      busy={unlockBusy || updateReloading}
+      updating={updateReloading}
       error={unlockError}
       onUnlock={() => { void unlockMailbox(); }}
       onSignOut={confirmSignOut}

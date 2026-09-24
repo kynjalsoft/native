@@ -1,7 +1,6 @@
 import React from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { BellRing, X } from 'lucide-react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Button from './Button';
 import { spacing, radius, typography, type ThemePalette } from '../theme/tokens';
 import { useColors } from '../theme/colors';
@@ -35,7 +34,6 @@ const PROMPT_DELAY_MS = 1500;
 export function PushOnboardingPrompt(): React.ReactElement | null {
   const c = useColors();
   const styles = React.useMemo(() => makeStyles(c), [c]);
-  const insets = useSafeAreaInsets();
   const t = useLocaleStore((s) => s.t);
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const client = useAuthStore((s) => s.client);
@@ -103,7 +101,7 @@ export function PushOnboardingPrompt(): React.ReactElement | null {
   };
 
   return (
-    <View style={[styles.card, { marginTop: insets.top + spacing.sm }]} accessibilityRole="summary">
+    <View style={styles.card} accessibilityRole="summary">
       <View style={styles.iconWrap}>
         <BellRing size={18} color={c.primary} />
       </View>

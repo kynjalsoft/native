@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, FlatList, Pressable, TextInput, Image, ActivityIndicator, Modal, Platform, ScrollView, TouchableWithoutFeedback, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { PushOnboardingPrompt } from '../components/PushOnboardingPrompt';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import * as DocumentPicker from 'expo-document-picker';
 import {
@@ -983,6 +984,8 @@ export default function EmailListScreen({ onEmailPress, onComposePress, onIntera
           />
         </View>
       )}
+
+      {!selectionMode && <PushOnboardingPrompt />}
 
       {/* Search bar (always visible) */}
       <View style={styles.searchBar}>
