@@ -1,4 +1,4 @@
-export const UPDATE_REPO = 'bulwarkmail/native';
+export const UPDATE_REPO = 'kynjalsoft/native';
 
 export interface ReleaseAsset {
   name: string;

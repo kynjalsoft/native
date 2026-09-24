@@ -14,6 +14,7 @@ import {
   type OAuthTokens,
   type OAuthTokenSource,
 } from '../lib/oauth';
+import type { CompanyIdentity } from '../lib/zyndmail-company';
 import { FirstTouchGate } from './first-touch-gate';
 import { assertMailDeletionAllowed } from '../lib/zyndmail-mail-policy';
 
@@ -57,6 +58,7 @@ export interface StoredCredentials {
   tokenEndpoint?: string;
   clientId?: string;
   tokenSource?: OAuthTokenSource;
+  companyIdentity?: CompanyIdentity;
 }
 
 /**
@@ -305,6 +307,7 @@ export class JMAPClient {
       tokenEndpoint: tokens.tokenEndpoint,
       clientId: tokens.clientId,
       tokenSource: tokens.source,
+      companyIdentity: tokens.companyIdentity,
     };
 
     this.session = this.rewriteSessionUrls(await this.fetchSession(baseUrl), baseUrl);
@@ -339,6 +342,7 @@ export class JMAPClient {
       expiresAt: next.expiresAt,
       tokenEndpoint: next.tokenEndpoint,
       clientId: next.clientId,
+      companyIdentity: next.companyIdentity,
     };
     const accountId = generateAccountId(
       this.credentials.username,
@@ -369,6 +373,7 @@ export class JMAPClient {
       tokenEndpoint: this.credentials.tokenEndpoint,
       clientId: this.credentials.clientId,
       source: this.credentials.tokenSource,
+      companyIdentity: this.credentials.companyIdentity,
     };
   }
 
@@ -383,6 +388,7 @@ export class JMAPClient {
       tokenEndpoint: creds.tokenEndpoint,
       clientId: creds.clientId,
       source: creds.tokenSource,
+      companyIdentity: creds.companyIdentity,
     };
   }
 

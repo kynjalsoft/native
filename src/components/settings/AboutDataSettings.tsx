@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, Linking, Alert, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, Pressable, Linking, Alert, ActivityIndicator, Image } from 'react-native';
 import Constants from 'expo-constants';
 import * as DocumentPicker from 'expo-document-picker';
 import { File, Paths } from 'expo-file-system';
@@ -21,7 +21,7 @@ import { supportsSideloadUpdates } from '../../lib/platform-capabilities';
 
 const APP_VERSION = Constants.expoConfig?.version ?? '0.0.0';
 const GIT_COMMIT = (Constants.expoConfig?.extra as { commit?: string } | undefined)?.commit ?? 'dev';
-const APP_STORE_URL = 'https://github.com/bulwarkmail/native/releases';
+const APP_STORE_URL = 'https://github.com/kynjalsoft/native/releases';
 
 export function AboutDataSettings() {
   const c = useColors();
@@ -177,11 +177,9 @@ export function AboutDataSettings() {
     <View style={styles.container}>
       <View style={styles.aboutBox}>
         <View style={styles.aboutRow}>
-          <View style={styles.logo}>
-            <Text style={styles.logoText}>B</Text>
-          </View>
+          <Image source={require('../../../assets/icon.png')} style={styles.logo} resizeMode="contain" accessibilityLabel="ZyndMail" />
           <View style={{ flex: 1 }}>
-            <Text style={styles.aboutTitle}>{t('settings.advanced.about.mobile_title', 'Bulwark Mobile')}</Text>
+            <Text style={styles.aboutTitle}>{t('settings.advanced.about.mobile_title', 'ZyndMail Preview')}</Text>
             <Text style={styles.aboutVersion}>
               v{APP_VERSION}{' '}
               <Text style={styles.aboutCommit}>({GIT_COMMIT})</Text>
@@ -210,7 +208,7 @@ export function AboutDataSettings() {
             accessibilityRole="link"
             onPress={() => Linking.openURL('https://github.com/bulwarkmail/native')}
           >
-            <Text style={styles.ghText}>GitHub</Text>
+            <Text style={styles.ghText}>Upstream</Text>
             <ExternalLink size={12} color={c.mutedForeground} />
           </Pressable>
         </View>
@@ -420,12 +418,7 @@ function makeStyles(c: ThemePalette) {
   logo: {
     width: 48,
     height: 48,
-    borderRadius: radius.md,
-    backgroundColor: c.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
-  logoText: { fontSize: 24, fontWeight: '700', color: c.primaryForeground },
   aboutTitle: { ...typography.bodyMedium, color: c.text },
   aboutVersion: { ...typography.caption, color: c.mutedForeground, marginTop: 2 },
   aboutCommit: { color: c.mutedForeground, opacity: 0.6 },

@@ -24,10 +24,10 @@ const IOS_BUILD_NUMBER = process.env.IOS_BUILD_NUMBER || '1';
 
 module.exports = {
   expo: {
-    name: 'Bulwark Mobile',
+    name: 'ZyndMail Preview',
     slug: 'bulwark-mobile',
     // mailto: lets Android/iOS offer the app for mail links in other apps.
-    scheme: ['bulwarkmobile', 'mailto'],
+    scheme: ['bulwarkmobile', 'zyndmailpreview', 'mailto'],
     version: VERSION,
     orientation: 'portrait',
     icon: './assets/icon.png',
@@ -56,9 +56,8 @@ module.exports = {
     android: {
       adaptiveIcon: {
         foregroundImage: './assets/adaptive-icon.png',
-        backgroundColor: '#09090b',
+        backgroundColor: '#FFFFFF',
       },
-      edgeToEdgeEnabled: true,
       predictiveBackGestureEnabled: false,
       package: 'com.anonymous.bulwarkmobile',
       // The AsyncStorage database holds cached message bodies, the outbox and
@@ -71,6 +70,7 @@ module.exports = {
       favicon: './assets/favicon.png',
     },
     plugins: [
+      ['expo-build-properties', { ios: { deploymentTarget: '16.4', enableSceneSupport: true } }],
       'expo-secure-store',
       '@react-native-community/datetimepicker',
       'expo-localization',
@@ -78,7 +78,7 @@ module.exports = {
         'expo-camera',
         {
           cameraPermission:
-            'Bulwark Mail uses the camera to scan sign-in QR codes shown in webmail.',
+            'ZyndMail uses the camera to scan sign-in QR codes shown in webmail.',
           // QR scanning never records audio; leaving the mic entry in would be
           // an unexplained permission in App Review.
           microphonePermission: false,
@@ -88,7 +88,7 @@ module.exports = {
         'expo-image-picker',
         {
           photosPermission:
-            'Bulwark Mail needs access to your photos so you can attach them to emails and set contact photos.',
+            'ZyndMail needs access to your photos so you can attach them to emails and set contact photos.',
           // Only launchImageLibraryAsync is used - no in-app capture.
           cameraPermission: false,
           microphonePermission: false,

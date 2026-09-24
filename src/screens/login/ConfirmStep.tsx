@@ -6,6 +6,7 @@ import { useColors } from '../../theme/colors';
 import { Button } from '../../components';
 import LoginNotice from './LoginNotice';
 import { useLocaleStore } from '../../stores/locale-store';
+import { isCompanyMailServer } from '../../lib/zyndmail-company';
 
 interface ConfirmStepProps {
   serverUrl: string;
@@ -67,7 +68,7 @@ export default function ConfirmStep({
       <LoginNotice
         tone="info"
         title={t('login.mobile.provider_title', 'Your password stays with your provider')}
-        detail={t('login.mobile.provider_detail', "You'll type it on their page. Bulwark only stores a sign-in token, which you can revoke at any time.")}
+        detail={t('login.mobile.provider_detail', "You'll type it on their page. ZyndMail stores the resulting sign-in token on this device.")}
       />
 
       {notice ? <LoginNotice title={notice.title} detail={notice.detail} /> : null}
@@ -77,9 +78,11 @@ export default function ConfirmStep({
       </Button>
 
       <View style={styles.links}>
-        <Pressable onPress={onUsePassword} hitSlop={8}>
-          <Text style={styles.link}>{t('login.mobile.use_password', 'Sign in with a password instead')}</Text>
-        </Pressable>
+        {!isCompanyMailServer(serverUrl) ? (
+          <Pressable onPress={onUsePassword} hitSlop={8}>
+            <Text style={styles.link}>{t('login.mobile.use_password', 'Sign in with a password instead')}</Text>
+          </Pressable>
+        ) : null}
         <Pressable onPress={onChangeServer} hitSlop={8}>
           <Text style={styles.linkMuted}>{t('login.mobile.different_server', 'Use a different server')}</Text>
         </Pressable>

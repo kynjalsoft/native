@@ -12,6 +12,12 @@ import { generateAccountId } from '../lib/account-utils';
 import { runWebmailHandoff, redeemPairingCode, HandoffCancelledError, HandoffError, type HandoffResult } from '../lib/oauth';
 import { discoverOAuthMetadata, loginWithPkce, probeWebmail, revokeRefreshToken } from '../lib/oauth-native';
 import {
+  ZYNDMAIL_COMPANY,
+  isCompanyMailServer,
+  validateCompanyAccessToken,
+  validateCompanyTokenEndpoint,
+} from '../lib/zyndmail-company';
+import {
   teardownPushNotifications,
   teardownPushNotificationsForAccount,
 } from '../lib/push-notifications';
@@ -57,6 +63,7 @@ export interface AuthState {
   loginViaWebmail: (webmailUrl: string, opts?: { addAccount?: boolean }) => Promise<void>;
   /** OAuth/OIDC (PKCE) straight against the mail server's authorization server. */
   loginViaOAuth: (serverUrl: string, opts?: { addAccount?: boolean }) => Promise<void>;
+  loginViaCompany: (opts?: { addAccount?: boolean }) => Promise<void>;
   loginViaPairing: (webmailUrl: string, code: string, opts?: { addAccount?: boolean }) => Promise<void>;
   logout: () => Promise<void>;
   logoutAll: () => Promise<void>;
@@ -171,6 +178,22 @@ async function completeOAuthHandoff(
   result: Extract<HandoffResult, { flow: 'oauth' }>,
   opts?: { addAccount?: boolean },
 ): Promise<void> {
+  if (isCompanyMailServer(result.serverUrl)) {
+    validateCompanyTokenEndpoint(result.tokens.tokenEndpoint, result.tokens.clientId);
+    const validated = validateCompanyAccessToken(result.tokens.accessToken);
+    result = {
+      ...result,
+      tokens: {
+        ...result.tokens,
+        expiresAt: validated.expiresAt,
+        companyIdentity: {
+          issuer: validated.issuer,
+          audience: validated.audience,
+          subject: validated.subject,
+        },
+      },
+    };
+  }
   // Adding an account must not destroy the live one: the singleton keeps the
   // previous connection until the new sign-in has actually succeeded, and a
   // failure puts it straight back.
@@ -242,6 +265,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   login: async (serverUrl, username, password, opts) => {
     set({ isLoading: true, error: null });
+    if (isCompanyMailServer(serverUrl)) {
+      const message = 'ZyndPay Staff mail requires browser sign-in.';
+      set({ isLoading: false, error: message });
+      throw new HandoffError(message);
+    }
     // Adding an additional account: keep the live connection until the new
     // sign-in succeeded so a typo doesn't kill the current session.
     const previous = opts?.addAccount && get().isAuthenticated ? jmapClient.snapshot() : null;
@@ -298,6 +326,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   loginViaWebmail: async (webmailUrl, opts) => {
+    if (isCompanyMailServer(webmailUrl)) return get().loginViaCompany(opts);
     set({ isLoading: true, error: null });
     // Discovery finds the *JMAP* host; a Bulwark webmail is not necessarily
     // served there. Opening `/login?mobile_redirect_uri=…` on a bare Stalwart
@@ -328,6 +357,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
 
     if (result.flow === 'password') {
+      if (isCompanyMailServer(result.serverUrl)) {
+        const message = 'ZyndPay Staff mail requires browser sign-in.';
+        set({ isLoading: false, error: message });
+        throw new HandoffError(message);
+      }
       // Hand the credentials to the existing password login path so account
       // registration + feature-store wiring all behave identically to a
       // manual sign-in.
@@ -353,6 +387,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   loginViaOAuth: async (serverUrl, opts) => {
+    if (isCompanyMailServer(serverUrl)) return get().loginViaCompany(opts);
     set({ isLoading: true, error: null });
     const base = serverUrl.replace(/\/+$/, '');
     let tokens;
@@ -378,6 +413,31 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           : err instanceof Error
             ? err.message
             : 'OAuth sign-in failed';
+      set({ isLoading: false, error: message });
+      throw err;
+    }
+  },
+
+  loginViaCompany: async (opts) => {
+    set({ isLoading: true, error: null });
+    try {
+      const metadata = await discoverOAuthMetadata(ZYNDMAIL_COMPANY.issuer);
+      if (!metadata) throw new HandoffError('ZyndPay Staff identity is unavailable.');
+      const tokens = await loginWithPkce(ZYNDMAIL_COMPANY.mailOrigin, metadata, {
+        company: true,
+        clientId: ZYNDMAIL_COMPANY.clientId,
+        redirectUri: ZYNDMAIL_COMPANY.redirectUri,
+        scopes: 'openid profile email',
+      });
+      await completeOAuthHandoff(set, get, {
+        flow: 'oauth', serverUrl: ZYNDMAIL_COMPANY.mailOrigin, tokens,
+      }, opts);
+    } catch (err) {
+      if (err instanceof HandoffCancelledError) {
+        set({ isLoading: false, error: null });
+        return;
+      }
+      const message = err instanceof Error ? err.message : 'ZyndPay Staff sign-in failed';
       set({ isLoading: false, error: message });
       throw err;
     }

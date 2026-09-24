@@ -1939,7 +1939,7 @@ function makeStyles(c: ThemePalette) {
     },
 
     pickerOverlay: {
-      ...StyleSheet.absoluteFillObject,
+      ...StyleSheet.absoluteFill,
       backgroundColor: 'rgba(0,0,0,0.5)',
     },
     pickerSheet: {

@@ -93,6 +93,8 @@ jobs:
             -scheme "${{ steps.xcode.outputs.scheme }}" \
             -configuration Release \
             -destination 'generic/platform=iOS' \
+            IPHONEOS_DEPLOYMENT_TARGET=15.1 \
+            ENTRY_FILE=index.ts \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY=""
@@ -187,6 +189,8 @@ jobs:
             -configuration Release \
             -destination 'generic/platform=iOS' \
             -archivePath "$RUNNER_TEMP/Bulwark.xcarchive" \
+            IPHONEOS_DEPLOYMENT_TARGET=15.1 \
+            ENTRY_FILE=index.ts \
             CODE_SIGN_STYLE=Manual \
             DEVELOPMENT_TEAM="$TEAM_ID" \
             CODE_SIGN_IDENTITY="Apple Distribution" \
