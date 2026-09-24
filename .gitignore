@@ -52,6 +52,7 @@ yarn-error.*
 /android/.kotlin/
 /android/build/
 /android/app/build/
+/android/app/google-services.json
 /android/app/.cxx/
 /android/local.properties
 /android/captures/

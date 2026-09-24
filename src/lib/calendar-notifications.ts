@@ -16,7 +16,8 @@ const HORIZON_MS = 7 * 24 * 60 * 60 * 1000;
 // iOS keeps at most 64 pending local notifications per app; leave room for
 // the rest of the app.
 const MAX_SCHEDULED = 48;
-const DATA_TAG = 'bulwark-calendar-alert';
+export const CALENDAR_NOTIFICATION_TAG = 'bulwark-calendar-alert';
+const DATA_TAG = CALENDAR_NOTIFICATION_TAG;
 
 let permissionGranted: boolean | null = null;
 let channelReady = false;

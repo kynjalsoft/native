@@ -60,10 +60,17 @@ vi.mock('react-native', () => {
 });
 
 vi.mock('expo-secure-store', () => ({
+  WHEN_PASSCODE_SET_THIS_DEVICE_ONLY: 6,
   setItemAsync: vi.fn(async () => undefined),
   getItemAsync: vi.fn(async () => null),
   deleteItemAsync: vi.fn(async () => undefined),
 }));
+
+vi.mock('expo-constants', () => ({ default: {
+  easConfig: null,
+  expoConfig: null,
+} }));
+vi.mock('expo-device', () => ({ isDevice: false }));
 
 // expo-web-browser transitively pulls in expo-modules-core, which evaluates
 // RN-only globals at module load. The unit tests don't exercise the real

@@ -3,6 +3,7 @@ import { registerRootComponent } from 'expo';
 
 import App from './App';
 import { pushBackgroundTask } from './src/lib/push-background-task';
+import './src/lib/notification-handler';
 
 // Runs in a fresh headless JS runtime when BulwarkPushTaskService is started
 // from BulwarkMessagingService on an FCM data message. Must be registered

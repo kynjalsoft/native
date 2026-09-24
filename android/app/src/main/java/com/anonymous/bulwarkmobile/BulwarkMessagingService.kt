@@ -11,19 +11,26 @@ import android.os.Bundle
 import androidx.core.app.NotificationCompat
 import com.facebook.react.HeadlessJsTaskService
 import com.facebook.react.bridge.Arguments
-import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
+import expo.modules.notifications.service.ExpoFirebaseMessagingService
 
-class BulwarkMessagingService : FirebaseMessagingService() {
+// One FCM entry point owns both transports. Expo handles ZyndMail's
+// content-free push while Bulwark's data-only relay keeps its headless
+// reconciliation for non-company accounts.
+class BulwarkMessagingService : ExpoFirebaseMessagingService() {
     override fun onNewToken(token: String) {
+        super.onNewToken(token)
         val params = Arguments.createMap().apply { putString("token", token) }
         BulwarkFcmModule.emit("fcm:newToken", params)
     }
 
     override fun onMessageReceived(message: RemoteMessage) {
-        ensureChannel(this)
-
         val data = message.data
+        if (data["kind"] != "jmap-email-push" && data["kind"] != "jmap-state-change") {
+            super.onMessageReceived(message)
+            return
+        }
+        ensureChannel(this)
 
         // Hand off to JS via a headless task only when the app isn't already
         // running in the foreground - HeadlessJsTaskContext throws if started
@@ -40,6 +47,10 @@ class BulwarkMessagingService : FirebaseMessagingService() {
             putMap("data", dataMap)
         }
         BulwarkFcmModule.emit("fcm:message", params)
+    }
+
+    override fun onDeletedMessages() {
+        super.onDeletedMessages()
     }
 
     private fun isAppInForeground(): Boolean {

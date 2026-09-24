@@ -5,15 +5,13 @@ name: Release iOS (TestFlight)
 # any native iOS change in app.config.js (or a config plugin), never in ios/.
 
 on:
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
       upload_to_testflight:
         description: "Upload the build to TestFlight (off = build the IPA only)"
         type: boolean
         required: false
-        default: true
+        default: false
 
 concurrency:
   group: release-ios-${{ github.ref }}
@@ -158,6 +156,10 @@ jobs:
           # from the profile keeps ExportOptions honest if app.config.js changes.
           APP_ID=$(echo "$PLIST" | plutil -extract Entitlements.application-identifier raw -)
           BUNDLE_ID="${APP_ID#*.}"
+          if [ "$BUNDLE_ID" != "io.zyndpay.mail.preview" ]; then
+            echo "The signing profile does not belong to the ZyndMail preview app" >&2
+            exit 1
+          fi
           EXPIRY=$(echo "$PLIST" | plutil -extract ExpirationDate raw -)
 
           # Xcode moved the profile directory in 16; write both so this does not
@@ -245,7 +247,7 @@ jobs:
 
           VERSION=$(cat VERSION | tr -d '[:space:]')
           SRC=$(ls "$RUNNER_TEMP"/export/*.ipa | head -1)
-          DEST="bulwark-mobile-${VERSION}-${GITHUB_SHA::7}.ipa"
+          DEST="zyndmail-native-preview-${VERSION}-${GITHUB_SHA::7}.ipa"
           cp "$SRC" "$DEST"
           echo "path=$DEST" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
@@ -263,7 +265,8 @@ jobs:
         # distribution channel for it.
         if: >-
           steps.creds.outputs.signed == 'true' &&
-          (github.event_name == 'release' || inputs.upload_to_testflight)
+          inputs.upload_to_testflight &&
+          vars.ZYNDMAIL_PREVIEW_TESTFLIGHT_ENABLED == 'true'
         env:
           ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}

@@ -21,6 +21,7 @@ import {
   teardownPushNotifications,
   teardownPushNotificationsForAccount,
 } from '../lib/push-notifications';
+import { revokeCompanyPush } from '../lib/company-push';
 
 // Persist middleware hydrates asynchronously on cold start. Without this
 // guard, restoreSession() can read the account-store before AsyncStorage has
@@ -483,7 +484,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     // relay mapping before we lose credentials. Other logged-in accounts'
     // push setups remain untouched. Do not abort logout on failure.
     if (currentId) {
-      await teardownPushNotificationsForAccount(currentId).catch(() => undefined);
+      const current = accountStore.getAccountById(currentId);
+      if (current && isCompanyMailServer(current.serverUrl)) {
+        await revokeCompanyPush(currentId).catch(() => undefined);
+      } else {
+        await teardownPushNotificationsForAccount(currentId).catch(() => undefined);
+      }
     } else {
       await teardownPushNotifications().catch(() => undefined);
     }
@@ -529,6 +535,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   logoutAll: async () => {
     const accountStore = useAccountStore.getState();
     const ids = accountStore.accounts.map((a) => a.id);
+    for (const account of accountStore.accounts) {
+      if (isCompanyMailServer(account.serverUrl)) {
+        await revokeCompanyPush(account.id).catch(() => undefined);
+      }
+    }
     await teardownPushNotifications().catch(() => undefined);
     for (const id of ids) await revokeStoredRefreshToken(id);
     await jmapClient.clearAllCredentials(ids);
@@ -644,8 +655,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       return;
     }
     const accountStore = useAccountStore.getState();
-    if (!accountStore.getAccountById(accountId)) return;
-    await teardownPushNotificationsForAccount(accountId).catch(() => undefined);
+    const account = accountStore.getAccountById(accountId);
+    if (!account) return;
+    if (isCompanyMailServer(account.serverUrl)) {
+      await revokeCompanyPush(accountId).catch(() => undefined);
+    } else {
+      await teardownPushNotificationsForAccount(accountId).catch(() => undefined);
+    }
     await revokeStoredRefreshToken(accountId);
     await jmapClient.clearAccountCredentials(accountId).catch(() => undefined);
     useEmailStore.getState().removeAccount(accountId);
