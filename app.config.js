@@ -24,7 +24,7 @@ const IOS_BUILD_NUMBER = process.env.IOS_BUILD_NUMBER || '1';
 
 module.exports = {
   expo: {
-    name: 'Bulwark Mobile',
+    name: 'ZyndMail Preview',
     slug: 'bulwark-mobile',
     // mailto: lets Android/iOS offer the app for mail links in other apps.
     scheme: ['bulwarkmobile', 'mailto'],
@@ -56,7 +56,7 @@ module.exports = {
     android: {
       adaptiveIcon: {
         foregroundImage: './assets/adaptive-icon.png',
-        backgroundColor: '#09090b',
+        backgroundColor: '#FFFFFF',
       },
       predictiveBackGestureEnabled: false,
       package: 'com.anonymous.bulwarkmobile',
