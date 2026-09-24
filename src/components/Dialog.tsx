@@ -1,10 +1,11 @@
 import React from 'react';
-import { View, Text, StyleSheet, Modal, TextInput, type TextInputProps } from 'react-native';
+import { View, Text, StyleSheet, TextInput, type TextInputProps } from 'react-native';
 import { AlertTriangle } from 'lucide-react-native';
 import Button from './Button';
 import { spacing, radius, typography, type ThemePalette } from '../theme/tokens';
 import { useColors } from '../theme/colors';
 import { useLocaleStore } from '../stores/locale-store';
+import { KeyboardSafeModal } from './KeyboardSafeModal';
 
 interface DialogInput {
   value: string;
@@ -55,7 +56,7 @@ export default function Dialog({
   const confirmLabel = confirmText ?? t('common.confirm', 'Confirm');
   const cancelLabel = cancelText ?? t('common.cancel', 'Cancel');
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
+    <KeyboardSafeModal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
       <View style={styles.backdrop}>
         <View style={styles.dialog}>
           <View style={styles.content}>
@@ -95,7 +96,7 @@ export default function Dialog({
           </View>
         </View>
       </View>
-    </Modal>
+    </KeyboardSafeModal>
   );
 }
 

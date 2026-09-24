@@ -1,6 +1,6 @@
 import React from 'react';
 import {
-  View, Text, StyleSheet, Pressable, ScrollView, Modal, Animated, Dimensions, Easing, TextInput, Alert,
+  View, Text, StyleSheet, Pressable, ScrollView, Animated, Dimensions, Easing, TextInput, Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -15,6 +15,7 @@ import { useContactsStore, selectGroupMembers, selectUncategorized } from '../..
 import { getContactDisplayName, getContactKeywords, isGroup } from '../../lib/contact-utils';
 import { spacing, radius, typography, componentSizes, type ThemePalette } from '../../theme/tokens';
 import { useColors } from '../../theme/colors';
+import { SafeAreaModal } from '../SafeAreaModal';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
@@ -157,7 +158,7 @@ export default function ContactsSidebarDrawer({ visible, onClose }: Props) {
   );
 
   return (
-    <Modal visible={visible} transparent animationType="none" statusBarTranslucent onRequestClose={onClose} onShow={runOpen}>
+    <SafeAreaModal visible={visible} transparent animationType="none" statusBarTranslucent onRequestClose={onClose} onShow={runOpen}>
       <Animated.View style={[styles.overlay, { opacity: overlay }]}>
         <Pressable style={styles.overlayPress} onPress={onClose} />
       </Animated.View>
@@ -283,7 +284,7 @@ export default function ContactsSidebarDrawer({ visible, onClose }: Props) {
           </ScrollView>
         </SafeAreaView>
       </Animated.View>
-    </Modal>
+    </SafeAreaModal>
   );
 }
 

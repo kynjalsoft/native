@@ -3,7 +3,7 @@ import {
   Animated,
   Dimensions,
   Easing,
-  Modal,
+  KeyboardAvoidingView,
   Platform,
   Pressable,
   ScrollView,
@@ -32,6 +32,7 @@ import { getCalendarColor, timePattern, type TimeFormat } from '../../lib/calend
 import { isWritableCalendar } from '../../lib/calendar-editability';
 import { useCalendarLocale } from '../../lib/calendar-locale';
 import { useSheetDrag } from '../../lib/use-sheet-drag';
+import { SafeAreaModal } from '../SafeAreaModal';
 
 type TaskFilter = 'all' | 'pending' | 'completed' | 'overdue';
 type PriorityLevel = 'none' | 'high' | 'medium' | 'low';
@@ -286,7 +287,8 @@ export function TasksSheet({
   ];
 
   return (
-    <Modal visible={visible} transparent animationType="none" statusBarTranslucent onRequestClose={onClose}>
+    <SafeAreaModal visible={visible} transparent animationType="none" statusBarTranslucent onRequestClose={onClose}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'height' : undefined}>
       <Animated.View style={[styles.overlay, { opacity: overlayOpacity }]}>
         <Pressable style={styles.overlayPress} onPress={onClose} />
       </Animated.View>
@@ -512,7 +514,8 @@ export function TasksSheet({
           }}
         />
       )}
-    </Modal>
+      </KeyboardAvoidingView>
+    </SafeAreaModal>
   );
 }
 

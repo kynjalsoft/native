@@ -6,12 +6,13 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import {
   ArrowLeft, Star, Paperclip, AlertTriangle, Search, X, Square, SquareCheck,
-  Mail as MailIcon, MailOpen, Archive, Trash2, ShieldAlert, ShieldCheck, Folder,
+  Mail as MailIcon, MailOpen, Archive, Trash2, ShieldAlert, ShieldCheck, Folder, MoreVertical,
 } from 'lucide-react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation/types';
 import SenderAvatar from '../components/SenderAvatar';
 import { SwipeableRow } from '../components/SwipeableRow';
+import { ActionSheet } from '../components/email/ActionSheet';
 import {
   fetchUnifiedInbox, patchUnifiedKeywords, moveUnifiedEmails, deleteUnifiedEmails, isInUnifiedTrash,
   type UnifiedEmail, type UnifiedRole, type CrossView,
@@ -67,13 +68,21 @@ export default function UnifiedInboxScreen({ navigation, route }: Props) {
   const [errors, setErrors] = React.useState<Record<string, string>>({});
   const [loading, setLoading] = React.useState(true);
   const [loadingMore, setLoadingMore] = React.useState(false);
+  const [manualRefreshing, setManualRefreshing] = React.useState(false);
   const [opening, setOpening] = React.useState(false);
   const [searchInput, setSearchInput] = React.useState('');
   const [query, setQuery] = React.useState('');
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
+  const [batchActionsOpen, setBatchActionsOpen] = React.useState(false);
+  const batchDeleteTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  React.useEffect(() => () => {
+    if (batchDeleteTimer.current) clearTimeout(batchDeleteTimer.current);
+  }, []);
   const positionsRef = React.useRef<Record<string, number>>({});
   const hasMoreRef = React.useRef(false);
   const loadSeq = React.useRef(0);
+  const pageLoadInFlight = React.useRef(false);
+  const manualRefreshInFlight = React.useRef(false);
 
   const accountById = React.useMemo(
     () => new Map(accounts.map((a) => [a.id, a])),
@@ -91,11 +100,16 @@ export default function UnifiedInboxScreen({ navigation, route }: Props) {
     [includeGroup, query, role, view],
   );
 
-  const load = React.useCallback(async () => {
+  const load = React.useCallback(async (refreshSessions = false) => {
     const seq = ++loadSeq.current;
+    pageLoadInFlight.current = false;
+    hasMoreRef.current = false;
+    setLoadingMore(false);
     setLoading(true);
     try {
-      const result = await fetchUnifiedInbox(accountIds, PAGE_SIZE, { ...fetchOpts, positions: {} });
+      const result = await fetchUnifiedInbox(accountIds, PAGE_SIZE, {
+        ...fetchOpts, positions: {}, refreshSessions,
+      });
       if (seq !== loadSeq.current) return;
       positionsRef.current = result.positions;
       hasMoreRef.current = result.hasMore;
@@ -106,9 +120,22 @@ export default function UnifiedInboxScreen({ navigation, route }: Props) {
     }
   }, [accountIds, fetchOpts]);
 
+  const onManualRefresh = React.useCallback(async () => {
+    if (manualRefreshInFlight.current) return;
+    manualRefreshInFlight.current = true;
+    setManualRefreshing(true);
+    try {
+      await load(true);
+    } finally {
+      manualRefreshInFlight.current = false;
+      setManualRefreshing(false);
+    }
+  }, [load]);
+
   const loadMore = React.useCallback(async () => {
-    if (loading || loadingMore || !hasMoreRef.current) return;
+    if (loading || pageLoadInFlight.current || !hasMoreRef.current) return;
     const seq = loadSeq.current;
+    pageLoadInFlight.current = true;
     setLoadingMore(true);
     try {
       const result = await fetchUnifiedInbox(accountIds, PAGE_SIZE, {
@@ -126,9 +153,12 @@ export default function UnifiedInboxScreen({ navigation, route }: Props) {
       });
       setErrors(result.errors);
     } finally {
-      setLoadingMore(false);
+      if (seq === loadSeq.current) {
+        pageLoadInFlight.current = false;
+        setLoadingMore(false);
+      }
     }
-  }, [accountIds, fetchOpts, loading, loadingMore]);
+  }, [accountIds, fetchOpts, loading]);
 
   // Reload when the view comes back into focus (a message read or deleted
   // in the thread screen is stale otherwise) and whenever the inputs change.
@@ -220,23 +250,25 @@ export default function UnifiedInboxScreen({ navigation, route }: Props) {
       markRead: role !== 'junk' && deleteAction === 'trash-and-read',
     }).catch(fail);
   };
-  const remove = async (targets: UnifiedEmail[]) => {
-    if (targets.some((email) => hasCompanyNoDeletePolicy(accountById.get(email.sourceAccountId)))) return;
+  const remove = async (targets: UnifiedEmail[]): Promise<boolean> => {
+    if (targets.some((email) => hasCompanyNoDeletePolicy(accountById.get(email.sourceAccountId)))) return false;
     const permanent = targets.some((e) => isPermanentDelete({
       inTrash: role === 'trash' || isInUnifiedTrash(e),
       inJunk: role === 'junk',
       deleteAction,
       permanentlyDeleteJunk,
     }));
-    if (permanent && !(await confirmPermanentDelete(targets.length, t))) return;
+    if (permanent && !(await confirmPermanentDelete(targets.length, t))) return false;
     try {
       await deleteUnifiedEmails(targets, {
         permanent: deleteAction === 'permanent' || (permanentlyDeleteJunk && role === 'junk'),
         markRead: deleteAction === 'trash-and-read',
       });
       removeRows(targets);
+      return true;
     } catch (err) {
       fail(err);
+      return false;
     }
   };
 
@@ -364,33 +396,18 @@ export default function UnifiedInboxScreen({ navigation, route }: Props) {
     <SafeAreaView style={styles.container} edges={['top']}>
       {selectionMode ? (
         <View style={styles.header}>
-          <Pressable onPress={clearSelection} style={styles.headerBtn} hitSlop={8}>
+          <Pressable onPress={clearSelection} style={styles.headerBtn} hitSlop={8} accessibilityRole="button" accessibilityLabel={t('common.close', 'Close')}>
             <X size={20} color={c.text} />
           </Pressable>
           <Text style={styles.headerTitle} numberOfLines={1}>
             {t('context_menu.items_selected', `${selected.size} selected`, { count: selected.size })}
           </Text>
-          <Pressable onPress={() => { setStarred(selectedEmails, !allStarred); clearSelection(); }} style={styles.headerBtn} hitSlop={6}>
-            <Star size={20} color={allStarred ? c.starred : c.text} fill={allStarred ? c.starred : 'transparent'} />
-          </Pressable>
-          <Pressable onPress={() => { setRead(selectedEmails, !allRead); clearSelection(); }} style={styles.headerBtn} hitSlop={6}>
+          <Pressable onPress={() => { setRead(selectedEmails, !allRead); clearSelection(); }} style={styles.headerBtn} hitSlop={6} accessibilityRole="button" accessibilityLabel={allRead ? t('context_menu.mark_unread', 'Mark unread') : t('context_menu.mark_read', 'Mark read')}>
             {allRead ? <MailIcon size={20} color={c.text} /> : <MailOpen size={20} color={c.text} />}
           </Pressable>
-          {role !== 'sent' && role !== 'drafts' && (
-            <Pressable onPress={() => { spam(selectedEmails); clearSelection(); }} style={styles.headerBtn} hitSlop={6}>
-              {role === 'junk' ? <ShieldCheck size={20} color={c.text} /> : <ShieldAlert size={20} color={c.text} />}
-            </Pressable>
-          )}
-          {role !== 'archive' && (
-            <Pressable onPress={() => { archive(selectedEmails); clearSelection(); }} style={styles.headerBtn} hitSlop={6}>
-              <Archive size={20} color={c.text} />
-            </Pressable>
-          )}
-          {!selectedIncludesCompanyMail && (
-            <Pressable onPress={() => { void remove(selectedEmails).then(clearSelection); }} style={styles.headerBtn} hitSlop={6}>
-              <Trash2 size={20} color={c.text} />
-            </Pressable>
-          )}
+          <Pressable onPress={() => setBatchActionsOpen(true)} style={styles.headerBtn} hitSlop={6} accessibilityRole="button" accessibilityLabel={t('email_viewer.more', 'More actions')}>
+            <MoreVertical size={20} color={c.text} />
+          </Pressable>
         </View>
       ) : (
         <View style={styles.header}>
@@ -399,7 +416,7 @@ export default function UnifiedInboxScreen({ navigation, route }: Props) {
           </Pressable>
           <Text style={styles.headerTitle} numberOfLines={1}>{title}</Text>
           <View style={styles.headerBtn}>
-            {opening ? <ActivityIndicator size="small" color={c.primary} /> : null}
+            {opening || (loading && emails.length > 0) ? <ActivityIndicator size="small" color={c.primary} /> : null}
           </View>
         </View>
       )}
@@ -454,14 +471,50 @@ export default function UnifiedInboxScreen({ navigation, route }: Props) {
           keyExtractor={rowKey}
           renderItem={renderItem}
           ItemSeparatorComponent={() => <View style={styles.separator} />}
-          refreshing={loading}
-          onRefresh={() => { void load(); }}
+          refreshing={manualRefreshing}
+          onRefresh={() => { void onManualRefresh(); }}
           onEndReached={() => { void loadMore(); }}
           onEndReachedThreshold={0.3}
           ListFooterComponent={loadingMore ? <ActivityIndicator style={{ padding: spacing.md }} color={c.primary} /> : null}
           contentContainerStyle={{ paddingBottom: 40 }}
         />
       )}
+
+      <ActionSheet
+        visible={batchActionsOpen && selectionMode}
+        title={t('context_menu.items_selected', `${selected.size} selected`, { count: selected.size })}
+        onClose={() => setBatchActionsOpen(false)}
+        items={[
+          {
+            key: 'star',
+            label: allStarred ? t('context_menu.unstar', 'Unstar') : t('context_menu.star', 'Star'),
+            icon: <Star size={20} color={c.textSecondary} />,
+            onPress: () => { setBatchActionsOpen(false); setStarred(selectedEmails, !allStarred); clearSelection(); },
+          },
+          ...(role !== 'sent' && role !== 'drafts' ? [{
+            key: 'spam',
+            label: role === 'junk' ? t('context_menu.not_spam', 'Not spam') : t('context_menu.mark_as_spam', 'Report spam'),
+            icon: role === 'junk' ? <ShieldCheck size={20} color={c.textSecondary} /> : <ShieldAlert size={20} color={c.textSecondary} />,
+            onPress: () => { setBatchActionsOpen(false); spam(selectedEmails); clearSelection(); },
+          }] : []),
+          ...(role !== 'archive' ? [{
+            key: 'archive', label: t('context_menu.archive', 'Archive'),
+            icon: <Archive size={20} color={c.textSecondary} />,
+            onPress: () => { setBatchActionsOpen(false); archive(selectedEmails); clearSelection(); },
+          }] : []),
+          ...(!selectedIncludesCompanyMail ? [{
+            key: 'delete', label: t('context_menu.delete', 'Delete'), destructive: true,
+            icon: <Trash2 size={20} color={c.error} />,
+            onPress: () => {
+              setBatchActionsOpen(false);
+              batchDeleteTimer.current = setTimeout(() => {
+                batchDeleteTimer.current = null;
+                void remove(selectedEmails).then((removed) => { if (removed) clearSelection(); });
+              }, 250);
+            },
+          }] : []),
+        ]}
+      />
     </SafeAreaView>
   );
 }

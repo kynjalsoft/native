@@ -1,6 +1,6 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, Pressable, Modal, TextInput,
+  View, Text, StyleSheet, ScrollView, Pressable, TextInput,
   KeyboardAvoidingView, Platform, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -9,6 +9,7 @@ import { spacing, radius, typography, componentSizes, type ThemePalette } from '
 import { useColors } from '../../theme/colors';
 import Button from '../Button';
 import { useLocaleStore } from '../../stores/locale-store';
+import { SafeAreaModal } from '../SafeAreaModal';
 
 interface SieveEditorSheetProps {
   visible: boolean;
@@ -62,7 +63,7 @@ export function SieveEditorSheet({ visible, content, onSave, onClose, onValidate
   }, [script, showSaveWarning, onSave]);
 
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose} statusBarTranslucent>
+    <SafeAreaModal visible={visible} animationType="slide" onRequestClose={onClose} statusBarTranslucent>
       <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
         <View style={styles.header}>
           <Pressable onPress={onClose} hitSlop={8} style={styles.headerClose}>
@@ -140,32 +141,31 @@ export function SieveEditorSheet({ visible, content, onSave, onClose, onValidate
               </View>
             )}
           </View>
-        </KeyboardAvoidingView>
-
-        <View style={styles.footer}>
-          <Button
-            variant="outline"
-            onPress={handleValidate}
-            disabled={isValidating || !script.trim()}
-            icon={isValidating ? <ActivityIndicator size="small" color={c.text} /> : undefined}
-          >
-            {isValidating
-              ? t('settings.filters.sieve_editor.validating', 'Validating...')
-              : t('settings.filters.sieve_editor.validate', 'Validate')}
-          </Button>
-          <View style={styles.footerRight}>
-            <Button variant="outline" onPress={onClose}>
-              {t('settings.filters.sieve_editor.cancel', 'Cancel')}
+          <View style={styles.footer}>
+            <Button
+              variant="outline"
+              onPress={handleValidate}
+              disabled={isValidating || !script.trim()}
+              icon={isValidating ? <ActivityIndicator size="small" color={c.text} /> : undefined}
+            >
+              {isValidating
+                ? t('settings.filters.sieve_editor.validating', 'Validating...')
+                : t('settings.filters.sieve_editor.validate', 'Validate')}
             </Button>
-            <Button onPress={handleSave} disabled={!script.trim()}>
-              {showSaveWarning
-                ? t('settings.filters.sieve_editor.confirm_save', 'Confirm Save')
-                : t('settings.filters.sieve_editor.save', 'Save')}
-            </Button>
+            <View style={styles.footerRight}>
+              <Button variant="outline" onPress={onClose}>
+                {t('settings.filters.sieve_editor.cancel', 'Cancel')}
+              </Button>
+              <Button onPress={handleSave} disabled={!script.trim()}>
+                {showSaveWarning
+                  ? t('settings.filters.sieve_editor.confirm_save', 'Confirm Save')
+                  : t('settings.filters.sieve_editor.save', 'Save')}
+              </Button>
+            </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </SafeAreaView>
-    </Modal>
+    </SafeAreaModal>
   );
 }
 

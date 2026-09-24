@@ -74,6 +74,8 @@ export interface UnifiedFetchOptions {
   query?: string;
   /** Cursors from the previous page (`UnifiedInboxResult.positions`). */
   positions?: Record<string, number>;
+  /** Re-read JMAP sessions so newly granted or revoked shared accounts appear. */
+  refreshSessions?: boolean;
 }
 
 // ── Detached transport ──────────────────────────────────────────────────
@@ -220,6 +222,9 @@ async function ensureFreshCredentials(
 interface AccountEntry {
   accountId: string;
   noDelete: boolean;
+  /** Detached credentials are rechecked before reusing a cached transport. */
+  authHeader?: string;
+  baseUrl?: string;
   transport: Transport;
   primaryJmapId: string;
   shared: { id: string; name: string }[];
@@ -248,14 +253,15 @@ function isLiveAccount(accountId: string): boolean {
   return `${username}@${host}` === accountId;
 }
 
-async function entryFor(accountId: string): Promise<AccountEntry> {
+async function entryFor(accountId: string, refreshSession = false): Promise<AccountEntry> {
   const live = isLiveAccount(accountId);
   const cached = entries.get(accountId);
-  if (cached && cached.live === live && Date.now() - cached.discoveredAt < SESSION_CACHE_TTL_MS) {
+  if (live && cached?.live && !refreshSession && Date.now() - cached.discoveredAt < SESSION_CACHE_TTL_MS) {
     return cached;
   }
 
   if (live && jmapClient.currentSession) {
+    if (refreshSession || cached?.live) await jmapClient.refreshSession();
     const entry: AccountEntry = {
       accountId,
       noDelete: jmapClient.hasCompanyNoDeletePolicy,
@@ -271,10 +277,17 @@ async function entryFor(accountId: string): Promise<AccountEntry> {
   }
 
   let creds = await jmapClient.getStoredCredentials(accountId);
-  if (!creds) throw new Error('No stored credentials');
+  if (!creds) {
+    entries.delete(accountId);
+    throw new Error('No stored credentials');
+  }
   creds = await ensureFreshCredentials(accountId, creds);
   const baseUrl = creds.serverUrl.replace(/\/+$/, '');
   const authHeader = authHeaderFor(creds);
+  const sameCredentials = cached?.baseUrl === baseUrl && cached?.authHeader === authHeader;
+  if (cached && !cached.live && sameCredentials && !refreshSession && Date.now() - cached.discoveredAt < SESSION_CACHE_TTL_MS) {
+    return cached;
+  }
 
   // Session discovery.
   const sessionRes = await fetchWithDeadline(`${baseUrl}/.well-known/jmap`, {
@@ -292,6 +305,8 @@ async function entryFor(accountId: string): Promise<AccountEntry> {
     accountId,
     noDelete: hasCompanyNoDeletePolicy(creds),
     live: false,
+    authHeader,
+    baseUrl,
     transport: {
       post: async (calls) => {
         try {
@@ -306,7 +321,7 @@ async function entryFor(accountId: string): Promise<AccountEntry> {
     primaryJmapId,
     shared: sharedMailAccountsOf(session, primaryJmapId),
     discoveredAt: Date.now(),
-    mailboxes: cached?.mailboxes ?? new Map(),
+    mailboxes: sameCredentials ? cached?.mailboxes ?? new Map() : new Map(),
   };
   entries.set(accountId, entry);
   return entry;
@@ -382,10 +397,10 @@ async function fetchTarget(
   opts: UnifiedFetchOptions,
   position: number,
   limit: number,
-): Promise<{ emails: UnifiedEmail[]; hasMore: boolean }> {
+): Promise<{ emails: UnifiedEmail[]; ids: string[]; hasMore: boolean }> {
   const mailboxes = await mailboxesFor(entry, target.jmapId);
   const filter = buildFilter(mailboxes, opts);
-  if (!filter) return { emails: [], hasMore: false };
+  if (!filter) return { emails: [], ids: [], hasMore: false };
 
   const res = await entry.transport.post([
     ['Email/query', {
@@ -393,8 +408,10 @@ async function fetchTarget(
       filter,
       sort: [{ property: 'receivedAt', isAscending: false }],
       position,
-      limit,
-      calculateTotal: true,
+      // One lookahead id proves whether another page exists without asking
+      // every mailbox server to count its full result set on each fetch.
+      limit: limit + 1,
+      calculateTotal: false,
     }, '0'],
     ['Email/get', {
       accountId: target.jmapId,
@@ -406,8 +423,8 @@ async function fetchTarget(
   if (qName !== 'Email/query') throw new Error(qBody?.description || 'Email/query failed');
   const [getName, getBody] = res[1] ?? [];
   if (getName !== 'Email/get') throw new Error(getBody?.description || 'Email/get failed');
-  const ids = (qBody.ids as string[]) ?? [];
-  const total = typeof qBody.total === 'number' ? qBody.total : undefined;
+  const queryIds = (qBody.ids as string[]) ?? [];
+  const ids = queryIds.slice(0, limit);
   const list = ((getBody.list as Email[]) ?? []);
   const byId = new Map(list.map((e) => [e.id, e]));
   const nameOf = (e: Email): string | undefined =>
@@ -424,31 +441,31 @@ async function fetchTarget(
       sourceFolder: opts.view ? nameOf(e) : undefined,
     } as UnifiedEmail];
   });
-  const hasMore = total !== undefined ? position + ids.length < total : ids.length === limit;
-  return { emails, hasMore };
+  return { emails, ids, hasMore: queryIds.length > limit };
 }
 
 /**
  * One page of the unified view over `accountIds`. Every target (a registry
  * account's own mailbox plus, with `includeGroup`, each group/shared account
  * reachable through it) is queried at its own `positions` cursor and the
- * results are merged newest-first. Per-account failures are collected in
- * `errors` while the others still show.
+ * results are merged newest-first. Only one global page is shown, and each
+ * target cursor advances past messages actually shown (and query IDs that
+ * vanished before Email/get). This keeps later pages from inserting older
+ * results above messages the user is already reading. Per-account failures
+ * are collected in `errors` while the others still show.
  */
 export async function fetchUnifiedInbox(
   accountIds: string[],
-  perAccountLimit = 25,
+  pageSize = 25,
   opts: UnifiedFetchOptions = {},
 ): Promise<UnifiedInboxResult> {
   const { includeGroup = false } = opts;
   const errors: Record<string, string> = {};
   const positions: Record<string, number> = { ...(opts.positions ?? {}) };
-  let hasMore = false;
-
   const settled = await Promise.all(
     accountIds.map(async (accountId) => {
       try {
-        const entry = await entryFor(accountId);
+        const entry = await entryFor(accountId, opts.refreshSessions);
         const targets: { jmapId: string; isShared: boolean; label?: string }[] = [
           { jmapId: entry.primaryJmapId, isShared: false },
         ];
@@ -459,10 +476,8 @@ export async function fetchUnifiedInbox(
           const key = targetKey(accountId, target.jmapId);
           const position = positions[key] ?? 0;
           try {
-            const page = await fetchTarget(entry, target, opts, position, perAccountLimit);
-            positions[key] = position + page.emails.length;
-            if (page.hasMore) hasMore = true;
-            return page.emails;
+            const page = await fetchTarget(entry, target, opts, position, pageSize);
+            return { key, position, ...page };
           } catch (err) {
             // A single inaccessible shared account shouldn't sink the whole
             // account's view. Report the missing mailbox so a partial inbox
@@ -471,19 +486,36 @@ export async function fetchUnifiedInbox(
             if (!target.isShared) throw err;
             const reason = err instanceof Error ? err.message : 'Failed to load';
             errors[key] = `${target.label || 'Shared mailbox'}: ${reason}`;
-            return [] as UnifiedEmail[];
+            return null;
           }
         }));
-        return perTarget.flat();
+        return perTarget.filter((page) => page !== null);
       } catch (err) {
         errors[accountId] = err instanceof Error ? err.message : 'Failed to load';
-        return [] as UnifiedEmail[];
+        return [];
       }
     }),
   );
-  const emails = settled
-    .flat()
-    .sort((a, b) => new Date(b.receivedAt).getTime() - new Date(a.receivedAt).getTime());
+  const pages = settled.flat();
+  const candidates = pages.flatMap((page) => page.emails.map((email) => ({ key: page.key, email })));
+  candidates.sort((a, b) =>
+    new Date(b.email.receivedAt).getTime() - new Date(a.email.receivedAt).getTime()
+    || a.key.localeCompare(b.key));
+  const emails = candidates.slice(0, pageSize).map(({ email }) => email);
+  const shown = new Map<string, Set<string>>();
+  for (const { key, email } of candidates.slice(0, pageSize)) {
+    const ids = shown.get(key) ?? new Set<string>();
+    ids.add(email.id);
+    shown.set(key, ids);
+  }
+  for (const page of pages) {
+    const available = new Set(page.emails.map((email) => email.id));
+    const firstUnshown = page.ids.findIndex((id) => available.has(id) && !shown.get(page.key)?.has(id));
+    // Email/get may omit an ID deleted between query and get. Move past it
+    // instead of repeatedly fetching the same stale query result.
+    positions[page.key] = page.position + (firstUnshown < 0 ? page.ids.length : firstUnshown);
+  }
+  const hasMore = candidates.length > pageSize || pages.some((page) => page.hasMore);
   return { emails, errors, positions, hasMore };
 }
 

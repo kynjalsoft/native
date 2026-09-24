@@ -1,6 +1,6 @@
 import React from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, Pressable, Modal, Animated, Easing, TextInput,
+  View, Text, StyleSheet, ScrollView, Pressable, Animated, Easing, TextInput, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Tag, X, Plus } from 'lucide-react-native';
@@ -8,6 +8,7 @@ import { spacing, radius, typography, componentSizes, type ThemePalette } from '
 import { useColors } from '../../theme/colors';
 import { useSheetDrag } from '../../lib/use-sheet-drag';
 import { useContactsStore, selectKeywordsUsed } from '../../stores/contacts-store';
+import { SafeAreaModal } from '../SafeAreaModal';
 
 interface Props {
   visible: boolean;
@@ -58,7 +59,8 @@ export default function TagAssignSheet({
   };
 
   return (
-    <Modal visible={visible} transparent animationType="none" onRequestClose={onClose} statusBarTranslucent>
+    <SafeAreaModal visible={visible} transparent animationType="none" onRequestClose={onClose} statusBarTranslucent>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'height' : undefined}>
       <Animated.View style={[styles.overlay, { opacity: overlayOpacity }]}>
         <Pressable style={{ flex: 1 }} onPress={onClose} />
       </Animated.View>
@@ -119,7 +121,8 @@ export default function TagAssignSheet({
           )}
         </ScrollView>
       </Animated.View>
-    </Modal>
+      </KeyboardAvoidingView>
+    </SafeAreaModal>
   );
 }
 

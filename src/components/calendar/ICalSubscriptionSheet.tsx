@@ -1,6 +1,6 @@
 import React from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, Pressable, Modal, Animated, Easing, TextInput, ActivityIndicator,
+  View, Text, StyleSheet, ScrollView, Pressable, Animated, Easing, TextInput, ActivityIndicator, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { X, Plus, RefreshCw, Trash2, Rss, AlertTriangle } from 'lucide-react-native';
@@ -16,6 +16,7 @@ import {
   type CalendarSubscription,
 } from '../../stores/calendar-subscriptions-store';
 import { jmapClient } from '../../api/jmap-client';
+import { SafeAreaModal } from '../SafeAreaModal';
 
 const INTERVAL_OPTIONS: { minutes: number; label: string }[] = [
   { minutes: 15, label: '15 min' },
@@ -122,7 +123,8 @@ export function ICalSubscriptionSheet({ visible, onClose }: Props) {
   };
 
   return (
-    <Modal visible={visible} transparent animationType="none" onRequestClose={onClose} statusBarTranslucent>
+    <SafeAreaModal visible={visible} transparent animationType="none" onRequestClose={onClose} statusBarTranslucent>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'height' : undefined}>
       <Animated.View style={[styles.overlay, { opacity: overlayOpacity }]}>
         <Pressable style={{ flex: 1 }} onPress={onClose} />
       </Animated.View>
@@ -252,7 +254,8 @@ export function ICalSubscriptionSheet({ visible, onClose }: Props) {
           <View style={{ height: insets.bottom }} />
         </SafeAreaView>
       </Animated.View>
-    </Modal>
+      </KeyboardAvoidingView>
+    </SafeAreaModal>
   );
 }
 

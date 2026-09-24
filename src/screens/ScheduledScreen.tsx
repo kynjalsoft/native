@@ -37,6 +37,8 @@ export default function ScheduledScreen({ navigation }: Props) {
   const mailboxes = useEmailStore((s) => s.mailboxes);
   const [items, setItems] = React.useState<ScheduledEmail[]>([]);
   const [loading, setLoading] = React.useState(true);
+  const [manualRefreshing, setManualRefreshing] = React.useState(false);
+  const manualRefreshInFlight = React.useRef(false);
   const [error, setError] = React.useState<string | null>(null);
   const [busyId, setBusyId] = React.useState<string | null>(null);
   const [actionsFor, setActionsFor] = React.useState<ScheduledEmail | null>(null);
@@ -71,6 +73,18 @@ export default function ScheduledScreen({ navigation }: Props) {
 
   React.useEffect(() => {
     void load();
+  }, [load]);
+
+  const onManualRefresh = React.useCallback(async () => {
+    if (manualRefreshInFlight.current) return;
+    manualRefreshInFlight.current = true;
+    setManualRefreshing(true);
+    try {
+      await load();
+    } finally {
+      manualRefreshInFlight.current = false;
+      setManualRefreshing(false);
+    }
   }, [load]);
 
   const runAction = async (item: ScheduledEmail, action: () => Promise<void>, failTitle: string) => {
@@ -262,11 +276,20 @@ export default function ScheduledScreen({ navigation }: Props) {
         <View style={styles.headerBtn} />
       </View>
 
-      {loading ? (
+      {error && items.length > 0 && (
+        <View style={styles.refreshError}>
+          <Text style={[styles.error, styles.refreshErrorText]} numberOfLines={2}>{error}</Text>
+          <Pressable onPress={() => { void load(); }} hitSlop={8}>
+            <Text style={styles.retry}>{t('common.retry', 'Retry')}</Text>
+          </Pressable>
+        </View>
+      )}
+
+      {loading && items.length === 0 ? (
         <View style={styles.center}>
           <ActivityIndicator color={c.primary} />
         </View>
-      ) : error ? (
+      ) : error && items.length === 0 ? (
         <View style={styles.center}>
           <Text style={styles.error}>{error}</Text>
           <Pressable onPress={() => { void load(); }}>
@@ -288,8 +311,8 @@ export default function ScheduledScreen({ navigation }: Props) {
           renderItem={renderItem}
           ItemSeparatorComponent={() => <View style={styles.separator} />}
           contentContainerStyle={styles.listContent}
-          refreshing={loading}
-          onRefresh={() => { void load(); }}
+          refreshing={manualRefreshing}
+          onRefresh={() => { void onManualRefresh(); }}
         />
       )}
 
@@ -400,6 +423,12 @@ function makeStyles(c: ThemePalette) {
     },
     headerTitle: { ...typography.h3, color: c.text, flex: 1 },
     center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.sm, padding: spacing.lg },
+    refreshError: {
+      flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+      gap: spacing.sm, paddingHorizontal: spacing.lg, paddingVertical: spacing.sm,
+      backgroundColor: c.errorBg,
+    },
+    refreshErrorText: { flex: 1, textAlign: 'left' },
     error: { ...typography.body, color: c.error, textAlign: 'center' },
     retry: { ...typography.bodyMedium, color: c.primary, marginTop: spacing.sm },
     emptyText: { ...typography.body, color: c.textSecondary },

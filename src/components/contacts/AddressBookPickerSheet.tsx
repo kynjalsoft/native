@@ -1,11 +1,12 @@
 import React from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, Pressable, Modal, Animated, Easing, TextInput, Alert,
+  View, Text, StyleSheet, ScrollView, Pressable, Animated, Easing, TextInput, Alert, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BookUser, X, Check, Plus } from 'lucide-react-native';
 import { spacing, radius, typography, componentSizes, type ThemePalette } from '../../theme/tokens';
 import { useColors } from '../../theme/colors';
+import { SafeAreaModal } from '../SafeAreaModal';
 import { useSheetDrag } from '../../lib/use-sheet-drag';
 import { useContactsStore } from '../../stores/contacts-store';
 
@@ -68,7 +69,8 @@ export default function AddressBookPickerSheet({
   };
 
   return (
-    <Modal visible={visible} transparent animationType="none" onRequestClose={onClose} statusBarTranslucent>
+    <SafeAreaModal visible={visible} transparent animationType="none" onRequestClose={onClose} statusBarTranslucent>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'height' : undefined}>
       <Animated.View style={[styles.overlay, { opacity: overlayOpacity }]}>
         <Pressable style={{ flex: 1 }} onPress={onClose} />
       </Animated.View>
@@ -143,7 +145,8 @@ export default function AddressBookPickerSheet({
           )}
         </ScrollView>
       </Animated.View>
-    </Modal>
+      </KeyboardAvoidingView>
+    </SafeAreaModal>
   );
 }
 

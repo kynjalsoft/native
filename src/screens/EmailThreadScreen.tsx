@@ -2,8 +2,9 @@ import React from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator,
   Modal, useWindowDimensions, Animated, Easing, Alert, FlatList,
+  KeyboardAvoidingView, Platform,
 } from 'react-native';
-import type { NativeSyntheticEvent, NativeScrollEvent } from 'react-native';
+import type { NativeSyntheticEvent, NativeScrollEvent, StyleProp, ViewStyle } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import {
@@ -39,6 +40,17 @@ import type { RootStackParamList } from '../navigation/types';
 import { jmapClient } from '../api/jmap-client';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'EmailThread'>;
+
+function KeyboardAwareThreadLayout({ children, style }: {
+  children: React.ReactNode;
+  style: StyleProp<ViewStyle>;
+}) {
+  return (
+    <KeyboardAvoidingView style={style} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <SafeAreaView style={style} edges={['top']}>{children}</SafeAreaView>
+    </KeyboardAvoidingView>
+  );
+}
 
 export default function EmailThreadScreen({ route, navigation }: Props) {
   const companyNoDelete = jmapClient.hasCompanyNoDeletePolicy;
@@ -562,7 +574,7 @@ export default function EmailThreadScreen({ route, navigation }: Props) {
     : false;
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <KeyboardAwareThreadLayout style={styles.container}>
       {/* Toolbar */}
       <View style={styles.toolbar}>
         <Pressable onPress={() => navigation.goBack()} style={styles.toolbarBack} hitSlop={8}>
@@ -786,7 +798,7 @@ export default function EmailThreadScreen({ route, navigation }: Props) {
       />
 
       <AddressActionSheet address={addressSheet} onClose={() => setAddressSheet(null)} />
-    </SafeAreaView>
+    </KeyboardAwareThreadLayout>
   );
 }
 
@@ -829,6 +841,11 @@ function EmailPane({
   // Freeze the pane's vertical scroll while a pinch is in flight so a two-
   // finger zoom can't fling the page.
   const [pinching, setPinching] = React.useState(false);
+  const scrollRef = React.useRef<ScrollView>(null);
+  const replyFocused = React.useRef(false);
+  const scrollToReply = React.useCallback(() => {
+    requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
+  }, []);
   // Which cards are open. Seeded once the conversation arrives: the opened
   // message, the newest one and every unread one, like the webmail.
   const [expanded, setExpanded] = React.useState<Set<string> | null>(null);
@@ -886,9 +903,14 @@ function EmailPane({
 
   return (
     <ScrollView
+      ref={scrollRef}
       style={styles.scroll}
       contentContainerStyle={{ paddingBottom: bottomBarHeight + spacing.lg }}
       scrollEnabled={!pinching}
+      keyboardShouldPersistTaps="handled"
+      keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+      onLayout={() => { if (replyFocused.current) scrollToReply(); }}
+      onContentSizeChange={() => { if (replyFocused.current) scrollToReply(); }}
     >
       {/* Subject block */}
       <View style={styles.subjectBlock}>
@@ -955,6 +977,10 @@ function EmailPane({
         jmapAccountId={jmapAccountId}
         onMoreOptions={() => onReply('reply', newest)}
         onSent={onEmailPatched}
+        onFocusChange={(focused) => {
+          replyFocused.current = focused;
+          if (focused) scrollToReply();
+        }}
       />
     </ScrollView>
   );

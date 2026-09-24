@@ -36,6 +36,8 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation/types';
 import type { Mailbox } from '../api/types';
+import { SafeAreaModal } from './SafeAreaModal';
+import { KeyboardSafeModal } from './KeyboardSafeModal';
 
 const CHEVRON_SLOT = 20;
 const INDENT_STEP = 12;
@@ -265,31 +267,33 @@ function NamePrompt({ title, message, initial, confirmLabel, onSubmit, onClose }
     onSubmit(name);
   };
   return (
-    <Modal visible transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
-      <Pressable style={styles.sheetOverlay} onPress={onClose} />
-      <View style={styles.promptCard}>
-        <Text style={styles.sheetTitle}>{title}</Text>
-        {message ? <Text style={styles.promptMessage}>{message}</Text> : null}
-        <TextInput
-          value={value}
-          onChangeText={setValue}
-          placeholder={t('mailbox_context_menu.placeholder_folder_name', 'Folder name')}
-          placeholderTextColor={c.textMuted}
-          style={styles.promptInput}
-          autoFocus
-          onSubmitEditing={submit}
-          returnKeyType="done"
-        />
-        <View style={styles.promptActions}>
-          <Pressable onPress={onClose} style={styles.promptButton} hitSlop={6}>
-            <Text style={styles.promptButtonText}>{t('common.cancel', 'Cancel')}</Text>
-          </Pressable>
-          <Pressable onPress={submit} style={styles.promptButton} hitSlop={6} disabled={!value.trim()}>
-            <Text style={[styles.promptButtonText, { color: c.primary }, !value.trim() && { opacity: 0.5 }]}>{confirmLabel}</Text>
-          </Pressable>
+    <KeyboardSafeModal visible transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
+      <View style={styles.promptBackdrop}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+        <View style={styles.promptCard}>
+          <Text style={styles.sheetTitle}>{title}</Text>
+          {message ? <Text style={styles.promptMessage}>{message}</Text> : null}
+          <TextInput
+            value={value}
+            onChangeText={setValue}
+            placeholder={t('mailbox_context_menu.placeholder_folder_name', 'Folder name')}
+            placeholderTextColor={c.textMuted}
+            style={styles.promptInput}
+            autoFocus
+            onSubmitEditing={submit}
+            returnKeyType="done"
+          />
+          <View style={styles.promptActions}>
+            <Pressable onPress={onClose} style={styles.promptButton} hitSlop={6}>
+              <Text style={styles.promptButtonText}>{t('common.cancel', 'Cancel')}</Text>
+            </Pressable>
+            <Pressable onPress={submit} style={styles.promptButton} hitSlop={6} disabled={!value.trim()}>
+              <Text style={[styles.promptButtonText, { color: c.primary }, !value.trim() && { opacity: 0.5 }]}>{confirmLabel}</Text>
+            </Pressable>
+          </View>
         </View>
       </View>
-    </Modal>
+    </KeyboardSafeModal>
   );
 }
 
@@ -739,7 +743,7 @@ export default function SidebarDrawer({ visible, onClose }: SidebarDrawerProps) 
   const tagViewActive = !!filters.keyword;
 
   return (
-    <Modal
+    <SafeAreaModal
       visible={visible}
       transparent
       animationType="none"
@@ -1131,7 +1135,7 @@ export default function SidebarDrawer({ visible, onClose }: SidebarDrawerProps) 
           onClose={() => setPrompt(null)}
         />
       )}
-    </Modal>
+    </SafeAreaModal>
   );
 }
 
@@ -1443,15 +1447,14 @@ function makeStyles(c: ThemePalette) {
   },
   sheetRowText: { ...typography.body, color: c.text },
   promptCard: {
-    position: 'absolute',
-    left: spacing.lg, right: spacing.lg,
-    top: '30%',
+    marginHorizontal: spacing.lg,
     backgroundColor: c.popover,
     borderRadius: radius.md,
     borderWidth: 1,
     borderColor: c.border,
     paddingVertical: spacing.sm,
   },
+  promptBackdrop: { flex: 1, justifyContent: 'center' },
   promptMessage: { ...typography.caption, color: c.textSecondary, paddingHorizontal: spacing.lg },
   promptInput: {
     ...typography.body,

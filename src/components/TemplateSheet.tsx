@@ -1,6 +1,6 @@
 import React from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, Pressable, Modal, Animated, Easing, TextInput,
+  View, Text, StyleSheet, ScrollView, Pressable, Animated, Easing, TextInput, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { X, Star, FileText } from 'lucide-react-native';
@@ -10,6 +10,7 @@ import { useSheetDrag } from '../lib/use-sheet-drag';
 import { useLocaleStore } from '../stores/locale-store';
 import { useTemplatesStore, type EmailTemplate } from '../stores/templates-store';
 import { filterTemplates } from '../lib/template-utils';
+import { SafeAreaModal } from './SafeAreaModal';
 
 interface TemplateSheetProps {
   visible: boolean;
@@ -63,7 +64,8 @@ export function TemplateSheet({ visible, onClose, onPick }: TemplateSheetProps) 
   }, [templates, query]);
 
   return (
-    <Modal visible={visible} transparent animationType="none" onRequestClose={onClose} statusBarTranslucent>
+    <SafeAreaModal visible={visible} transparent animationType="none" onRequestClose={onClose} statusBarTranslucent>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'height' : undefined}>
       <Animated.View style={[styles.sheetOverlay, { opacity: overlayOpacity }]}>
         <Pressable style={styles.sheetOverlayPress} onPress={onClose} />
       </Animated.View>
@@ -127,7 +129,8 @@ export function TemplateSheet({ visible, onClose, onPick }: TemplateSheetProps) 
           ))}
         </ScrollView>
       </Animated.View>
-    </Modal>
+      </KeyboardAvoidingView>
+    </SafeAreaModal>
   );
 }
 

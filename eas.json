@@ -12,7 +12,14 @@
     "preview": {
       "distribution": "internal",
       "environment": "preview",
-      "channel": "preview"
+      "channel": "preview",
+      "autoIncrement": true
+    },
+    "testflight-preview": {
+      "distribution": "store",
+      "environment": "preview",
+      "channel": "preview",
+      "autoIncrement": true
     },
     "production": {
       "autoIncrement": true,
@@ -20,6 +27,11 @@
     }
   },
   "submit": {
+    "testflight-preview": {
+      "ios": {
+        "ascAppId": "6815714517"
+      }
+    },
     "production": {}
   }
 }
