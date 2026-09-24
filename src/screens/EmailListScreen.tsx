@@ -7,7 +7,7 @@ import {
   Search, SquarePen, Menu, Filter, Square, SquareCheck, Minus, X,
   Star, Paperclip, Mail as MailIcon, MailOpen, Trash2, RotateCcw, CalendarDays,
   Archive, FolderInput, Tag, Import, ArrowDownWideNarrow, ArrowUpNarrowWide,
-  Pin, Reply, Forward, ShieldAlert, ShieldCheck, Folder,
+  Pin, Reply, Forward, ShieldAlert, ShieldCheck, Folder, MoreVertical,
 } from 'lucide-react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -20,6 +20,7 @@ import { SwipeableRow } from '../components/SwipeableRow';
 import { MoveSheet } from '../components/MoveSheet';
 import { TagSheet } from '../components/TagSheet';
 import { UndoSnackbar } from '../components/UndoSnackbar';
+import { ActionSheet } from '../components/email/ActionSheet';
 import { OfflineBanner } from '../components/OfflineBanner';
 import { useNetworkStore } from '../stores/network-store';
 import { useEmailStore, effectiveFolderScope, type EmailFilters } from '../stores/email-store';
@@ -455,9 +456,36 @@ export default function EmailListScreen({ onEmailPress, onComposePress, onIntera
   // Batch (multi-select) sheets.
   const [batchMoveOpen, setBatchMoveOpen] = React.useState(false);
   const [tagSheetOpen, setTagSheetOpen] = React.useState(false);
+  const [batchActionsOpen, setBatchActionsOpen] = React.useState(false);
+  const batchSheetTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  React.useEffect(() => () => {
+    if (batchSheetTimer.current) clearTimeout(batchSheetTimer.current);
+  }, []);
+  // iOS cannot present the next modal while the action sheet is dismissing.
+  const afterBatchSheetCloses = (action: () => void) => {
+    setBatchActionsOpen(false);
+    if (batchSheetTimer.current) clearTimeout(batchSheetTimer.current);
+    batchSheetTimer.current = setTimeout(() => {
+      batchSheetTimer.current = null;
+      action();
+    }, 250);
+  };
 
   // Selection state
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
+  const [manualRefreshing, setManualRefreshing] = React.useState(false);
+  const manualRefreshInFlight = React.useRef(false);
+  const onManualRefresh = React.useCallback(async () => {
+    if (manualRefreshInFlight.current) return;
+    manualRefreshInFlight.current = true;
+    setManualRefreshing(true);
+    try {
+      await refreshEmails();
+    } finally {
+      manualRefreshInFlight.current = false;
+      setManualRefreshing(false);
+    }
+  }, [refreshEmails]);
   const selectionMode = selectedIds.size > 0;
   const allSelected =
     visibleEmails.length > 0 && visibleEmails.every((e) => selectedIds.has(e.id));
@@ -904,25 +932,16 @@ export default function EmailListScreen({ onEmailPress, onComposePress, onIntera
       {/* Header */}
       {selectionMode ? (
         <View style={styles.header}>
-          <Pressable onPress={clearSelection} style={styles.headerButton}>
+          <Pressable onPress={clearSelection} style={styles.headerButton} accessibilityRole="button" accessibilityLabel={t('common.close', 'Close')}>
             <X size={20} color={c.text} />
           </Pressable>
-          <Text style={styles.headerTitle}>{selectedIds.size} selected</Text>
-          <Pressable
-            onPress={() => { void handleBulkStar(); }}
-            style={styles.headerButton}
-            hitSlop={6}
-          >
-            <Star
-              size={20}
-              color={allSelectedAreStarred ? c.starred : c.text}
-              fill={allSelectedAreStarred ? c.starred : 'transparent'}
-            />
-          </Pressable>
+          <Text style={styles.headerTitle} numberOfLines={1}>{selectedIds.size} selected</Text>
           <Pressable
             onPress={() => { void handleBulkMarkReadToggle(); }}
             style={styles.headerButton}
             hitSlop={6}
+            accessibilityRole="button"
+            accessibilityLabel={allSelectedAreRead ? t('context_menu.mark_unread', 'Mark unread') : t('context_menu.mark_read', 'Mark read')}
           >
             {allSelectedAreRead ? (
               <MailIcon size={20} color={c.text} />
@@ -930,52 +949,9 @@ export default function EmailListScreen({ onEmailPress, onComposePress, onIntera
               <MailOpen size={20} color={c.text} />
             )}
           </Pressable>
-          <Pressable
-            onPress={() => setTagSheetOpen(true)}
-            style={styles.headerButton}
-            hitSlop={6}
-          >
-            <Tag size={20} color={c.text} />
+          <Pressable onPress={() => setBatchActionsOpen(true)} style={styles.headerButton} hitSlop={6} accessibilityRole="button" accessibilityLabel={t('email_viewer.more', 'More actions')}>
+            <MoreVertical size={20} color={c.text} />
           </Pressable>
-          <Pressable
-            onPress={() => setBatchMoveOpen(true)}
-            style={styles.headerButton}
-            hitSlop={6}
-          >
-            <FolderInput size={20} color={c.text} />
-          </Pressable>
-          {canSpamSelection && (
-            <Pressable
-              onPress={() => { void handleBulkSpam(); }}
-              style={styles.headerButton}
-              hitSlop={6}
-              accessibilityLabel={inJunk ? t('context_menu.not_spam', 'Not spam') : t('context_menu.mark_as_spam', 'Report spam')}
-            >
-              {inJunk ? (
-                <ShieldCheck size={20} color={c.text} />
-              ) : (
-                <ShieldAlert size={20} color={c.text} />
-              )}
-            </Pressable>
-          )}
-          {canArchiveSelection && (
-            <Pressable
-              onPress={() => { void handleBulkArchive(); }}
-              style={styles.headerButton}
-              hitSlop={6}
-            >
-              <Archive size={20} color={c.text} />
-            </Pressable>
-          )}
-          {!companyNoDelete && (
-            <Pressable
-              onPress={() => { void handleBulkDelete(); }}
-              style={styles.headerButton}
-              hitSlop={6}
-            >
-              <Trash2 size={20} color={c.text} />
-            </Pressable>
-          )}
         </View>
       ) : (
         <View style={styles.header}>
@@ -1298,8 +1274,8 @@ export default function EmailListScreen({ onEmailPress, onComposePress, onIntera
           contentContainerStyle={styles.listContent}
           onEndReached={() => { void loadMoreEmails(); }}
           onEndReachedThreshold={0.3}
-          refreshing={loading}
-          onRefresh={() => { void refreshEmails(); }}
+          refreshing={manualRefreshing}
+          onRefresh={() => { void onManualRefresh(); }}
         />
       )}
 
@@ -1312,6 +1288,46 @@ export default function EmailListScreen({ onEmailPress, onComposePress, onIntera
       </Pressable>
 
       <SidebarDrawer visible={drawerOpen} onClose={() => setDrawerOpen(false)} />
+
+      <ActionSheet
+        visible={batchActionsOpen && selectionMode}
+        title={t('context_menu.items_selected', `${selectedIds.size} selected`, { count: selectedIds.size })}
+        onClose={() => setBatchActionsOpen(false)}
+        items={[
+          {
+            key: 'star',
+            label: allSelectedAreStarred ? t('context_menu.unstar', 'Unstar') : t('context_menu.star', 'Star'),
+            icon: <Star size={20} color={c.textSecondary} />,
+            onPress: () => { setBatchActionsOpen(false); void handleBulkStar(); },
+          },
+          {
+            key: 'tag', label: t('context_menu.tag', 'Tag'),
+            icon: <Tag size={20} color={c.textSecondary} />,
+            onPress: () => afterBatchSheetCloses(() => setTagSheetOpen(true)),
+          },
+          {
+            key: 'move', label: t('context_menu.move_to', 'Move to folder'),
+            icon: <FolderInput size={20} color={c.textSecondary} />,
+            onPress: () => afterBatchSheetCloses(() => setBatchMoveOpen(true)),
+          },
+          ...(canSpamSelection ? [{
+            key: 'spam',
+            label: inJunk ? t('context_menu.not_spam', 'Not spam') : t('context_menu.mark_as_spam', 'Report spam'),
+            icon: inJunk ? <ShieldCheck size={20} color={c.textSecondary} /> : <ShieldAlert size={20} color={c.textSecondary} />,
+            onPress: () => { setBatchActionsOpen(false); void handleBulkSpam(); },
+          }] : []),
+          ...(canArchiveSelection ? [{
+            key: 'archive', label: t('context_menu.archive', 'Archive'),
+            icon: <Archive size={20} color={c.textSecondary} />,
+            onPress: () => { setBatchActionsOpen(false); void handleBulkArchive(); },
+          }] : []),
+          ...(!companyNoDelete ? [{
+            key: 'delete', label: t('context_menu.delete', 'Delete'), destructive: true,
+            icon: <Trash2 size={20} color={c.error} />,
+            onPress: () => afterBatchSheetCloses(() => { void handleBulkDelete(); }),
+          }] : []),
+        ]}
+      />
 
       <Modal
         visible={filterMenuOpen}

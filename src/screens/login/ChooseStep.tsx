@@ -188,6 +188,6 @@ function makeStyles(c: ThemePalette) {
       gap: spacing.sm,
       paddingVertical: spacing.sm,
     },
-    manualText: { ...typography.body, color: c.textMuted },
+    manualText: { ...typography.body, color: c.textSecondary },
   });
 }
