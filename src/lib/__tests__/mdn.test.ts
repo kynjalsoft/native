@@ -20,6 +20,7 @@ describe('buildMdnMessage', () => {
     expect(raw).toContain('Content-Type: message/disposition-notification\r\n');
     expect(raw).toContain('Original-Message-ID: <orig@remote.example>\r\n');
     expect(raw).toContain('Final-Recipient: rfc822;me@x.example\r\n');
+    expect(raw).toContain('Reporting-UA: x.example; ZyndMail\r\n');
     expect(raw).toContain('Disposition: manual-action/MDN-sent-manually; displayed\r\n');
     expect(raw.split('\n').every((l) => l === '' || l.endsWith('\r'))).toBe(true);
   });
