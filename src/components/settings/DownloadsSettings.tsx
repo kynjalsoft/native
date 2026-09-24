@@ -17,11 +17,13 @@ import {
   type EmailFilenameOptions,
 } from '../../lib/download-filename';
 import { useLocaleStore } from '../../stores/locale-store';
+import { jmapClient } from '../../api/jmap-client';
 
 const SAMPLE = buildSampleEmail();
 const SAMPLE_ATTACHMENT = { name: 'Rechnung 2026.pdf', type: 'application/pdf' };
 
 export function DownloadsSettings() {
+  const companyNoDelete = jmapClient.hasCompanyNoDeletePolicy;
   const c = useColors();
   const styles = React.useMemo(() => makeStyles(c), [c]);
   const hydrated = useSettingsStore((s) => s.hydrated);
@@ -130,12 +132,12 @@ export function DownloadsSettings() {
       >
         <View style={styles.group}>
           <RadioGroup
-            value={postExportAction}
+            value={companyNoDelete && postExportAction === 'trash' ? 'keep' : postExportAction}
             onChange={(v) => update('postExportAction', v as PostExportAction)}
             options={[
               { value: 'keep', label: t('settings.downloads.after_export.keep', "Keep in mailbox") },
               { value: 'archive', label: t('settings.downloads.after_export.archive', "Move to archive") },
-              { value: 'trash', label: t('settings.downloads.after_export.trash', "Move to trash") },
+              ...(!companyNoDelete ? [{ value: 'trash', label: t('settings.downloads.after_export.trash', "Move to trash") }] : []),
             ]}
           />
         </View>

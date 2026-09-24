@@ -7,6 +7,7 @@ import { toWildcardQuery } from '../lib/search-utils';
 import { sanitizeDisplayName } from '../lib/rfc5322-mailbox';
 import { generateMessageId, stripMessageIdBrackets } from '../lib/email-threading';
 import { buildMdnMessage, type MdnOptions } from '../lib/mdn';
+import { assertCompanyDeleteActionAllowed } from '../lib/zyndmail-mail-policy';
 
 export const EMAIL_LIST_PROPERTIES = [
   'id', 'threadId', 'mailboxIds', 'keywords', 'size',
@@ -706,6 +707,7 @@ export async function deleteEmails(
   accountIdOverride?: string,
 ): Promise<void> {
   if (ids.length === 0) return;
+  assertCompanyDeleteActionAllowed(jmapClient.hasCompanyNoDeletePolicy);
   if (currentMailboxId === trashMailboxId) {
     await destroyEmails(ids, accountIdOverride);
   } else {

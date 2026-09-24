@@ -8,7 +8,7 @@ import { keywordPointer, mailboxPointer } from './patch-pointer';
 import { secureFetch } from '../lib/client-cert';
 import { refreshOAuthAccessToken, type OAuthTokens } from '../lib/oauth';
 import { toWildcardQuery } from '../lib/search-utils';
-import { assertMailDeletionAllowed } from '../lib/zyndmail-mail-policy';
+import { assertCompanyDeleteActionAllowed, assertMailDeletionAllowed, hasCompanyNoDeletePolicy } from '../lib/zyndmail-mail-policy';
 
 // Aggregated views across accounts ("All inboxes", "All Sent", All mail /
 // Unread / Starred). Because the JMAP client is a single-account singleton
@@ -132,8 +132,9 @@ async function jmapPost(
   apiUrl: string,
   authHeader: string,
   methodCalls: JMAPMethodCall[],
+  noDelete: boolean,
 ): Promise<MethodResponses> {
-  assertMailDeletionAllowed(methodCalls);
+  assertMailDeletionAllowed(methodCalls, noDelete);
   const response = await fetchWithDeadline(apiUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: authHeader },
@@ -218,6 +219,7 @@ async function ensureFreshCredentials(
 
 interface AccountEntry {
   accountId: string;
+  noDelete: boolean;
   transport: Transport;
   primaryJmapId: string;
   shared: { id: string; name: string }[];
@@ -256,6 +258,7 @@ async function entryFor(accountId: string): Promise<AccountEntry> {
   if (live && jmapClient.currentSession) {
     const entry: AccountEntry = {
       accountId,
+      noDelete: jmapClient.hasCompanyNoDeletePolicy,
       live: true,
       transport: { post: async (calls) => (await jmapClient.request(calls)).methodResponses as MethodResponses },
       primaryJmapId: jmapClient.accountId,
@@ -287,11 +290,12 @@ async function entryFor(accountId: string): Promise<AccountEntry> {
 
   const entry: AccountEntry = {
     accountId,
+    noDelete: hasCompanyNoDeletePolicy(creds),
     live: false,
     transport: {
       post: async (calls) => {
         try {
-          return await jmapPost(apiUrl, authHeader, calls);
+          return await jmapPost(apiUrl, authHeader, calls, hasCompanyNoDeletePolicy(creds));
         } catch (err) {
           // A dead session must not be reused for the next refresh.
           if (err instanceof Error && err.message === 'Session expired') entries.delete(accountId);
@@ -540,6 +544,11 @@ export async function moveUnifiedEmails(
   target: UnifiedMoveTarget,
   opts: { markRead?: boolean } = {},
 ): Promise<void> {
+  if (target === 'trash') {
+    for (const g of groupByOwner(emails).values()) {
+      assertCompanyDeleteActionAllowed((await entryFor(g.accountId)).noDelete);
+    }
+  }
   for (const g of groupByOwner(emails).values()) {
     const entry = await entryFor(g.accountId);
     const mailboxes = await mailboxesFor(entry, g.jmapAccountId);
@@ -574,6 +583,9 @@ export async function deleteUnifiedEmails(
   emails: UnifiedEmail[],
   opts: { permanent?: boolean; markRead?: boolean } = {},
 ): Promise<{ destroyed: number; trashed: number }> {
+  for (const g of groupByOwner(emails).values()) {
+    assertCompanyDeleteActionAllowed((await entryFor(g.accountId)).noDelete);
+  }
   let destroyed = 0;
   let trashed = 0;
   for (const g of groupByOwner(emails).values()) {

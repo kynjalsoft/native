@@ -1,9 +1,21 @@
 import type { JMAPMethodCall } from '../api/types';
+import { isCompanyMailServer } from './zyndmail-company';
 
-/** A company build must never ask JMAP to destroy mail or a mailbox. */
+/** Scope the client guard to the account being used, including detached accounts. */
+export function hasCompanyNoDeletePolicy(
+  credentials: { serverUrl: string; companyIdentity?: unknown } | null | undefined,
+): boolean {
+  return !!credentials && (isCompanyMailServer(credentials.serverUrl) || !!credentials.companyIdentity);
+}
+
+export function assertCompanyDeleteActionAllowed(noDelete: boolean): void {
+  if (noDelete) throw new Error('Mail deletion is disabled by your organization');
+}
+
+/** A company account must never ask JMAP to destroy mail or a mailbox. */
 export function assertMailDeletionAllowed(
   methodCalls: JMAPMethodCall[],
-  noDelete = process.env.EXPO_PUBLIC_ZYNDMAIL_NO_DELETE === '1',
+  noDelete: boolean,
 ): void {
   if (!noDelete) return;
 
