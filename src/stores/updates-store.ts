@@ -4,6 +4,7 @@ import Constants from 'expo-constants';
 import {
   fetchLatestRelease,
   resolveApkSha256,
+  UPDATE_REPO,
   UpdateRateLimitedError,
   type LatestRelease,
 } from '../api/updates';
@@ -19,6 +20,7 @@ const PENDING_APK_INTERVAL_MS = 2 * 60 * 1000;
 const RATE_LIMIT_BACKOFF_MS = 60 * 60 * 1000;
 
 interface PersistedUpdates {
+  releaseRepo: string;
   autoCheck: boolean;
   lastCheckedAt: number;
   cachedLatest: LatestRelease | null;
@@ -27,6 +29,7 @@ interface PersistedUpdates {
 }
 
 const DEFAULT_PERSISTED: PersistedUpdates = {
+  releaseRepo: UPDATE_REPO,
   autoCheck: true,
   lastCheckedAt: 0,
   cachedLatest: null,
@@ -60,6 +63,7 @@ function persist(state: PersistedUpdates): void {
 
 function snapshot(s: UpdatesState): PersistedUpdates {
   return {
+    releaseRepo: UPDATE_REPO,
     autoCheck: s.autoCheck,
     lastCheckedAt: s.lastCheckedAt,
     cachedLatest: s.cachedLatest,
@@ -93,12 +97,22 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => ({
       const raw = await AsyncStorage.getItem(STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw) as Partial<PersistedUpdates>;
+        // A prior installation may have cached an APK from a different
+        // repository. Never display or install it after switching release
+        // sources, even before the first successful network check.
+        const sameRepo = parsed.releaseRepo === UPDATE_REPO;
         set({
           ...DEFAULT_PERSISTED,
           ...parsed,
-          cachedLatest: normalizeRelease(parsed.cachedLatest),
+          releaseRepo: UPDATE_REPO,
+          autoCheck: typeof parsed.autoCheck === 'boolean' ? parsed.autoCheck : DEFAULT_PERSISTED.autoCheck,
+          cachedLatest: sameRepo ? normalizeRelease(parsed.cachedLatest) : null,
+          lastCheckedAt: sameRepo ? parsed.lastCheckedAt ?? 0 : 0,
+          dismissedTag: sameRepo ? parsed.dismissedTag ?? null : null,
+          rateLimitedUntil: sameRepo ? parsed.rateLimitedUntil ?? 0 : 0,
           hydrated: true,
         });
+        if (!sameRepo) persist(snapshot(get()));
       } else {
         set({ hydrated: true });
       }
