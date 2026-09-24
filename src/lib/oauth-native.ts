@@ -6,7 +6,7 @@
 // Mirrors the webmail's client-side PKCE flow (`lib/oauth/discovery.ts`,
 // `lib/oauth/pkce.ts`, login page `handleOAuthLogin`): discover the metadata
 // document, open the authorization endpoint in the system browser with a
-// S256 challenge, receive the code on `bulwarkmobile://auth/callback`, and
+// S256 challenge, receive the code on `zyndmailpreview://auth/callback`, and
 // exchange it at the token endpoint. The resulting bundle is the same shape
 // the hand-off produces, so `connectWithOAuth` and the refresh path apply.
 

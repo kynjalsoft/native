@@ -26,7 +26,9 @@ function originOf(value: string): string | null {
 export function isCompanyMailServer(value: string): boolean {
   try {
     const url = new URL(value);
-    return url.origin === ZYNDMAIL_COMPANY.mailOrigin;
+    return url.origin === ZYNDMAIL_COMPANY.mailOrigin &&
+      !url.username && !url.password && !url.search && !url.hash &&
+      url.pathname === '/';
   } catch {
     return false;
   }

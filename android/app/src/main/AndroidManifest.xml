@@ -28,7 +28,6 @@
         <action android:name="android.intent.action.VIEW"/>
         <category android:name="android.intent.category.DEFAULT"/>
         <category android:name="android.intent.category.BROWSABLE"/>
-        <data android:scheme="bulwarkmobile"/>
         <data android:scheme="zyndmailpreview"/>
       </intent-filter>
       <intent-filter>
@@ -59,7 +58,8 @@
     <service android:name=".BulwarkMessagingService" android:exported="false">
       <intent-filter><action android:name="com.google.firebase.MESSAGING_EVENT"/></intent-filter>
     </service>
+    <service android:name="expo.modules.notifications.service.ExpoFirebaseMessagingService" tools:node="remove"/>
     <service android:name=".BulwarkPushTaskService" android:exported="false"/>
-    <meta-data android:name="com.google.firebase.messaging.default_notification_channel_id" android:value="bulwark_mail"/>
+    <meta-data android:name="com.google.firebase.messaging.default_notification_channel_id" android:value="mail-activity"/>
   </application>
 </manifest>

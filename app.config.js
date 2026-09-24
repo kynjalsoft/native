@@ -25,9 +25,10 @@ const IOS_BUILD_NUMBER = process.env.IOS_BUILD_NUMBER || '1';
 module.exports = {
   expo: {
     name: 'ZyndMail Preview',
-    slug: 'bulwark-mobile',
+    slug: 'zyndmail-native-preview',
+    owner: 'kynjal-softwares',
     // mailto: lets Android/iOS offer the app for mail links in other apps.
-    scheme: ['bulwarkmobile', 'zyndmailpreview', 'mailto'],
+    scheme: ['zyndmailpreview', 'mailto'],
     version: VERSION,
     orientation: 'portrait',
     icon: './assets/icon.png',
@@ -44,7 +45,7 @@ module.exports = {
     },
     ios: {
       supportsTablet: true,
-      bundleIdentifier: 'org.bulwarkmail.mobile',
+      bundleIdentifier: 'io.zyndpay.mail.preview',
       buildNumber: IOS_BUILD_NUMBER,
       config: {
         // The app only speaks HTTPS/TLS and uses platform crypto, which is
@@ -59,7 +60,7 @@ module.exports = {
         backgroundColor: '#FFFFFF',
       },
       predictiveBackGestureEnabled: false,
-      package: 'com.anonymous.bulwarkmobile',
+      package: 'io.zyndpay.mail.preview',
       // The AsyncStorage database holds cached message bodies, the outbox and
       // the account registry; the platform backup would ship all of it to the
       // user's Google account. Credentials live in SecureStore (excluded by
@@ -74,6 +75,7 @@ module.exports = {
       'expo-secure-store',
       '@react-native-community/datetimepicker',
       'expo-localization',
+      ['expo-notifications', { defaultChannel: 'mail-activity', color: '#C49A54' }],
       [
         'expo-camera',
         {
@@ -97,6 +99,7 @@ module.exports = {
     ],
     extra: {
       commit: COMMIT,
+      eas: { projectId: '654a0262-9785-4753-8f37-9b0947b537a2' },
     },
   },
 };

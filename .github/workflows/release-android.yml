@@ -1,8 +1,6 @@
 name: Release Android APK
 
 on:
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
       attach_to_release_tag:
@@ -66,6 +64,14 @@ jobs:
       - name: Install JS dependencies
         run: npm ci
 
+      - name: Configure ZyndMail preview Firebase
+        env:
+          FIREBASE_JSON_BASE64: ${{ secrets.ZYNDMAIL_PREVIEW_GOOGLE_SERVICES_JSON_BASE64 }}
+        run: |
+          test -n "$FIREBASE_JSON_BASE64" || { echo "ZyndMail preview Firebase configuration is missing" >&2; exit 1; }
+          printf '%s' "$FIREBASE_JSON_BASE64" | base64 -d > android/app/google-services.json
+          node -e 'const f=require("./android/app/google-services.json"); if(f.project_info?.project_id === "bulwark-mobile" || !f.client?.some(c=>c.client_info?.android_client_info?.package_name === "io.zyndpay.mail.preview")) process.exit(1)'
+
       - name: Decode release keystore
         id: keystore
         env:
@@ -76,7 +82,8 @@ jobs:
             echo "path=$RUNNER_TEMP/release.keystore" >> "$GITHUB_OUTPUT"
             echo "present=true" >> "$GITHUB_OUTPUT"
           else
-            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "ZyndMail preview Android signing credentials are missing" >&2
+            exit 1
           fi
 
       - name: Build release APK
@@ -95,7 +102,7 @@ jobs:
         run: |
           VERSION=$(cat VERSION | tr -d '[:space:]')
           SRC=android/app/build/outputs/apk/release/app-release.apk
-          DEST="bulwark-mobile-${VERSION}-${GITHUB_SHA::7}.apk"
+          DEST="zyndmail-native-preview-${VERSION}-${GITHUB_SHA::7}.apk"
           cp "$SRC" "$DEST"
           echo "path=$DEST" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
@@ -111,12 +118,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if [ "${{ github.event_name }}" = "release" ]; then
-            TAG="${{ github.event.release.tag_name }}"
-          elif [ -n "${{ github.event.inputs.attach_to_release_tag }}" ]; then
+          if [ -n "${{ github.event.inputs.attach_to_release_tag }}" ]; then
             TAG="${{ github.event.inputs.attach_to_release_tag }}"
           else
-            TAG=$(gh release list --limit 1 --json tagName --jq '.[0].tagName' || true)
+            TAG=""
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           if [ -n "$TAG" ]; then

@@ -1,6 +1,7 @@
 import React from 'react';
 import { ActivityIndicator, AppState, Linking, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
+import * as Notifications from 'expo-notifications';
 import { useColorScheme } from 'react-native';
 import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -61,6 +62,13 @@ import { useOutboxStore } from './src/stores/outbox-store';
 import { runOfflineSync } from './src/lib/offline-sync';
 import { spacing, typography, type ThemePalette } from './src/theme/tokens';
 import { useColors } from './src/theme/colors';
+import { isCompanyMailServer } from './src/lib/zyndmail-company';
+import {
+  isCompanyPushPresentation,
+  registerCompanyPush,
+  resolveCompanyPush,
+  revokeCompanyPush,
+} from './src/lib/company-push';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<MainTabsParamList>();
@@ -88,7 +96,7 @@ async function navigateToNotificationTap(payload: NotificationTapPayload): Promi
   });
 }
 
-// Deep links (bulwarkmobile://, webmail https permalinks, mailto:) and
+// Deep links (zyndmailpreview://, webmail https permalinks, mailto:) and
 // Android share-sheet payloads all end up here once the navigator is ready.
 async function openDeepLink(link: DeepLink): Promise<void> {
   await handleDeepLink(link, {
@@ -433,6 +441,7 @@ export default function App() {
   const activeAccountId = useAuthStore((s) => s.activeAccountId);
   React.useEffect(() => {
     if (!isAuthenticated || !client) return;
+    if (isCompanyMailServer(client.serverUrl ?? '')) return;
 
     let cancelled = false;
     const doSetup = async () => {
@@ -470,6 +479,63 @@ export default function App() {
       unsubscribe();
     };
   }, [client, isAuthenticated, emailNotificationsEnabled, activeAccountId]);
+
+  // The company relay owns its JMAP subscription. The fork must never also
+  // register the same company mailbox with Bulwark's public FCM relay.
+  React.useEffect(() => {
+    if (!isAuthenticated || !client || !activeAccountId || !isCompanyMailServer(client.serverUrl ?? '')) return;
+    if (!emailNotificationsEnabled) {
+      void revokeCompanyPush(activeAccountId).catch(() => undefined);
+      return;
+    }
+    const refresh = (force = false) => { void registerCompanyPush(activeAccountId, false, force); };
+    refresh();
+    const stateSubscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') refresh();
+    });
+    const tokenSubscription = Notifications.addPushTokenListener(() => refresh(true));
+    const nativeTokenSubscription = addTokenRefreshListener(() => refresh(true));
+    return () => {
+      stateSubscription.remove();
+      tokenSubscription.remove();
+      nativeTokenSubscription();
+    };
+  }, [client, isAuthenticated, activeAccountId, emailNotificationsEnabled]);
+
+  // Resolve opaque references only after staff authentication. The push has
+  // no message id, address or URL, and a revoked/expired reference falls back
+  // to the access-checked unified inbox.
+  React.useEffect(() => {
+    if (!isAuthenticated) return;
+    let cancelled = false;
+    const openCompanyPush = async (response: Notifications.NotificationResponse | null) => {
+      if (!response || !isCompanyPushPresentation(response.notification.request.content)) return;
+      const accounts = useAccountStore.getState().accounts;
+      const companyAccount = accounts.find((account) => isCompanyMailServer(account.serverUrl));
+      if (!companyAccount) return;
+      if (useAuthStore.getState().activeAccountId !== companyAccount.id) {
+        await useAuthStore.getState().switchAccount(companyAccount.id);
+      }
+      if (cancelled || useAuthStore.getState().activeAccountId !== companyAccount.id) return;
+      const allowed = await resolveCompanyPush(companyAccount.id, response.notification.request.content.data);
+      if (!cancelled && allowed) {
+        // The auth gate can flip before NavigationContainer has mounted.
+        for (let attempt = 0; attempt < 20 && !cancelled && !navigationRef.isReady(); attempt++) {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        if (!cancelled && navigationRef.isReady()) {
+          navigationRef.navigate('UnifiedInbox');
+          await Notifications.clearLastNotificationResponseAsync();
+        }
+      }
+    };
+    void Notifications.getLastNotificationResponseAsync()
+      .then((response) => openCompanyPush(response)).catch(() => undefined);
+    const listener = Notifications.addNotificationResponseReceivedListener((response) => {
+      void openCompanyPush(response).catch(() => undefined);
+    });
+    return () => { cancelled = true; listener.remove(); };
+  }, [isAuthenticated]);
 
   // Live updates (SSE with polling fallback), re-armed on every account
   // switch and every re-established session — the singleton `client` object
@@ -679,4 +745,3 @@ const styles = StyleSheet.create({
     ...typography.body,
   },
 });
-
