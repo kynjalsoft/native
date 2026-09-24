@@ -414,7 +414,7 @@ export default function UnifiedInboxScreen({ navigation, route }: Props) {
           </Pressable>
           <Text style={styles.headerTitle} numberOfLines={1}>{title}</Text>
           <View style={styles.headerBtn}>
-            {opening ? <ActivityIndicator size="small" color={c.primary} /> : null}
+            {opening || (loading && emails.length > 0) ? <ActivityIndicator size="small" color={c.primary} /> : null}
           </View>
         </View>
       )}
