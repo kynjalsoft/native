@@ -14,6 +14,12 @@
       "environment": "preview",
       "channel": "preview"
     },
+    "testflight-preview": {
+      "distribution": "store",
+      "environment": "preview",
+      "channel": "preview",
+      "autoIncrement": true
+    },
     "production": {
       "autoIncrement": true,
       "channel": "production"
