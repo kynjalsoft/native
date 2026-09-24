@@ -12,7 +12,8 @@
     "preview": {
       "distribution": "internal",
       "environment": "preview",
-      "channel": "preview"
+      "channel": "preview",
+      "autoIncrement": true
     },
     "testflight-preview": {
       "distribution": "store",
