@@ -36,10 +36,12 @@ import { pickEmailBody, plainTextBody } from '../lib/email-body';
 import { buildForwardAsAttachmentPayload } from '../lib/forward-as-attachment';
 import type { Email, EmailAddress, Identity } from '../api/types';
 import type { RootStackParamList } from '../navigation/types';
+import { jmapClient } from '../api/jmap-client';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'EmailThread'>;
 
 export default function EmailThreadScreen({ route, navigation }: Props) {
+  const companyNoDelete = jmapClient.hasCompanyNoDeletePolicy;
   const c = useColors();
   const styles = React.useMemo(() => makeStyles(c), [c]);
   const { t } = useLocaleStore();
@@ -359,6 +361,7 @@ export default function EmailThreadScreen({ route, navigation }: Props) {
   };
 
   const onDelete = () => {
+    if (companyNoDelete) return;
     if (!email || !currentMailboxId) return;
     if (!trashMailbox) {
       Alert.alert(
@@ -505,7 +508,7 @@ export default function EmailThreadScreen({ route, navigation }: Props) {
       label: t('email_viewer.delete', 'Delete'),
       icon: (s, col) => <Trash2 size={s} color={col} />,
       onPress: onDelete,
-      available: true,
+      available: !companyNoDelete,
     },
     archive: {
       label: t('email_viewer.archive', 'Archive'),
@@ -577,11 +580,13 @@ export default function EmailThreadScreen({ route, navigation }: Props) {
               />
             );
           })}
-          <ToolbarButton
-            icon={<Trash2 size={18} color={c.textSecondary} />}
-            label={t('email_viewer.delete', 'Delete')}
-            onPress={onDelete}
-          />
+          {!companyNoDelete && (
+            <ToolbarButton
+              icon={<Trash2 size={18} color={c.textSecondary} />}
+              label={t('email_viewer.delete', 'Delete')}
+              onPress={onDelete}
+            />
+          )}
           {showArchive && (
             <ToolbarButton
               icon={<Archive size={18} color={c.textSecondary} />}
@@ -685,7 +690,7 @@ export default function EmailThreadScreen({ route, navigation }: Props) {
               onPress={prevEmail ? () => goToIndex(currentIndex - 1) : undefined}
               disabled={!prevEmail}
             />
-            {bottomActions.map((id) => {
+            {bottomActions.filter((id) => id !== 'delete' || !companyNoDelete).map((id) => {
               const def = quickActionRegistry[id];
               return (
                 <BottomBarButton

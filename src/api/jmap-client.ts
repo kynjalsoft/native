@@ -14,7 +14,9 @@ import {
   type OAuthTokens,
   type OAuthTokenSource,
 } from '../lib/oauth';
+import type { CompanyIdentity } from '../lib/zyndmail-company';
 import { FirstTouchGate } from './first-touch-gate';
+import { assertMailDeletionAllowed, hasCompanyNoDeletePolicy } from '../lib/zyndmail-mail-policy';
 
 // Refresh OAuth access tokens this many ms before they actually expire so
 // in-flight requests don't race the expiry window.
@@ -56,6 +58,7 @@ export interface StoredCredentials {
   tokenEndpoint?: string;
   clientId?: string;
   tokenSource?: OAuthTokenSource;
+  companyIdentity?: CompanyIdentity;
 }
 
 /**
@@ -143,6 +146,10 @@ export class JMAPClient {
 
   get serverUrl(): string | null {
     return this.credentials?.serverUrl ?? null;
+  }
+
+  get hasCompanyNoDeletePolicy(): boolean {
+    return hasCompanyNoDeletePolicy(this.credentials);
   }
 
   // True when the session authenticates with a Bearer token (OAuth handoff or
@@ -304,6 +311,7 @@ export class JMAPClient {
       tokenEndpoint: tokens.tokenEndpoint,
       clientId: tokens.clientId,
       tokenSource: tokens.source,
+      companyIdentity: tokens.companyIdentity,
     };
 
     this.session = this.rewriteSessionUrls(await this.fetchSession(baseUrl), baseUrl);
@@ -338,6 +346,7 @@ export class JMAPClient {
       expiresAt: next.expiresAt,
       tokenEndpoint: next.tokenEndpoint,
       clientId: next.clientId,
+      companyIdentity: next.companyIdentity,
     };
     const accountId = generateAccountId(
       this.credentials.username,
@@ -368,6 +377,7 @@ export class JMAPClient {
       tokenEndpoint: this.credentials.tokenEndpoint,
       clientId: this.credentials.clientId,
       source: this.credentials.tokenSource,
+      companyIdentity: this.credentials.companyIdentity,
     };
   }
 
@@ -382,6 +392,7 @@ export class JMAPClient {
       tokenEndpoint: creds.tokenEndpoint,
       clientId: creds.clientId,
       source: creds.tokenSource,
+      companyIdentity: creds.companyIdentity,
     };
   }
 
@@ -814,6 +825,7 @@ export class JMAPClient {
     using?: string[],
   ): Promise<JMAPResponseBody> {
     if (!this.session) throw new Error('Not connected');
+    assertMailDeletionAllowed(methodCalls, this.hasCompanyNoDeletePolicy);
 
     const body: JMAPRequestBody = {
       using: using ?? [CAPABILITIES.CORE, CAPABILITIES.MAIL],

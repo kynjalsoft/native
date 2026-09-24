@@ -43,6 +43,7 @@ import { draftContextFromEmail, isDraftEmail } from '../lib/draft-context';
 import { getThreads, getFullEmail, emptyMailbox as apiEmptyMailbox } from '../api/email';
 import type { RootStackParamList } from '../navigation/types';
 import type { Email } from '../api/types';
+import { jmapClient } from '../api/jmap-client';
 
 function getSenderName(email: Email): string {
   return email.from?.[0]?.name || email.from?.[0]?.email || 'Unknown';
@@ -308,6 +309,7 @@ export default function EmailListScreen({ onEmailPress, onComposePress }: EmailL
   const deleteAction = useSettingsStore((s) => s.deleteAction);
   const permanentlyDeleteJunk = useSettingsStore((s) => s.permanentlyDeleteJunk);
   const networkOnline = useNetworkStore((s) => s.online);
+  const companyNoDelete = jmapClient.hasCompanyNoDeletePolicy;
 
   const currentMailbox = React.useMemo(
     () => mailboxes.find((m) => m.id === currentMailboxId),
@@ -522,6 +524,7 @@ export default function EmailListScreen({ onEmailPress, onComposePress }: EmailL
   // Trash / permanent delete with the confirm the webmail shows before any
   // destroy (Trash folder, "permanent" delete action, junk auto-permanent).
   const deleteIds = React.useCallback(async (ids: string[]) => {
+    if (companyNoDelete) return;
     if (!currentMailboxId) return;
     if (!trashMailboxId) {
       Alert.alert(
@@ -539,7 +542,7 @@ export default function EmailListScreen({ onEmailPress, onComposePress }: EmailL
     if (permanent && !(await confirmPermanentDelete(ids.length, t))) return;
     if (ids.length === 1) await deleteEmailAction(ids[0], trashMailboxId, currentMailboxId);
     else await deleteEmailsBatch(ids, trashMailboxId, currentMailboxId);
-  }, [currentMailboxId, trashMailboxId, inJunk, deleteAction, permanentlyDeleteJunk, deleteEmailAction, deleteEmailsBatch, t]);
+  }, [companyNoDelete, currentMailboxId, trashMailboxId, inJunk, deleteAction, permanentlyDeleteJunk, deleteEmailAction, deleteEmailsBatch, t]);
 
   const handleSwipeAction = React.useCallback((id: string, action: SwipeAction) => {
     if (action === 'none') return;
@@ -602,8 +605,8 @@ export default function EmailListScreen({ onEmailPress, onComposePress }: EmailL
       const flags = rowFlags.get(key);
       return (
         <SwipeableRow
-          leftAction={selectionMode ? 'none' : swipeLeftAction}
-          rightAction={selectionMode ? 'none' : swipeRightAction}
+          leftAction={selectionMode || (companyNoDelete && swipeLeftAction === 'delete') ? 'none' : swipeLeftAction}
+          rightAction={selectionMode || (companyNoDelete && swipeRightAction === 'delete') ? 'none' : swipeRightAction}
           mode={swipeMode}
           context={{ unread: isUnread(item), starred: isStarred(item), pinned: isPinned(item), inJunk }}
           onAction={(action) => handleSwipeAction(item.id, action)}
@@ -629,7 +632,7 @@ export default function EmailListScreen({ onEmailPress, onComposePress }: EmailL
     [
       selectedIds, selectionMode, handleRowPress, toggleSelect, swipeLeftAction, swipeRightAction,
       swipeMode, handleSwipeAction, disableThreading, rowFlags, rowTagIds, threadCountFor,
-      showPreview, showRecipient, keywordDefs, inJunk, showAvatarsInJunk,
+      showPreview, showRecipient, keywordDefs, inJunk, showAvatarsInJunk, companyNoDelete,
     ],
   );
 
@@ -956,13 +959,15 @@ export default function EmailListScreen({ onEmailPress, onComposePress }: EmailL
               <Archive size={20} color={c.text} />
             </Pressable>
           )}
-          <Pressable
-            onPress={() => { void handleBulkDelete(); }}
-            style={styles.headerButton}
-            hitSlop={6}
-          >
-            <Trash2 size={20} color={c.text} />
-          </Pressable>
+          {!companyNoDelete && (
+            <Pressable
+              onPress={() => { void handleBulkDelete(); }}
+              style={styles.headerButton}
+              hitSlop={6}
+            >
+              <Trash2 size={20} color={c.text} />
+            </Pressable>
+          )}
         </View>
       ) : (
         <View style={styles.header}>

@@ -251,6 +251,7 @@ async function ensureFreshCredentials(
       expiresAt: creds.expiresAt,
       tokenEndpoint: creds.tokenEndpoint,
       clientId: creds.clientId,
+      companyIdentity: creds.companyIdentity,
     };
     const next = await refreshOAuthAccessToken(tokens);
     const updated: StoredCredentials = {

@@ -8,6 +8,7 @@
 // slow or hostile network must never be worse than typing it in.
 
 import { secureFetch } from './client-cert';
+import { ZYNDMAIL_COMPANY } from './zyndmail-company';
 
 export const DISCOVERY_TIMEOUT_MS = 2500;
 
@@ -170,6 +171,7 @@ export async function discoverServerForEmail(
 ): Promise<string | null> {
   const domain = emailDomain(email);
   if (!domain) return null;
+  if (domain === 'zyndpay.io') return ZYNDMAIL_COMPANY.mailOrigin;
 
   // A server we're already signed in to for this domain needs no probe, and
   // covers the common case of adding a second account on the same host.

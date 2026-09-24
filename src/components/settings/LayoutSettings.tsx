@@ -16,6 +16,7 @@ import {
 } from '../../stores/settings-store';
 import { useEmailStore } from '../../stores/email-store';
 import { useKeywordsStore } from '../../stores/keywords-store';
+import { jmapClient } from '../../api/jmap-client';
 import {
   ORDER_PRESETS, detectPreset, presetLevels, sanitizeSortLevels,
   type OrderPreset, type MessageListOrderScope,
@@ -60,6 +61,7 @@ const PRESET_FALLBACKS: Partial<Record<OrderPreset, string>> = {
 };
 
 export function LayoutSettings() {
+  const companyNoDelete = jmapClient.hasCompanyNoDeletePolicy;
   const c = useColors();
   const styles = React.useMemo(() => makeStyles(c), [c]);
   const swipeLeftAction = useSettingsStore((s) => s.swipeLeftAction);
@@ -73,12 +75,12 @@ export function LayoutSettings() {
   const hydrated = useSettingsStore((s) => s.hydrated);
   const hydrate = useSettingsStore((s) => s.hydrate);
   const t = useLocaleStore((s) => s.t);
-  const SWIPE_OPTIONS = React.useMemo(() => swipeOptions(t), [t]);
+  const SWIPE_OPTIONS = React.useMemo(() => swipeOptions(t).filter((item) => !companyNoDelete || item.value !== 'delete'), [t, companyNoDelete]);
   const SWIPE_MODE_OPTIONS = React.useMemo(() => swipeModeOptions(t), [t]);
   const QUICK_ACTION_LABELS = React.useMemo(() => quickActionLabels(t), [t]);
   const QUICK_ACTION_OPTIONS = React.useMemo(
-    () => ALL_QUICK_ACTIONS.map((value) => ({ value, label: QUICK_ACTION_LABELS[value] })),
-    [QUICK_ACTION_LABELS],
+    () => ALL_QUICK_ACTIONS.filter((value) => !companyNoDelete || value !== 'delete').map((value) => ({ value, label: QUICK_ACTION_LABELS[value] })),
+    [QUICK_ACTION_LABELS, companyNoDelete],
   );
 
   useEffect(() => { if (!hydrated) void hydrate(); }, [hydrated, hydrate]);

@@ -299,6 +299,7 @@ interface SidebarDrawerProps {
 }
 
 export default function SidebarDrawer({ visible, onClose }: SidebarDrawerProps) {
+  const companyNoDelete = jmapClient.hasCompanyNoDeletePolicy;
   const c = useColors();
   const styles = React.useMemo(() => makeStyles(c), [c]);
   const t = useLocaleStore((s) => s.t);
@@ -502,7 +503,7 @@ export default function SidebarDrawer({ visible, onClose }: SidebarDrawerProps) 
         ),
       });
     }
-    if (mb.role === 'trash' || mb.role === 'junk' || mb.role === 'spam') {
+    if (!companyNoDelete && (mb.role === 'trash' || mb.role === 'junk' || mb.role === 'spam')) {
       actions.push({
         key: 'empty',
         label: t('mailbox_context_menu.empty_folder', 'Empty folder'),
@@ -566,7 +567,7 @@ export default function SidebarDrawer({ visible, onClose }: SidebarDrawerProps) 
         }),
       });
     }
-    if (!mb.role && mb.myRights?.mayDelete !== false) {
+    if (!companyNoDelete && !mb.role && mb.myRights?.mayDelete !== false) {
       actions.push({
         key: 'delete',
         label: t('mailbox_context_menu.delete_folder', 'Delete folder'),

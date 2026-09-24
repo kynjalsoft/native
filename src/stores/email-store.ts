@@ -41,6 +41,7 @@ import { t } from './locale-store';
 import { useSettingsStore } from './settings-store';
 import { useOfflineCacheStore } from './offline-cache-store';
 import { useOutboxStore, applyOrQueue, applyOrQueueBatch, type OutboxOp } from './outbox-store';
+import { assertCompanyDeleteActionAllowed } from '../lib/zyndmail-mail-policy';
 
 // ── Refresh coalescing ─────────────────────────────────────────────────
 // Push events, mount effects and post-action follow-ups all call
@@ -1251,6 +1252,8 @@ export const useEmailStore = create<EmailState>()(
   },
 
   deleteEmail: async (emailId, trashMailboxId, currentMailboxId) => {
+    // Reject before the offline outbox or optimistic cache can hide mail.
+    assertCompanyDeleteActionAllowed(jmapClient.hasCompanyNoDeletePolicy);
     const state = get();
     const email = state.emails.find((e) => e.id === emailId);
     const original = email ? { ...email.mailboxIds } : null;
@@ -1431,6 +1434,7 @@ export const useEmailStore = create<EmailState>()(
   },
 
   deleteEmailsBatch: async (emailIds, trashMailboxId, currentMailboxId) => {
+    assertCompanyDeleteActionAllowed(jmapClient.hasCompanyNoDeletePolicy);
     const { emails, mailboxes } = get();
     const settings = useSettingsStore.getState();
     const trash = refFor(mailboxes, trashMailboxId);

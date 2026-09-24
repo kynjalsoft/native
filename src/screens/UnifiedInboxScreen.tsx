@@ -18,6 +18,7 @@ import {
 } from '../api/unified-inbox';
 import { useAccountStore } from '../stores/account-store';
 import { useAuthStore } from '../stores/auth-store';
+import { hasCompanyNoDeletePolicy } from '../lib/zyndmail-mail-policy';
 import { useSettingsStore, type SwipeAction } from '../stores/settings-store';
 import { useLocaleStore } from '../stores/locale-store';
 import { formatListDate } from '../lib/date-format';
@@ -220,6 +221,7 @@ export default function UnifiedInboxScreen({ navigation, route }: Props) {
     }).catch(fail);
   };
   const remove = async (targets: UnifiedEmail[]) => {
+    if (targets.some((email) => hasCompanyNoDeletePolicy(accountById.get(email.sourceAccountId)))) return;
     const permanent = targets.some((e) => isPermanentDelete({
       inTrash: role === 'trash' || isInUnifiedTrash(e),
       inJunk: role === 'junk',
@@ -227,11 +229,15 @@ export default function UnifiedInboxScreen({ navigation, route }: Props) {
       permanentlyDeleteJunk,
     }));
     if (permanent && !(await confirmPermanentDelete(targets.length, t))) return;
-    removeRows(targets);
-    deleteUnifiedEmails(targets, {
-      permanent: deleteAction === 'permanent' || (permanentlyDeleteJunk && role === 'junk'),
-      markRead: deleteAction === 'trash-and-read',
-    }).catch(fail);
+    try {
+      await deleteUnifiedEmails(targets, {
+        permanent: deleteAction === 'permanent' || (permanentlyDeleteJunk && role === 'junk'),
+        markRead: deleteAction === 'trash-and-read',
+      });
+      removeRows(targets);
+    } catch (err) {
+      fail(err);
+    }
   };
 
   const handleSwipe = (email: UnifiedEmail, action: SwipeAction) => {
@@ -254,6 +260,8 @@ export default function UnifiedInboxScreen({ navigation, route }: Props) {
     () => emails.filter((e) => selected.has(rowKey(e))),
     [emails, selected],
   );
+  const selectedIncludesCompanyMail = selectedEmails.some((email) =>
+    hasCompanyNoDeletePolicy(accountById.get(email.sourceAccountId)));
   const toggleSelect = (email: UnifiedEmail) => {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -276,13 +284,14 @@ export default function UnifiedInboxScreen({ navigation, route }: Props) {
 
   const renderItem = ({ item }: { item: UnifiedEmail }) => {
     const acc = accountById.get(item.sourceAccountId);
+    const noDelete = hasCompanyNoDeletePolicy(acc);
     const unread = !item.keywords?.$seen;
     const starred = !!item.keywords?.$flagged;
     const isSelected = selected.has(rowKey(item));
     return (
       <SwipeableRow
-        leftAction={selectionMode ? 'none' : swipeLeftAction}
-        rightAction={selectionMode ? 'none' : swipeRightAction}
+        leftAction={selectionMode || (noDelete && swipeLeftAction === 'delete') ? 'none' : swipeLeftAction}
+        rightAction={selectionMode || (noDelete && swipeRightAction === 'delete') ? 'none' : swipeRightAction}
         mode={swipeMode}
         context={{ unread, starred, pinned: !!item.keywords?.$pinned, inJunk: role === 'junk' }}
         onAction={(action) => handleSwipe(item, action)}
@@ -377,9 +386,11 @@ export default function UnifiedInboxScreen({ navigation, route }: Props) {
               <Archive size={20} color={c.text} />
             </Pressable>
           )}
-          <Pressable onPress={() => { void remove(selectedEmails).then(clearSelection); }} style={styles.headerBtn} hitSlop={6}>
-            <Trash2 size={20} color={c.text} />
-          </Pressable>
+          {!selectedIncludesCompanyMail && (
+            <Pressable onPress={() => { void remove(selectedEmails).then(clearSelection); }} style={styles.headerBtn} hitSlop={6}>
+              <Trash2 size={20} color={c.text} />
+            </Pressable>
+          )}
         </View>
       ) : (
         <View style={styles.header}>

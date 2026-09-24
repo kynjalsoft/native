@@ -148,6 +148,23 @@ describe('JMAPClient', () => {
       expect(result.methodResponses[0][0]).toBe('Mailbox/get');
     });
 
+    it('does not send a destructive company mail request after switching from a public account', async () => {
+      global.fetch = mockFetch([{ status: 200, json: MOCK_SESSION }]) as any;
+      await client.connectWithToken('https://mail.zyndpay.io', 'company-token');
+      global.fetch = mockFetch([{ status: 200, json: { methodResponses: [] } }]) as any;
+
+      await expect(client.request([['Email/set', { accountId: 'acc-1', destroy: ['message-1'] }, '0']]))
+        .rejects.toThrow(/disabled by your organization/);
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    it('leaves a public account free to use its server-granted delete permission', async () => {
+      global.fetch = mockFetch([{ status: 200, json: { methodResponses: [] } }]) as any;
+
+      await client.request([['Email/set', { accountId: 'acc-1', destroy: ['message-1'] }, '0']]);
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+    });
+
     it('should throw AuthenticationError on 401 during request', async () => {
       global.fetch = mockFetch([{ status: 401 }]) as any;
 
