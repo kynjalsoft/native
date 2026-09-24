@@ -41,7 +41,7 @@ describe('fetchLatestRelease', () => {
   const release = (overrides: Record<string, unknown> = {}) => ({
     tag_name: '1.2.3',
     name: 'v1.2.3',
-    html_url: 'https://github.com/bulwarkmail/native/releases/tag/1.2.3',
+    html_url: 'https://github.com/kynjalsoft/native/releases/tag/1.2.3',
     published_at: '2026-01-01T00:00:00Z',
     body: '',
     assets: [
@@ -56,6 +56,10 @@ describe('fetchLatestRelease', () => {
     global.fetch = fetchMock as unknown as typeof fetch;
     const latest = await fetchLatestRelease();
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.github.com/repos/kynjalsoft/native/releases/latest',
+      expect.any(Object),
+    );
     expect(latest?.sha256Asset?.name).toBe('app.apk.sha256');
     expect(latest?.apkSha256).toBeNull();
     expect(latest?.severity).toBe('normal');

@@ -55,7 +55,7 @@ export interface UnifiedEmail extends Email {
 
 export interface UnifiedInboxResult {
   emails: UnifiedEmail[];
-  /** accountId → error message for accounts that could not be fetched. */
+  /** Registry account or shared target key → error message for mail that could not be fetched. */
   errors: Record<string, string>;
   /** Per-target paging cursors to pass back as `positions` for the next page. */
   positions: Record<string, number>;
@@ -398,9 +398,11 @@ async function fetchTarget(
   ]);
   const [qName, qBody] = res[0] ?? [];
   if (qName !== 'Email/query') throw new Error(qBody?.description || 'Email/query failed');
+  const [getName, getBody] = res[1] ?? [];
+  if (getName !== 'Email/get') throw new Error(getBody?.description || 'Email/get failed');
   const ids = (qBody.ids as string[]) ?? [];
   const total = typeof qBody.total === 'number' ? qBody.total : undefined;
-  const list = ((res[1]?.[1]?.list as Email[]) ?? []);
+  const list = ((getBody.list as Email[]) ?? []);
   const byId = new Map(list.map((e) => [e.id, e]));
   const nameOf = (e: Email): string | undefined =>
     mailboxes.find((m) => e.mailboxIds?.[m.id])?.name;
@@ -457,9 +459,12 @@ export async function fetchUnifiedInbox(
             return page.emails;
           } catch (err) {
             // A single inaccessible shared account shouldn't sink the whole
-            // account's view; skip it and keep the others. Own-mail failures
-            // are the account's failure.
+            // account's view. Report the missing mailbox so a partial inbox
+            // cannot be mistaken for a complete one. Own-mail failures are
+            // reported by the outer account handler.
             if (!target.isShared) throw err;
+            const reason = err instanceof Error ? err.message : 'Failed to load';
+            errors[key] = `${target.label || 'Shared mailbox'}: ${reason}`;
             return [] as UnifiedEmail[];
           }
         }));

@@ -69,7 +69,7 @@ class BulwarkFcmModule(reactContext: ReactApplicationContext)
         val groupKey = options.takeIf { it.hasKey("groupKey") }?.getString("groupKey")
             ?: accountId?.let { "bulwark-mail:$it" }
         val groupTitle = options.takeIf { it.hasKey("groupTitle") }?.getString("groupTitle")
-            ?: accountId ?: "Bulwark Mail"
+            ?: accountId ?: "ZyndMail"
 
         // Bitmap fetch + draw off the bridge thread so the caller doesn't
         // block waiting for the favicon request.
