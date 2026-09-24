@@ -2,16 +2,15 @@ import React from 'react';
 import { View, Text, Pressable, StyleSheet, Image } from 'react-native';
 import { QrCode, Mail, Plus, Server } from 'lucide-react-native';
 import { spacing, radius, typography, type ThemePalette } from '../../theme/tokens';
-import { useColors, useResolvedTheme } from '../../theme/colors';
+import { useColors } from '../../theme/colors';
 import type { AccountEntry } from '../../stores/account-store';
 import OptionTile from './OptionTile';
 import LoginNotice from './LoginNotice';
 import { useLocaleStore } from '../../stores/locale-store';
 
-// The white mark disappears on the light palette, so pick per theme. `require`
-// can't take an expression, hence the pair.
-const LOGO_LIGHT = require('../../../assets/logos/Bulwark Logo Dark.png');
-const LOGO_DARK = require('../../../assets/logos/Bulwark Logo White.png');
+// The owner's approved sculpted envelope is transparent and works on both
+// system palettes. Keep the sign-in choices below intact for all providers.
+const ZYNDMAIL_MARK = require('../../../assets/zyndmail-mark.png');
 
 interface ChooseStepProps {
   isAddMode: boolean;
@@ -53,7 +52,6 @@ export default function ChooseStep({
   disabled = false,
 }: ChooseStepProps) {
   const c = useColors();
-  const theme = useResolvedTheme();
   const styles = React.useMemo(() => makeStyles(c), [c]);
   const t = useLocaleStore((s) => s.t);
 
@@ -69,11 +67,13 @@ export default function ChooseStep({
       ) : (
         <View style={styles.branding}>
           <Image
-            source={theme === 'light' ? LOGO_LIGHT : LOGO_DARK}
+            source={ZYNDMAIL_MARK}
             style={styles.logo}
             resizeMode="contain"
+            accessible={false}
           />
-          <Text style={styles.title}>Bulwark Mail</Text>
+          <Text style={styles.brandName}>ZyndMail</Text>
+          <Text style={styles.title}>Your mail, together.</Text>
           <Text style={styles.subtitle}>{t('login.mobile.choose_subtitle', "Choose how you'd like to sign in.")}</Text>
         </View>
       )}
@@ -143,7 +143,15 @@ export default function ChooseStep({
         ) : null}
       </View>
 
-      <Pressable onPress={onManualSetup} disabled={disabled} hitSlop={8} style={styles.manual}>
+      <Pressable
+        onPress={onManualSetup}
+        disabled={disabled}
+        hitSlop={8}
+        accessibilityRole="button"
+        accessibilityState={{ disabled }}
+        accessibilityLabel={t('login.mobile.manual', 'Enter server details manually')}
+        style={styles.manual}
+      >
         <Server size={14} color={c.textMuted} />
         <Text style={styles.manualText}>{t('login.mobile.manual', 'Enter server details manually')}</Text>
       </Pressable>
@@ -153,9 +161,10 @@ export default function ChooseStep({
 
 function makeStyles(c: ThemePalette) {
   return StyleSheet.create({
-    root: { gap: spacing.xl },
+    root: { gap: spacing.xl, paddingTop: spacing.xxl },
     branding: { gap: spacing.xs, marginBottom: spacing.md },
-    logo: { width: 40, height: 40, marginBottom: spacing.sm },
+    logo: { width: 76, height: 76, marginBottom: spacing.md },
+    brandName: { ...typography.caption, color: c.textSecondary, letterSpacing: 1.6, textTransform: 'uppercase' },
 
     addHeading: { gap: spacing.xs },
     title: { ...typography.h1, color: c.text },
