@@ -22,6 +22,7 @@
     <meta-data android:name="expo.modules.updates.EXPO_UPDATE_URL" android:value="https://u.expo.dev/654a0262-9785-4753-8f37-9b0947b537a2"/>
     <meta-data android:name="expo.modules.updates.EXPO_RUNTIME_VERSION" android:value="@string/expo_runtime_version"/>
     <meta-data android:name="expo.modules.updates.UPDATES_CONFIGURATION_REQUEST_HEADERS_KEY" android:value="{&quot;expo-channel-name&quot;:&quot;preview&quot;}"/>
+    <meta-data android:name="com.google.firebase.messaging.default_notification_channel_id" android:value="mail-activity"/>
     <activity android:name=".MainActivity" android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|uiMode|smallestScreenSize|assetsPaths|locale|layoutDirection" android:launchMode="singleTask" android:windowSoftInputMode="adjustResize" android:theme="@style/Theme.App.SplashScreen" android:exported="true" android:screenOrientation="portrait">
       <intent-filter>
         <action android:name="android.intent.action.MAIN"/>
@@ -59,10 +60,11 @@
       </intent-filter>
     </activity>
     <service android:name=".BulwarkMessagingService" android:exported="false">
-      <intent-filter><action android:name="com.google.firebase.MESSAGING_EVENT"/></intent-filter>
+      <intent-filter>
+        <action android:name="com.google.firebase.MESSAGING_EVENT"/>
+      </intent-filter>
     </service>
     <service android:name="expo.modules.notifications.service.ExpoFirebaseMessagingService" tools:node="remove"/>
     <service android:name=".BulwarkPushTaskService" android:exported="false"/>
-    <meta-data android:name="com.google.firebase.messaging.default_notification_channel_id" android:value="mail-activity"/>
   </application>
 </manifest>
