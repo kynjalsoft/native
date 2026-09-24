@@ -60,7 +60,7 @@ describe('company authorization code flow', () => {
   });
 
   it('rejects a callback to another app address before exchanging the code', async () => {
-    openAuthSessionAsync.mockResolvedValueOnce({ type: 'success', url: 'zyndmail://oauth/callback?code=attacker' });
+    openAuthSessionAsync.mockResolvedValueOnce({ type: 'success', url: 'zyndmailpreview://oauth/callback?code=attacker' });
     await expect(loginWithPkce(ZYNDMAIL_COMPANY.mailOrigin, metadata, options)).rejects.toThrow('unexpected app address');
     expect(secureFetch).not.toHaveBeenCalled();
   });

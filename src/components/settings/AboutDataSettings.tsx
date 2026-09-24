@@ -182,7 +182,7 @@ export function AboutDataSettings() {
         <View style={styles.aboutRow}>
           <Image source={require('../../../assets/icon.png')} style={styles.logo} resizeMode="contain" accessibilityLabel="ZyndMail" />
           <View style={{ flex: 1 }}>
-            <Text style={styles.aboutTitle}>{t('settings.advanced.about.mobile_title', 'ZyndMail Preview')}</Text>
+            <Text style={styles.aboutTitle}>{t('settings.advanced.about.mobile_title', 'ZyndMail')}</Text>
             <Text style={styles.aboutVersion}>
               v{APP_VERSION}{' '}
               <Text style={styles.aboutCommit}>({GIT_COMMIT})</Text>
@@ -218,7 +218,7 @@ export function AboutDataSettings() {
         </View>
         <View style={styles.sourceNotice}>
           <Text style={styles.sourceNoticeText}>
-            {t('settings.advanced.about.upstream_notice', 'Based on Bulwark Native. ZyndMail Native Preview is licensed under AGPL-3.0-only.')}
+            {t('settings.advanced.about.upstream_notice', 'Based on Bulwark Native. ZyndMail is licensed under AGPL-3.0-only.')}
           </Text>
           <Pressable
             accessibilityRole="link"

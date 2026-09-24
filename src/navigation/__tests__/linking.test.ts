@@ -4,10 +4,10 @@ import { usePendingSettingsTab } from '../pending-settings-tab';
 
 describe('parseDeepLink', () => {
   it('parses app-scheme mail links', () => {
-    expect(parseDeepLink('zyndmailpreview://mail/message/M1')).toEqual({ kind: 'message', emailId: 'M1', accountId: undefined });
-    expect(parseDeepLink('zyndmailpreview://mail/thread/T1?account=acc')).toEqual({ kind: 'thread', threadId: 'T1', accountId: 'acc' });
-    expect(parseDeepLink('zyndmailpreview://mail/folder/inbox')).toEqual({ kind: 'folder', ref: 'inbox', accountId: undefined });
-    expect(parseDeepLink('zyndmailpreview://mail')).toEqual({ kind: 'folder', ref: 'inbox', accountId: undefined });
+    expect(parseDeepLink('zyndmail://mail/message/M1')).toEqual({ kind: 'message', emailId: 'M1', accountId: undefined });
+    expect(parseDeepLink('zyndmail://mail/thread/T1?account=acc')).toEqual({ kind: 'thread', threadId: 'T1', accountId: 'acc' });
+    expect(parseDeepLink('zyndmail://mail/folder/inbox')).toEqual({ kind: 'folder', ref: 'inbox', accountId: undefined });
+    expect(parseDeepLink('zyndmail://mail')).toEqual({ kind: 'folder', ref: 'inbox', accountId: undefined });
   });
 
   it('parses webmail https permalinks, ignoring host and locale prefix', () => {
@@ -17,12 +17,12 @@ describe('parseDeepLink', () => {
   });
 
   it('parses calendar, contacts, files and settings links', () => {
-    expect(parseDeepLink('zyndmailpreview://calendar/event/E1')).toEqual({ kind: 'calendar', eventId: 'E1' });
-    expect(parseDeepLink('zyndmailpreview://calendar/week/2026-08-29')).toEqual({ kind: 'calendar', date: '2026-08-29' });
-    expect(parseDeepLink('zyndmailpreview://contacts')).toEqual({ kind: 'contacts' });
-    expect(parseDeepLink('zyndmailpreview://files')).toEqual({ kind: 'files' });
-    expect(parseDeepLink('zyndmailpreview://settings/notifications')).toEqual({ kind: 'settings', tab: 'notifications' });
-    expect(parseDeepLink('zyndmailpreview://settings')).toEqual({ kind: 'settings', tab: undefined });
+    expect(parseDeepLink('zyndmail://calendar/event/E1')).toEqual({ kind: 'calendar', eventId: 'E1' });
+    expect(parseDeepLink('zyndmail://calendar/week/2026-08-29')).toEqual({ kind: 'calendar', date: '2026-08-29' });
+    expect(parseDeepLink('zyndmail://contacts')).toEqual({ kind: 'contacts' });
+    expect(parseDeepLink('zyndmail://files')).toEqual({ kind: 'files' });
+    expect(parseDeepLink('zyndmail://settings/notifications')).toEqual({ kind: 'settings', tab: 'notifications' });
+    expect(parseDeepLink('zyndmail://settings')).toEqual({ kind: 'settings', tab: undefined });
   });
 
   it('turns mailto: into a compose link', () => {
@@ -37,7 +37,7 @@ describe('parseDeepLink', () => {
   });
 
   it('rejects unknown links', () => {
-    expect(parseDeepLink('zyndmailpreview://whatever')).toBeNull();
+    expect(parseDeepLink('zyndmail://whatever')).toBeNull();
     expect(parseDeepLink('bulwarkmobile://mail')).toBeNull();
     expect(parseDeepLink('garbage')).toBeNull();
     expect(parseDeepLink('')).toBeNull();

@@ -9,9 +9,9 @@ import { generateAccountId } from './account-utils';
 import { refreshOAuthAccessToken } from './oauth';
 import { isCompanyMailServer, validateCompanyAccessToken, ZYNDMAIL_COMPANY } from './zyndmail-company';
 
-const INSTALLATION_KEY = 'zyndmail.preview.push.installation.v1';
-const REGISTRATION_KEY = 'zyndmail.preview.push.registration.v1';
-const PREFERENCE_KEY = 'zyndmail.preview.push.preference.v1';
+const INSTALLATION_KEY = 'zyndmail.production.push.installation.v1';
+const REGISTRATION_KEY = 'zyndmail.production.push.registration.v1';
+const PREFERENCE_KEY = 'zyndmail.production.push.preference.v1';
 const RENEW_AFTER_MS = 30 * 60_000;
 const OPAQUE_REFERENCE = /^[A-Za-z0-9_-]{22,256}$/;
 const storageOptions: SecureStore.SecureStoreOptions = {

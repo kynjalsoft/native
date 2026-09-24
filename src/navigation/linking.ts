@@ -1,4 +1,4 @@
-// Deep links: `zyndmailpreview://…` app links, webmail permalinks
+// Deep links: `zyndmail://…` app links, webmail permalinks
 // (https://<webmail>/mail/message/<id> etc. - same path grammar as the
 // webmail's lib/deep-links.ts) and `mailto:` URLs. Parsing is pure so it can
 // be unit-tested; `handleDeepLink` performs the navigation.
@@ -8,7 +8,7 @@ import { parseMailtoUrl } from '../lib/mailto';
 import type { RootStackParamList } from './types';
 import { setPendingSettingsTab } from './pending-settings-tab';
 
-export const APP_SCHEME = 'zyndmailpreview';
+export const APP_SCHEME = 'zyndmail';
 
 export type DeepLink =
   | { kind: 'message'; emailId: string; accountId?: string }
@@ -35,7 +35,7 @@ function toAddresses(list: string[]): EmailAddress[] {
 
 /**
  * Split a URL into path segments and query, tolerating both `scheme://host/
- * path` (https permalinks, `zyndmailpreview://mail/...` where "mail" lands in
+ * path` (https permalinks, `zyndmail://mail/...` where "mail" lands in
  * the host slot) and `scheme:path` forms.
  */
 function splitUrl(url: string): { segments: string[]; search: URLSearchParams } | null {

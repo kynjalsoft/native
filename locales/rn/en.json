@@ -370,13 +370,13 @@
         "deprecated_update": "Update required: {version}",
         "license": "Read the license",
         "license_link": "Read the AGPL-3.0 license",
-        "mobile_title": "ZyndMail Preview",
+        "mobile_title": "ZyndMail",
         "security_update": "Security update: {version}",
         "source": "Source",
         "source_link": "ZyndMail source code",
         "update_available": "Update: {version}",
         "update_store_hint": "available in TestFlight / App Store",
-        "upstream_notice": "Based on Bulwark Native. ZyndMail Native Preview is licensed under AGPL-3.0-only."
+        "upstream_notice": "Based on Bulwark Native. ZyndMail is licensed under AGPL-3.0-only."
       },
       "export_settings": {
         "saved_to": "Saved to {path}"

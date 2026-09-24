@@ -16,23 +16,17 @@ if (!COMMIT) {
 }
 COMMIT = COMMIT.slice(0, 7);
 
-// App Store Connect rejects a build whose CFBundleVersion it has already seen
-// for this CFBundleShortVersionString, so this has to advance on every upload
-// even when VERSION does not. CI passes the workflow run number; local builds
-// fall back to 1 (never uploaded).
-const IOS_BUILD_NUMBER = process.env.IOS_BUILD_NUMBER || '1';
-
 module.exports = {
   expo: {
-    name: 'ZyndMail Preview',
-    slug: 'zyndmail-native-preview',
+    name: 'ZyndMail',
+    slug: 'zyndmail',
     owner: 'kynjal-softwares',
     // mailto: lets Android/iOS offer the app for mail links in other apps.
-    scheme: ['zyndmailpreview', 'mailto'],
+    scheme: ['zyndmail', 'mailto'],
     version: VERSION,
     updates: {
-      url: 'https://u.expo.dev/654a0262-9785-4753-8f37-9b0947b537a2',
-      requestHeaders: { 'expo-channel-name': 'preview' },
+      url: 'https://u.expo.dev/e9054c93-18de-4d6a-bc34-38c020130b82',
+      requestHeaders: { 'expo-channel-name': 'production' },
     },
     orientation: 'portrait',
     icon: './assets/icon.png',
@@ -50,8 +44,7 @@ module.exports = {
     ios: {
       runtimeVersion: { policy: 'appVersion' },
       supportsTablet: true,
-      bundleIdentifier: 'io.zyndpay.mail.preview',
-      buildNumber: IOS_BUILD_NUMBER,
+      bundleIdentifier: 'io.zyndpay.mail',
       config: {
         // The app only speaks HTTPS/TLS and uses platform crypto, which is
         // exempt. Declaring it here skips the manual export-compliance
@@ -66,7 +59,7 @@ module.exports = {
         backgroundColor: '#FFFFFF',
       },
       predictiveBackGestureEnabled: false,
-      package: 'io.zyndpay.mail.preview',
+      package: 'io.zyndpay.mail',
       // The AsyncStorage database holds cached message bodies, the outbox and
       // the account registry; the platform backup would ship all of it to the
       // user's Google account. Credentials live in SecureStore (excluded by
@@ -79,9 +72,10 @@ module.exports = {
     plugins: [
       ['expo-build-properties', { ios: { deploymentTarget: '16.4', enableSceneSupport: true } }],
       'expo-secure-store',
+      ['expo-local-authentication', { faceIDPermission: 'Use Face ID to unlock ZyndMail.' }],
       '@react-native-community/datetimepicker',
       'expo-localization',
-      ['expo-notifications', { defaultChannel: 'mail-activity', color: '#C49A54' }],
+      ['expo-notifications', { defaultChannel: 'mail-activity', color: '#C49A54', enableBackgroundRemoteNotifications: true }],
       [
         'expo-camera',
         {
@@ -105,7 +99,7 @@ module.exports = {
     ],
     extra: {
       commit: COMMIT,
-      eas: { projectId: '654a0262-9785-4753-8f37-9b0947b537a2' },
+      eas: { projectId: 'e9054c93-18de-4d6a-bc34-38c020130b82' },
     },
   },
 };

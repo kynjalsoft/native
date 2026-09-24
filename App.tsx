@@ -1,8 +1,9 @@
 import React from 'react';
-import { ActivityIndicator, AppState, Linking, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, AppState, Linking, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import * as Notifications from 'expo-notifications';
 import * as Updates from 'expo-updates';
+import * as LocalAuthentication from 'expo-local-authentication';
 import { useColorScheme } from 'react-native';
 import { initialWindowMetrics, SafeAreaProvider } from 'react-native-safe-area-context';
 import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
@@ -56,6 +57,7 @@ import { UpdateBanner } from './src/components/UpdateBanner';
 import { PushOnboardingPrompt } from './src/components/PushOnboardingPrompt';
 import { ToastHost } from './src/components/ToastHost';
 import { AdaptiveGlassSurface } from './src/components/AdaptiveGlassSurface';
+import { AppLockOverlay } from './src/components/AppLockOverlay';
 import { getEmails } from './src/api/email';
 import { handleDeepLink, parseDeepLink, shareToDeepLink, type DeepLink } from './src/navigation/linking';
 import { addShareListener, getInitialShare, shareAttachments } from './src/lib/share-intent';
@@ -68,6 +70,7 @@ import { spacing, typography, type ThemePalette } from './src/theme/tokens';
 import { useColors } from './src/theme/colors';
 import { isCompanyMailServer } from './src/lib/zyndmail-company';
 import { canAutoReloadMailUpdate } from './src/lib/auto-ota';
+import { AppUnlockGate } from './src/lib/app-unlock-gate';
 import {
   isCompanyPushPresentation,
   registerCompanyPush,
@@ -101,7 +104,7 @@ async function navigateToNotificationTap(payload: NotificationTapPayload): Promi
   });
 }
 
-// Deep links (zyndmailpreview://, webmail https permalinks, mailto:) and
+  // Deep links (zyndmail://, webmail https permalinks, mailto:) and
 // Android share-sheet payloads all end up here once the navigator is ready.
 async function openDeepLink(link: DeepLink): Promise<void> {
   await handleDeepLink(link, {
@@ -270,6 +273,11 @@ function AppContent() {
   const outboxFlushing = useOutboxStore((state) => state.flushing);
   const sendUndoPending = useSendUndoStore((state) => state.pending != null || state.busy);
   const [appIsActive, setAppIsActive] = React.useState(AppState.currentState === 'active');
+  const [appLocked, setAppLocked] = React.useState(true);
+  const [unlockBusy, setUnlockBusy] = React.useState(false);
+  const [unlockError, setUnlockError] = React.useState<string | null>(null);
+  const unlockInFlight = React.useRef(false);
+  const unlockGate = React.useRef(new AppUnlockGate());
   const [routeName, setRouteName] = React.useState<string | null>(null);
   const [mailListBusy, setMailListBusy] = React.useState(true);
   const lastForegroundCheck = React.useRef(0);
@@ -288,6 +296,54 @@ function AppContent() {
   // cached mail list instead of the "Restoring session" spinner; the real
   // JMAP session comes up in the background.
   const hasPersistedAccount = useAccountStore((state) => state.activeAccountId != null);
+
+  const unlockMailbox = React.useCallback(async () => {
+    if (unlockInFlight.current) return;
+    unlockInFlight.current = true;
+    setUnlockBusy(true);
+    setUnlockError(null);
+    const epoch = unlockGate.current.begin();
+    try {
+      const enrolledLevel = await LocalAuthentication.getEnrolledLevelAsync();
+      if (enrolledLevel === LocalAuthentication.SecurityLevel.NONE) {
+        setUnlockError('Set up a device passcode, Face ID or Touch ID in your device settings to unlock this mailbox.');
+        return;
+      }
+      const result = await LocalAuthentication.authenticateAsync({
+        promptMessage: 'Unlock ZyndMail',
+        cancelLabel: 'Cancel',
+        fallbackLabel: 'Use device passcode',
+        disableDeviceFallback: false,
+        biometricsSecurityLevel: 'strong',
+      });
+      if (!result.success) {
+        if (result.error !== 'user_cancel' && result.error !== 'system_cancel') {
+          setUnlockError('Device verification was not completed. Please try again.');
+        }
+        return;
+      }
+      if (unlockGate.current.verified(epoch, AppState.currentState)) setAppLocked(false);
+    } catch (error) {
+      setUnlockError(error instanceof Error ? error.message : 'Device verification is unavailable.');
+    } finally {
+      unlockInFlight.current = false;
+      setUnlockBusy(false);
+    }
+  }, []);
+
+  const confirmSignOut = React.useCallback(() => {
+    Alert.alert(
+      'Sign out on this device?',
+      'Local cached mail and unsent offline changes on this device will be removed.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Sign out', style: 'destructive', onPress: () => {
+          unlockGate.current.cancel();
+          void useAuthStore.getState().logoutAll();
+        } },
+      ],
+    );
+  }, []);
 
   React.useEffect(() => {
     if (!hasRestoredSession) {
@@ -338,6 +394,13 @@ function AppContent() {
     // from the background, without making a network request on every focus.
     const subscription = AppState.addEventListener('change', (state) => {
       setAppIsActive(state === 'active');
+      if (state === 'background') {
+        unlockGate.current.background();
+        setAppLocked(true);
+        setUnlockError(null);
+      } else if (state === 'active' && unlockGate.current.active()) {
+        setAppLocked(false);
+      }
       if (state !== 'active' || !Updates.isEnabled || __DEV__ ||
           !useNetworkStore.getState().online ||
           Date.now() - lastForegroundCheck.current < 15 * 60_000) return;
@@ -352,7 +415,7 @@ function AppContent() {
   React.useEffect(() => {
     if (!Updates.isEnabled || __DEV__ || !isUpdatePending ||
         !canAutoReloadMailUpdate({
-          appIsActive, routeName, authRestored: hasRestoredSession,
+          appIsActive, appLocked, routeName, authRestored: hasRestoredSession,
           authenticated: isAuthenticated, authenticating: isAuthenticating,
           liveSession: haveLiveSession, outboxFlushing, sendUndoPending, mailListBusy,
         }) || Date.now() - lastReloadAttempt.current < 5 * 60_000) return;
@@ -360,7 +423,7 @@ function AppContent() {
     void Updates.reloadAsync().catch((error) => {
       console.warn('[updates] idle reload failed', error);
     });
-  }, [appIsActive, routeName, hasRestoredSession, isAuthenticated,
+  }, [appIsActive, appLocked, routeName, hasRestoredSession, isAuthenticated,
     isAuthenticating, haveLiveSession, outboxFlushing, sendUndoPending, mailListBusy, isUpdatePending]);
   React.useEffect(() => {
     void useOfflineCacheStore.getState().hydrate();
@@ -735,6 +798,7 @@ function AppContent() {
   }
 
   return (
+    <View style={{ flex: 1 }}>
     <NavigationContainer
       ref={navigationRef}
       onReady={() => setRouteName(navigationRef.getCurrentRoute()?.name ?? null)}
@@ -784,6 +848,13 @@ function AppContent() {
         </Stack.Screen>
       </Stack.Navigator>
     </NavigationContainer>
+    {appLocked ? <AppLockOverlay
+      busy={unlockBusy}
+      error={unlockError}
+      onUnlock={() => { void unlockMailbox(); }}
+      onSignOut={confirmSignOut}
+    /> : null}
+    </View>
   );
 }
 

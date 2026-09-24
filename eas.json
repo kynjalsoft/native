@@ -9,29 +9,30 @@
       "distribution": "internal",
       "channel": "development"
     },
-    "preview": {
-      "distribution": "internal",
-      "environment": "preview",
-      "channel": "preview",
-      "autoIncrement": true
-    },
-    "testflight-preview": {
-      "distribution": "store",
-      "environment": "preview",
-      "channel": "preview",
-      "autoIncrement": true
-    },
     "production": {
+      "distribution": "store",
+      "environment": "production",
       "autoIncrement": true,
-      "channel": "production"
+      "channel": "production",
+      "android": {
+        "buildType": "app-bundle"
+      }
+    },
+    "production-apk": {
+      "distribution": "internal",
+      "environment": "production",
+      "autoIncrement": true,
+      "channel": "production",
+      "android": {
+        "buildType": "apk"
+      }
     }
   },
   "submit": {
-    "testflight-preview": {
+    "production": {
       "ios": {
-        "ascAppId": "6815714517"
+        "ascAppId": "6815344620"
       }
-    },
-    "production": {}
+    }
   }
 }

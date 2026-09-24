@@ -12,8 +12,8 @@ const session = vi.hoisted(() => ({
 }));
 
 vi.mock('expo-constants', () => ({ default: {
-  easConfig: { projectId: '654a0262-9785-4753-8f37-9b0947b537a2' },
-  expoConfig: { android: { package: 'io.zyndpay.mail.preview' } },
+  easConfig: { projectId: 'e9054c93-18de-4d6a-bc34-38c020130b82' },
+  expoConfig: { android: { package: 'io.zyndpay.mail' } },
 } }));
 vi.mock('expo-device', () => ({ isDevice: true }));
 vi.mock('expo-secure-store', () => ({
@@ -70,12 +70,12 @@ describe('company Expo push boundary', () => {
     expect(await registerCompanyPush(accountId, false)).toEqual({ status: 'OFF' });
     expect(fetchMock).not.toHaveBeenCalled();
     expect(await registerCompanyPush(accountId, true)).toEqual({ status: 'ACTIVE' });
-    expect(expoToken).toHaveBeenCalledWith({ projectId: '654a0262-9785-4753-8f37-9b0947b537a2' });
+    expect(expoToken).toHaveBeenCalledWith({ projectId: 'e9054c93-18de-4d6a-bc34-38c020130b82' });
     expect(registerChannel).toHaveBeenCalled();
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('https://mail.zyndpay.io/v1/device-registrations/current');
     expect(JSON.parse(init.body as string)).toMatchObject({
-      appId: 'io.zyndpay.mail.preview', projectId: '654a0262-9785-4753-8f37-9b0947b537a2',
+      appId: 'io.zyndpay.mail', projectId: 'e9054c93-18de-4d6a-bc34-38c020130b82',
       platform: 'android', environment: 'production',
     });
     expect(JSON.stringify(JSON.parse(init.body as string))).not.toMatch(/staff-subject|mailbox|subject/);

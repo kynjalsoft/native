@@ -1,5 +1,6 @@
 interface MailUpdateContext {
   appIsActive: boolean;
+  appLocked: boolean;
   routeName: string | null;
   authRestored: boolean;
   authenticated: boolean;
@@ -12,7 +13,7 @@ interface MailUpdateContext {
 
 /** Reload only at the idle mail list, never over a draft or in-flight action. */
 export function canAutoReloadMailUpdate(context: MailUpdateContext): boolean {
-  return context.appIsActive && context.routeName === 'Mail' &&
+  return context.appIsActive && !context.appLocked && context.routeName === 'Mail' &&
     context.authRestored && context.authenticated && !context.authenticating &&
     context.liveSession && !context.outboxFlushing && !context.sendUndoPending &&
     !context.mailListBusy;

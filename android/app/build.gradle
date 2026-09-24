@@ -95,7 +95,7 @@ android {
 
     namespace 'com.anonymous.bulwarkmobile'
     defaultConfig {
-        applicationId 'io.zyndpay.mail.preview'
+        applicationId 'io.zyndpay.mail'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1

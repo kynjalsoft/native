@@ -10,7 +10,7 @@ import { validateCompanyAccessToken, validateCompanyTokenEndpoint, type CompanyI
 // the URL fragment. Fragments aren't sent to the server, so password and
 // token material don't appear in HTTP access logs along the way.
 
-export const HANDOFF_REDIRECT_URI = 'zyndmailpreview://auth/callback';
+export const HANDOFF_REDIRECT_URI = 'zyndmail://auth/callback';
 
 export type OAuthTokenSource = 'handoff' | 'pairing' | 'totp' | 'native';
 
@@ -59,7 +59,7 @@ export class TransientRefreshError extends Error {
   }
 }
 
-// The state is the only guard against a forged `zyndmailpreview://` redirect
+// The state is the only guard against a forged `zyndmail://` redirect
 // delivering foreign credentials, so it comes from the platform CSPRNG.
 function randomState(): string {
   return randomHex(16);
