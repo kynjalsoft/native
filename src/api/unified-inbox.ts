@@ -8,6 +8,7 @@ import { keywordPointer, mailboxPointer } from './patch-pointer';
 import { secureFetch } from '../lib/client-cert';
 import { refreshOAuthAccessToken, type OAuthTokens } from '../lib/oauth';
 import { toWildcardQuery } from '../lib/search-utils';
+import { assertMailDeletionAllowed } from '../lib/zyndmail-mail-policy';
 
 // Aggregated views across accounts ("All inboxes", "All Sent", All mail /
 // Unread / Starred). Because the JMAP client is a single-account singleton
@@ -132,6 +133,7 @@ async function jmapPost(
   authHeader: string,
   methodCalls: JMAPMethodCall[],
 ): Promise<MethodResponses> {
+  assertMailDeletionAllowed(methodCalls);
   const response = await fetchWithDeadline(apiUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: authHeader },

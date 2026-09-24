@@ -15,6 +15,7 @@ import {
   type OAuthTokenSource,
 } from '../lib/oauth';
 import { FirstTouchGate } from './first-touch-gate';
+import { assertMailDeletionAllowed } from '../lib/zyndmail-mail-policy';
 
 // Refresh OAuth access tokens this many ms before they actually expire so
 // in-flight requests don't race the expiry window.
@@ -814,6 +815,7 @@ export class JMAPClient {
     using?: string[],
   ): Promise<JMAPResponseBody> {
     if (!this.session) throw new Error('Not connected');
+    assertMailDeletionAllowed(methodCalls);
 
     const body: JMAPRequestBody = {
       using: using ?? [CAPABILITIES.CORE, CAPABILITIES.MAIL],
