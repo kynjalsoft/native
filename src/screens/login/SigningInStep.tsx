@@ -2,12 +2,10 @@ import React from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { spacing, radius, typography, componentSizes, type ThemePalette } from '../../theme/tokens';
-import { useColors, useResolvedTheme } from '../../theme/colors';
+import { useColors } from '../../theme/colors';
 import { useLocaleStore } from '../../stores/locale-store';
 
-// The white mark disappears on the light palette, so pick per theme.
-const LOGO_LIGHT = require('../../../assets/logos/Bulwark Logo Dark.png');
-const LOGO_DARK = require('../../../assets/logos/Bulwark Logo White.png');
+const LOGO = require('../../../assets/icon.png');
 
 export type SigningInPhase = 'browser' | 'connecting' | 'pairing';
 
@@ -36,7 +34,6 @@ function initialsOf(email: string): string {
  */
 export default function SigningInStep({ phase, serverUrl, email }: SigningInStepProps) {
   const c = useColors();
-  const theme = useResolvedTheme();
   const styles = React.useMemo(() => makeStyles(c), [c]);
   const t = useLocaleStore((s) => s.t);
   const host = serverUrl ? hostOf(serverUrl) : t('login.mobile.your_server', 'your server');
@@ -59,9 +56,10 @@ export default function SigningInStep({ phase, serverUrl, email }: SigningInStep
           </View>
         ) : (
           <Image
-            source={theme === 'light' ? LOGO_LIGHT : LOGO_DARK}
+            source={LOGO}
             style={styles.logo}
             resizeMode="contain"
+            accessibilityLabel="ZyndMail"
           />
         )}
 
