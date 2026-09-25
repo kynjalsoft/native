@@ -907,6 +907,11 @@ function EmailPane({
     ? threadIds.map((mid) => detailCache.get(mid)).filter((m): m is Email => !!m)
     : null;
   const newest = conversation ? conversation[conversation.length - 1] : email;
+  // Raw JMAP mailbox ids may collide across shared accounts. Interpret each
+  // message only against the folders of the account that owns this pane.
+  const accountMailboxes = mailboxes.filter((mailbox) =>
+    jmapAccountId ? mailbox.accountId === jmapAccountId : !mailbox.isShared,
+  );
 
   return (
     <View style={styles.container}>
@@ -934,6 +939,8 @@ function EmailPane({
           {conversation && (
             <Text style={styles.conversationSummary}>
               {t('threads.messages_other', '{count} messages', { count: conversation.length })}
+              {' · '}
+              {t('threads.oldest_first', 'Oldest first')}
             </Text>
           )}
         </View>
@@ -955,7 +962,8 @@ function EmailPane({
               onReply={onReply}
               position={index + 1}
               total={conversation.length}
-              folderLabel={threadMessageFolder(m, mailboxes, openedMailboxId)}
+              folderLabel={threadMessageFolder(m, accountMailboxes, openedMailboxId)}
+              isSent={accountMailboxes.some((mailbox) => mailbox.role === 'sent' && !!m.mailboxIds?.[mailbox.originalId ?? mailbox.id])}
               jmapAccountId={jmapAccountId}
               identities={identities}
               currentMailboxRole={currentMailboxRole}

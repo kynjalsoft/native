@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { Email, Mailbox } from '../../api/types';
-import { initiallyExpandedThreadMessage, threadMessageFolder } from '../thread-presentation';
+import type { Email, Identity, Mailbox } from '../../api/types';
+import { initiallyExpandedThreadMessage, messageDeliveryContext, threadMessageFolder } from '../thread-presentation';
 
 const message = (id: string, mailboxIds: Record<string, boolean>): Email => ({
   id, threadId: 'baq', mailboxIds, keywords: {}, size: 0,
@@ -12,6 +12,30 @@ const mailbox = (id: string, name: string, role: string, originalId?: string): M
 });
 
 describe('thread presentation', () => {
+  it('explains why a company-sent message appears in the personal Inbox', () => {
+    const identities = [{ id: 'own', email: 'ebenezer.collins@zyndpay.io' }] as Identity[];
+    const receivedCopy = {
+      to: [{ email: 'stephanie.mekantus@reap.global' }],
+      cc: [{ email: 'ebenezer.collins@zyndpay.io' }, { email: 'support@zyndpay.io' }],
+    };
+    expect(messageDeliveryContext(receivedCopy, identities, false)).toEqual({
+      kind: 'copied', address: 'ebenezer.collins@zyndpay.io',
+    });
+    expect(messageDeliveryContext(receivedCopy, identities, true)).toEqual({
+      kind: 'sent', address: 'stephanie.mekantus@reap.global',
+    });
+  });
+
+  it('does not claim a recipient is the user without an identity match', () => {
+    const identities = [{ id: 'own', email: 'ebenezer.collins@zyndpay.io' }] as Identity[];
+    expect(messageDeliveryContext({ to: [{ email: 'someone@example.com' }] }, identities, false)).toEqual({
+      kind: 'to', address: 'someone@example.com',
+    });
+    expect(messageDeliveryContext({ cc: [{ email: 'ebenezer.collins+mail@zyndpay.io' }] }, identities, false)).toEqual({
+      kind: 'copied', address: 'ebenezer.collins+mail@zyndpay.io',
+    });
+  });
+
   it('opens only the message selected from Inbox, even when a Sent reply is newer', () => {
     const messages = [message('inbox', { inbox: true }), message('sent', { sent: true })];
     expect(initiallyExpandedThreadMessage('inbox', messages)).toBe('inbox');

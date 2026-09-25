@@ -45,8 +45,9 @@ import { isPermanentDelete, confirmPermanentDelete } from '../lib/delete-confirm
 import { draftContextFromEmail, isDraftEmail } from '../lib/draft-context';
 import { getThreads, getFullEmail, emptyMailbox as apiEmptyMailbox } from '../api/email';
 import type { RootStackParamList } from '../navigation/types';
-import type { Email } from '../api/types';
+import type { Email, Identity } from '../api/types';
 import { jmapClient } from '../api/jmap-client';
+import { deliveryContextLabel, messageDeliveryContext } from '../lib/thread-presentation';
 
 function getSenderName(email: Email): string {
   return email.from?.[0]?.name || email.from?.[0]?.email || 'Unknown';
@@ -86,6 +87,8 @@ const EmailRow = React.memo(function EmailRow({
   threadCount,
   showPreview,
   showRecipient,
+  isSent,
+  identities,
   tagIds,
   keywordDefs,
   disableAvatarImages,
@@ -100,6 +103,8 @@ const EmailRow = React.memo(function EmailRow({
   threadCount: number;
   showPreview: boolean;
   showRecipient: boolean;
+  isSent: boolean;
+  identities: Identity[];
   /** Comma-joined tag ids of the row (thread union) — a string so memo holds. */
   tagIds: string;
   keywordDefs: KeywordDef[];
@@ -121,6 +126,11 @@ const EmailRow = React.memo(function EmailRow({
   const locale = useLocaleStore((s) => s.locale);
   const tr = useLocaleStore((s) => s.t);
   const { name: senderName, email: senderEmail } = getCounterpart(item, showRecipient);
+  const delivery = messageDeliveryContext(item, identities, isSent);
+  const ownSender = identities.some((identity) => identity.email.toLowerCase() === item.from?.[0]?.email?.toLowerCase());
+  const routingHint = delivery && (delivery.kind === 'copied' || delivery.kind === 'blindCopied' || ownSender)
+    ? deliveryContextLabel(delivery, tr)
+    : null;
   const unread = isUnread(item);
   const starred = isStarred(item);
   const pinned = isPinned(item);
@@ -227,6 +237,8 @@ const EmailRow = React.memo(function EmailRow({
           )}
         </View>
 
+        {routingHint && <Text style={[styles.emailPreview, dyn.caption]} numberOfLines={1}>{routingHint}</Text>}
+
         {/* Row 3: Preview - hidden in compact density modes regardless of toggle */}
         {showPreview && density.showPreview && (
           <Text style={[styles.emailPreview, dyn.body]} numberOfLines={2}>
@@ -310,6 +322,7 @@ export default function EmailListScreen({ onEmailPress, onComposePress, onIntera
   const disableThreading = useSettingsStore((s) => s.disableThreading);
   const sortAscending = useSettingsStore((s) => s.mailSortAscending);
   const showAvatarsInJunk = useSettingsStore((s) => s.showAvatarsInJunk);
+  const identities = useSettingsStore((s) => s.identities);
   const deleteAction = useSettingsStore((s) => s.deleteAction);
   const permanentlyDeleteJunk = useSettingsStore((s) => s.permanentlyDeleteJunk);
   const networkOnline = useNetworkStore((s) => s.online);
@@ -647,6 +660,8 @@ export default function EmailListScreen({ onEmailPress, onComposePress, onIntera
             threadCount={threadCountFor(item)}
             showPreview={showPreview}
             showRecipient={showRecipient}
+            isSent={currentRole === 'sent'}
+            identities={identities}
             tagIds={rowTagIds.get(key) ?? ''}
             keywordDefs={keywordDefs}
             disableAvatarImages={inJunk && !showAvatarsInJunk}
@@ -663,7 +678,7 @@ export default function EmailListScreen({ onEmailPress, onComposePress, onIntera
     [
       selectedIds, selectionMode, handleRowPress, toggleSelect, swipeLeftAction, swipeRightAction,
       swipeMode, handleSwipeAction, disableThreading, rowFlags, rowTagIds, threadCountFor,
-      showPreview, showRecipient, keywordDefs, inJunk, showAvatarsInJunk, companyNoDelete,
+      showPreview, showRecipient, currentRole, identities, keywordDefs, inJunk, showAvatarsInJunk, companyNoDelete,
     ],
   );
 

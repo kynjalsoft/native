@@ -9,6 +9,7 @@ import { useLocaleStore } from '../../stores/locale-store';
 import SenderAvatar from '../SenderAvatar';
 import { MessageContent, type MessageContentProps } from './MessageContent';
 import { emailDisplayDate, formatHeaderDate, formatHeaderTime } from '../../lib/email-date';
+import { deliveryContextLabel, messageDeliveryContext } from '../../lib/thread-presentation';
 
 interface Props extends MessageContentProps {
   expanded: boolean;
@@ -17,6 +18,7 @@ interface Props extends MessageContentProps {
   position: number;
   total: number;
   folderLabel: string | null;
+  isSent: boolean;
 }
 
 /**
@@ -24,7 +26,7 @@ interface Props extends MessageContentProps {
  * preview) that expands into the full message with its own reply / forward
  * actions - the webmail's thread-conversation-view cards.
  */
-export function ThreadMessageCard({ expanded, onToggleExpanded, onReply, position, total, folderLabel, ...content }: Props) {
+export function ThreadMessageCard({ expanded, onToggleExpanded, onReply, position, total, folderLabel, isSent, ...content }: Props) {
   const { email, onToggleStar } = content;
   const c = useColors();
   const styles = React.useMemo(() => makeStyles(c), [c]);
@@ -36,6 +38,8 @@ export function ThreadMessageCard({ expanded, onToggleExpanded, onReply, positio
   const starred = !!email.keywords?.$flagged;
   const date = emailDisplayDate(email);
   const context = `${position} / ${total}${folderLabel ? ` · ${folderLabel}` : ''}`;
+  const delivery = messageDeliveryContext(email, content.identities, isSent);
+  const deliveryLabel = delivery ? deliveryContextLabel(delivery, t) : null;
 
   if (!expanded) {
     return (
@@ -51,6 +55,7 @@ export function ThreadMessageCard({ expanded, onToggleExpanded, onReply, positio
             <Text style={styles.collapsedDate}>{formatHeaderDate(date, locale)} {formatHeaderTime(date, timeFormat, locale)}</Text>
           </View>
           <Text style={styles.collapsedPreview} numberOfLines={1}>{email.preview || ''}</Text>
+          {deliveryLabel && <Text style={styles.delivery} numberOfLines={1}>{deliveryLabel}</Text>}
         </View>
         {starred && <Star size={14} color={c.starred} fill={c.starred} />}
       </Pressable>
@@ -61,6 +66,7 @@ export function ThreadMessageCard({ expanded, onToggleExpanded, onReply, positio
     <View style={styles.expanded}>
       <Pressable onPress={onToggleExpanded} style={styles.collapseHandle} hitSlop={6} accessibilityLabel={t('threads.collapse', 'Collapse conversation')} />
       <Text style={styles.expandedContext}>{context}</Text>
+      {deliveryLabel && <Text style={styles.expandedDelivery} numberOfLines={1}>{deliveryLabel}</Text>}
       <MessageContent {...content} compact={false} onToggleStar={onToggleStar} />
       <View style={styles.actions}>
         <Pressable style={styles.actionBtn} onPress={() => onReply('reply', email)} hitSlop={4}>
@@ -100,6 +106,7 @@ function makeStyles(c: ThemePalette) {
     unread: { fontWeight: '700' },
     collapsedDate: { ...typography.small, color: c.textMuted },
     collapsedPreview: { ...typography.caption, color: c.textMuted, marginTop: 2 },
+    delivery: { ...typography.small, color: c.textSecondary, marginTop: 2 },
     expanded: {
       backgroundColor: c.background,
       borderBottomWidth: 1,
@@ -117,6 +124,7 @@ function makeStyles(c: ThemePalette) {
       paddingHorizontal: spacing.lg,
       paddingTop: spacing.sm,
     },
+    expandedDelivery: { ...typography.small, color: c.textSecondary, paddingHorizontal: spacing.lg, paddingBottom: spacing.xs },
     actions: {
       flexDirection: 'row',
       gap: spacing.sm,
