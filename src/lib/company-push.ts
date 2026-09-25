@@ -23,6 +23,7 @@ interface Registration {
   subject: string;
   registrationId: string;
   renewedAt: number;
+  routingVersion?: number;
 }
 
 export type CompanyPushStatus =
@@ -124,7 +125,7 @@ async function readRegistration(): Promise<Registration | null> {
   try {
     const value = JSON.parse(raw) as Partial<Registration>;
     return typeof value.subject === 'string' && typeof value.registrationId === 'string'
-      ? { subject: value.subject, registrationId: value.registrationId, renewedAt: value.renewedAt ?? 0 }
+      ? { subject: value.subject, registrationId: value.registrationId, renewedAt: value.renewedAt ?? 0, routingVersion: value.routingVersion }
       : null;
   } catch {
     return null;
@@ -220,7 +221,7 @@ async function registerCompanyPushInner(accountId: string, requestPermission: bo
     return { status: 'ERROR', reason: 'An earlier staff registration must be revoked first.' };
   }
   if (!requestPermission && await preferenceSubject() !== session.subject) return { status: 'OFF' };
-  if (previous && !force && !requestPermission && Date.now() - previous.renewedAt < RENEW_AFTER_MS) return companyPushStatus(accountId);
+  if (previous?.routingVersion === 2 && !force && !requestPermission && Date.now() - previous.renewedAt < RENEW_AFTER_MS) return companyPushStatus(accountId);
   if (!await relayReady()) return { status: 'UNAVAILABLE', reason: RELAY_UNAVAILABLE };
   if (Platform.OS === 'android') {
     await Notifications.setNotificationChannelAsync('mail-activity', {
@@ -257,7 +258,7 @@ async function registerCompanyPushInner(accountId: string, requestPermission: bo
       throw new Error('The mail relay returned an invalid registration.');
     }
     await SecureStore.setItemAsync(REGISTRATION_KEY, JSON.stringify({
-      subject: session.subject, registrationId: body.registrationId, renewedAt: Date.now(),
+      subject: session.subject, registrationId: body.registrationId, renewedAt: Date.now(), routingVersion: 2,
     }), storageOptions);
     if (generateAccountId(jmapClient.username ?? '', jmapClient.serverUrl ?? '') !== accountId) {
       // Preserve the local reference until the relay confirms revocation. A
@@ -302,23 +303,37 @@ export async function revokeCompanyPush(accountId: string): Promise<boolean> {
   }
 }
 
-export async function resolveCompanyPush(accountId: string, value: unknown): Promise<boolean> {
+export type CompanyPushDestination = { target: 'INBOX' } | {
+  target: 'EMAIL'; accountId: string; emailId: string; threadId: string;
+};
+
+export function parseCompanyPushDestination(value: unknown): CompanyPushDestination | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const result = value as Record<string, unknown>;
+  if (result.target === 'INBOX' && Object.keys(result).length === 1) return { target: 'INBOX' };
+  if (result.target !== 'EMAIL' || Object.keys(result).length !== 4 ||
+      !['accountId', 'emailId', 'threadId'].every((key) =>
+        typeof result[key] === 'string' && (result[key] as string).length > 0 &&
+        (result[key] as string).length <= 256)) return null;
+  return result as CompanyPushDestination;
+}
+
+export async function resolveCompanyPush(accountId: string, value: unknown): Promise<CompanyPushDestination | null> {
   const payload = parseCompanyPushPayload(value);
-  if (!payload) return false;
+  if (!payload) return null;
   const session = await currentCompanySession(accountId).catch(() => null);
   const registration = await readRegistration();
-  if (!session || !registration || registration.subject !== session.subject) return false;
+  if (!session || !registration || registration.subject !== session.subject) return null;
   try {
     const response = await relayFetch('v1/notification-references/resolve', session.bearer, {
       method: 'POST',
       body: JSON.stringify({ installationId: await installationId(), notificationRef: payload.notificationRef }),
     });
-    if (response.status === 404 || response.status === 410) return true;
-    if (!response.ok) return false;
+    if (response.status === 404 || response.status === 410) return { target: 'INBOX' };
+    if (!response.ok) return null;
     const result = await response.json() as Record<string, unknown>;
-    // Current relay intentionally resolves only to a generic All Inboxes target.
-    return Object.keys(result).length === 1 && result.target === 'INBOX';
+    return parseCompanyPushDestination(result);
   } catch {
-    return false;
+    return null;
   }
 }

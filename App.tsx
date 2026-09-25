@@ -638,32 +638,44 @@ function AppContent() {
     };
   }, [client, isAuthenticated, activeAccountId, emailNotificationsEnabled]);
 
-  // Resolve opaque references only after staff authentication. The push has
-  // no message id, address or URL, and a revoked/expired reference falls back
-  // to the access-checked unified inbox.
+  // Keep the response pending through sign-in/Face ID. Resolve the opaque
+  // reference with current access before opening its exact mail account/message.
   React.useEffect(() => {
-    if (!isAuthenticated) return;
+    if (!isAuthenticated || appLocked) return;
     let cancelled = false;
+    let opening = false;
     const openCompanyPush = async (response: Notifications.NotificationResponse | null) => {
-      if (!response || !isCompanyPushPresentation(response.notification.request.content)) return;
-      const accounts = useAccountStore.getState().accounts;
-      const companyAccount = accounts.find((account) => isCompanyMailServer(account.serverUrl));
-      if (!companyAccount) return;
-      if (useAuthStore.getState().activeAccountId !== companyAccount.id) {
-        await useAuthStore.getState().switchAccount(companyAccount.id);
-      }
-      if (cancelled || useAuthStore.getState().activeAccountId !== companyAccount.id) return;
-      const allowed = await resolveCompanyPush(companyAccount.id, response.notification.request.content.data);
-      if (!cancelled && allowed) {
-        // The auth gate can flip before NavigationContainer has mounted.
-        for (let attempt = 0; attempt < 20 && !cancelled && !navigationRef.isReady(); attempt++) {
-          await new Promise((resolve) => setTimeout(resolve, 100));
+      if (opening || !response || !isCompanyPushPresentation(response.notification.request.content)) return;
+      opening = true;
+      try {
+        const accounts = useAccountStore.getState().accounts;
+        const companyAccount = accounts.find((account) => isCompanyMailServer(account.serverUrl));
+        if (!companyAccount) return;
+        if (useAuthStore.getState().activeAccountId !== companyAccount.id) {
+          await useAuthStore.getState().switchAccount(companyAccount.id);
         }
-        if (!cancelled && navigationRef.isReady()) {
-          navigationRef.navigate('UnifiedInbox');
-          await Notifications.clearLastNotificationResponseAsync();
+        if (cancelled || useAuthStore.getState().activeAccountId !== companyAccount.id) return;
+        const destination = await resolveCompanyPush(companyAccount.id, response.notification.request.content.data);
+        if (!cancelled && destination) {
+          // The auth gate can flip before NavigationContainer has mounted.
+          for (let attempt = 0; attempt < 20 && !cancelled && !navigationRef.isReady(); attempt++) {
+            await new Promise((resolve) => setTimeout(resolve, 100));
+          }
+          if (!cancelled && navigationRef.isReady() &&
+              useAuthStore.getState().isAuthenticated &&
+              useAuthStore.getState().activeAccountId === companyAccount.id) {
+            if (destination.target === 'EMAIL') {
+              navigationRef.navigate('EmailThread', {
+                emailId: destination.emailId, threadId: destination.threadId,
+                jmapAccountId: destination.accountId, emailIds: [destination.emailId],
+              });
+            } else {
+              navigationRef.navigate('UnifiedInbox');
+            }
+            await Notifications.clearLastNotificationResponseAsync();
+          }
         }
-      }
+      } finally { opening = false; }
     };
     void Notifications.getLastNotificationResponseAsync()
       .then((response) => openCompanyPush(response)).catch(() => undefined);
@@ -671,7 +683,7 @@ function AppContent() {
       void openCompanyPush(response).catch(() => undefined);
     });
     return () => { cancelled = true; listener.remove(); };
-  }, [isAuthenticated]);
+  }, [isAuthenticated, appLocked]);
 
   // Live updates (SSE with polling fallback), re-armed on every account
   // switch and every re-established session — the singleton `client` object

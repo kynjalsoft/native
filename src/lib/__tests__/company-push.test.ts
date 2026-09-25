@@ -32,7 +32,7 @@ vi.mock('expo-notifications', () => ({
 }));
 vi.mock('../../api/jmap-client', () => ({ jmapClient: session }));
 
-import { companyPushRelayOrigin, companyPushStatus, parseCompanyPushPayload, registerCompanyPush, revokeCompanyPush } from '../company-push';
+import { parseCompanyPushDestination, companyPushRelayOrigin, companyPushStatus, parseCompanyPushPayload, registerCompanyPush, revokeCompanyPush } from '../company-push';
 import { ZYNDMAIL_COMPANY } from '../zyndmail-company';
 
 const accountId = 'staff@zyndpay.io@mail.zyndpay.io';
@@ -134,5 +134,19 @@ describe('company Expo push boundary', () => {
     });
     expect(await revokeCompanyPush(accountId)).toBe(false);
     expect(await registerCompanyPush(accountId, false)).toEqual({ status: 'OFF' });
+  });
+});
+
+
+describe('company notification destination', () => {
+  it('preserves the exact shared account and message, not a generic inbox', () => {
+    const target = { target: 'EMAIL', accountId: 'shared', emailId: 'message', threadId: 'thread' };
+    expect(parseCompanyPushDestination(target)).toEqual(target);
+    expect(parseCompanyPushDestination({ target: 'INBOX' })).toEqual({ target: 'INBOX' });
+  });
+  it('rejects malformed targets and injected URLs', () => {
+    expect(parseCompanyPushDestination({ target: 'EMAIL', accountId: '', emailId: 'id', threadId: 't' })).toBeNull();
+    expect(parseCompanyPushDestination({ target: 'INBOX', url: 'https://example.com' })).toBeNull();
+    expect(parseCompanyPushDestination(null)).toBeNull();
   });
 });
