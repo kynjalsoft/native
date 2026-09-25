@@ -1,3 +1,4 @@
+import { useSettingsStore } from '../stores/settings-store';
 import Constants from 'expo-constants';
 import * as Crypto from 'expo-crypto';
 import * as Device from 'expo-device';
@@ -23,6 +24,7 @@ interface Registration {
   registrationId: string;
   renewedAt: number;
   routingVersion?: number;
+  previews?: boolean;
 }
 
 export type CompanyPushStatus =
@@ -124,7 +126,7 @@ async function readRegistration(): Promise<Registration | null> {
   try {
     const value = JSON.parse(raw) as Partial<Registration>;
     return typeof value.subject === 'string' && typeof value.registrationId === 'string'
-      ? { subject: value.subject, registrationId: value.registrationId, renewedAt: value.renewedAt ?? 0, routingVersion: value.routingVersion }
+      ? { subject: value.subject, registrationId: value.registrationId, renewedAt: value.renewedAt ?? 0, routingVersion: value.routingVersion, previews: value.previews }
       : null;
   } catch {
     return null;
@@ -172,9 +174,11 @@ export function parseCompanyPushPayload(value: unknown): { version: 1; notificat
   return { version: 1, notificationRef: record.notificationRef };
 }
 
-/** The server may only send an opaque, content-free mail alert. */
+/** Routing remains opaque; visible mail text is bounded and never interpreted as markup. */
 export function isCompanyPushPresentation(content: Notifications.NotificationContent): boolean {
-  return content.title === 'ZyndMail' && content.body === 'New ZyndPay Mail activity' &&
+  const safe = (value: unknown, max: number) => typeof value === 'string' && value.trim().length > 0 &&
+    value.length <= max && !/[\u0000-\u0009\u000b-\u001f\u007f\u202a-\u202e\u2066-\u2069]/.test(value);
+  return safe(content.title, 160) && safe(content.body, 725) &&
     !content.subtitle && parseCompanyPushPayload(content.data) !== null;
 }
 
@@ -219,14 +223,16 @@ async function registerCompanyPushInner(accountId: string, requestPermission: bo
     return { status: 'ERROR', reason: 'An earlier staff registration must be revoked first.' };
   }
   if (!requestPermission && await preferenceSubject() !== session.subject) return { status: 'OFF' };
-  if (previous?.routingVersion === 2 && !force && !requestPermission && Date.now() - previous.renewedAt < RENEW_AFTER_MS) return companyPushStatus(accountId);
+  const previews = useSettingsStore.getState().notificationPreviewsEnabled;
+  if (previous?.previews === previews && previous?.routingVersion === 3 && !force && !requestPermission && Date.now() - previous.renewedAt < RENEW_AFTER_MS) return companyPushStatus(accountId);
   if (!await relayReady()) return { status: 'UNAVAILABLE', reason: RELAY_UNAVAILABLE };
   if (Platform.OS === 'android') {
-    await Notifications.setNotificationChannelAsync('mail-activity', {
-      name: 'Mail activity',
-      importance: Notifications.AndroidImportance.DEFAULT,
-      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PRIVATE,
-      showBadge: false,
+    for (const channel of ['mail-messages-v2', 'mail-activity']) await Notifications.setNotificationChannelAsync(channel, {
+      name: 'New mail',
+      importance: Notifications.AndroidImportance.HIGH,
+      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+      showBadge: true,
+      sound: 'default',
     });
   }
   const current = await Notifications.getPermissionsAsync();
@@ -248,6 +254,7 @@ async function registerCompanyPushInner(accountId: string, requestPermission: bo
         appId: appId(),
         platform: Platform.OS,
         environment: 'production',
+        previews,
       }),
     });
     if (!response.ok) throw new Error(`Mail push registration failed (${response.status}).`);
@@ -256,7 +263,7 @@ async function registerCompanyPushInner(accountId: string, requestPermission: bo
       throw new Error('The mail relay returned an invalid registration.');
     }
     await SecureStore.setItemAsync(REGISTRATION_KEY, JSON.stringify({
-      subject: session.subject, registrationId: body.registrationId, renewedAt: Date.now(), routingVersion: 2,
+      subject: session.subject, registrationId: body.registrationId, renewedAt: Date.now(), routingVersion: 3, previews,
     }), storageOptions);
     if (generateAccountId(jmapClient.username ?? '', jmapClient.serverUrl ?? '') !== accountId) {
       // Preserve the local reference until the relay confirms revocation. A

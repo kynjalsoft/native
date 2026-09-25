@@ -146,6 +146,7 @@ interface PersistedSettings {
   density: Density;
   showToolbarLabels: boolean;
   animationsEnabled: boolean;
+  notificationPreviewsEnabled: boolean;
   appLockEnabled: boolean;
   hapticsEnabled: boolean;
   emailAlwaysLightMode: boolean;
@@ -300,6 +301,7 @@ const DEFAULT_PERSISTED: PersistedSettings = {
   density: 'regular',
   showToolbarLabels: true,
   animationsEnabled: true,
+  notificationPreviewsEnabled: true,
   appLockEnabled: false,
   hapticsEnabled: true,
   emailAlwaysLightMode: false,
@@ -608,6 +610,7 @@ export const SETTINGS_KEY_MAP: Partial<Record<keyof PersistedSettings, string>> 
 
 // Keys that describe this device rather than the user's preferences.
 export const DEVICE_LOCAL_KEYS: ReadonlySet<keyof PersistedSettings> = new Set<keyof PersistedSettings>([
+  'notificationPreviewsEnabled',
   'appLockEnabled',
   'hapticsEnabled',
   'swipeMode',

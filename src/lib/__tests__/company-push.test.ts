@@ -27,12 +27,12 @@ vi.mock('expo-notifications', () => ({
   getPermissionsAsync: vi.fn(async () => ({ granted: true, status: 'granted' })),
   requestPermissionsAsync: vi.fn(async () => ({ granted: true, status: 'granted' })),
   setNotificationChannelAsync: registerChannel,
-  AndroidImportance: { DEFAULT: 3 },
-  AndroidNotificationVisibility: { PRIVATE: 0 },
+  AndroidImportance: { HIGH: 4 },
+  AndroidNotificationVisibility: { PUBLIC: 1 },
 }));
 vi.mock('../../api/jmap-client', () => ({ jmapClient: session }));
 
-import { parseCompanyPushDestination, companyPushRelayOrigin, companyPushStatus, parseCompanyPushPayload, registerCompanyPush, revokeCompanyPush } from '../company-push';
+import { isCompanyPushPresentation, parseCompanyPushDestination, companyPushRelayOrigin, companyPushStatus, parseCompanyPushPayload, registerCompanyPush, revokeCompanyPush } from '../company-push';
 import { ZYNDMAIL_COMPANY } from '../zyndmail-company';
 
 const accountId = 'staff@zyndpay.io@mail.zyndpay.io';
@@ -148,5 +148,20 @@ describe('company notification destination', () => {
     expect(parseCompanyPushDestination({ target: 'EMAIL', accountId: '', emailId: 'id', threadId: 't' })).toBeNull();
     expect(parseCompanyPushDestination({ target: 'INBOX', url: 'https://example.com' })).toBeNull();
     expect(parseCompanyPushDestination(null)).toBeNull();
+  });
+});
+
+describe('mail preview presentation and routing', () => {
+  const content = { title: 'Ada Example', body: 'Meeting tomorrow\nPlease bring the notes.',
+    data: { version: 1, notificationRef: 'a'.repeat(24) } };
+  it('accepts real visible previews and legacy alerts with opaque routing', () => {
+    expect(isCompanyPushPresentation(content as never)).toBe(true);
+    expect(isCompanyPushPresentation({ ...content, title: 'ZyndMail', body: 'New ZyndPay Mail activity' } as never)).toBe(true);
+  });
+  it('rejects invisible, oversized and malformed notifications', () => {
+    for (const patch of [{ title: '' }, { body: ' ' }, { body: 'x'.repeat(726) }, { title: '\u202ehidden' },
+      { data: { ...content.data, emailId: 'untrusted' } }]) {
+      expect(isCompanyPushPresentation({ ...content, ...patch } as never)).toBe(false);
+    }
   });
 });

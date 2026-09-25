@@ -111,7 +111,7 @@ export function PushOnboardingPrompt(): React.ReactElement | null {
         </Text>
         <Text style={styles.body}>
           {isCompanyMailServer(client?.serverUrl ?? '')
-            ? t('push_prompt.company_body', 'Get private alerts for activity in your authorized work mailboxes. No message content appears in the alert.')
+            ? t('push_prompt.company_body', 'Get new-mail alerts with sender, subject and a short preview. You can turn previews off in notification settings.')
             : t('push_prompt.body', 'Turn on background notifications so new messages reach you while the app is closed.')}
         </Text>
         {error && <Text style={styles.error}>{error}</Text>}

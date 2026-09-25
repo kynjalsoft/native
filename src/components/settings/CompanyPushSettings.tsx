@@ -1,5 +1,6 @@
 import React from 'react';
 import { ActivityIndicator, AppState, View } from 'react-native';
+import { useSettingsStore } from '../../stores/settings-store';
 import { useAuthStore } from '../../stores/auth-store';
 import { useLocaleStore } from '../../stores/locale-store';
 import { useColors } from '../../theme/colors';
@@ -11,6 +12,7 @@ export function CompanyPushSettings(): React.ReactElement {
   const colors = useColors();
   const t = useLocaleStore((s) => s.t);
   const accountId = useAuthStore((s) => s.activeAccountId);
+  const previews = useSettingsStore((s) => s.notificationPreviewsEnabled);
   const [status, setStatus] = React.useState<CompanyPushStatus | null>(null);
   const [busy, setBusy] = React.useState(false);
   const statusRequest = React.useRef(0);
@@ -48,6 +50,23 @@ export function CompanyPushSettings(): React.ReactElement {
     }
   };
 
+  const changePreviews = async (enabled: boolean) => {
+    if (!accountId || busy) return;
+    setBusy(true);
+    statusRequest.current += 1;
+    useSettingsStore.getState().updateSetting('notificationPreviewsEnabled', enabled);
+    try {
+      const result = await registerCompanyPush(accountId, false, true);
+      if (result.status !== 'ACTIVE' && result.status !== 'OFF') {
+        useSettingsStore.getState().updateSetting('notificationPreviewsEnabled', previews);
+      }
+      setStatus(result);
+    } catch {
+      useSettingsStore.getState().updateSetting('notificationPreviewsEnabled', previews);
+      setStatus({ status: 'ERROR', reason: 'Preview preference could not be applied. Please try again.' });
+    } finally { setBusy(false); }
+  };
+
   const description = status?.status === 'ACTIVE'
     ? t('settings.notifications.company.active', 'This device was registered for private mail alerts. Delivery depends on server and device connectivity.')
     : status?.status === 'UNAVAILABLE' || status?.status === 'ERROR'
@@ -57,7 +76,7 @@ export function CompanyPushSettings(): React.ReactElement {
         : t('settings.notifications.company.description', 'Get private new-mail alerts on this device.');
 
   return (
-    <SettingsSection title={t('settings.notifications.company.title', 'Company mail alerts')} description={t('settings.notifications.company.section', 'Content-free alerts for authorized personal and shared mailboxes.')}>
+    <SettingsSection title={t('settings.notifications.company.title', 'Company mail alerts')} description={t('settings.notifications.company.section', 'New-mail alerts for authorized personal and shared mailboxes.')}>
       <SettingItem label={t('settings.notifications.company.toggle', 'Push notifications')} description={description}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
           {busy && <ActivityIndicator size="small" color={colors.primary} />}
@@ -67,6 +86,11 @@ export function CompanyPushSettings(): React.ReactElement {
             disabled={!accountId || busy || !status}
           />
         </View>
+      </SettingItem>
+      <SettingItem label={t('settings.notifications.company.previews', 'Show message previews')}
+        description={t('settings.notifications.company.previews_description', 'Show sender, subject and a short snippet. This text passes through Expo and may appear on your lock screen, subject to your device settings. Turn off for generic alerts.')}>
+        <ToggleSwitch checked={previews} disabled={busy || !accountId || !status}
+          onChange={(value) => { void changePreviews(value); }} />
       </SettingItem>
     </SettingsSection>
   );

@@ -341,7 +341,7 @@
   },
   "push_prompt": {
     "body": "Turn on background notifications so new messages reach you while the app is closed.",
-    "company_body": "Get private alerts for activity in your authorized work mailboxes. No message content appears in the alert.",
+    "company_body": "Get new-mail alerts with sender, subject and a short preview. You can turn previews off in notification settings.",
     "dismiss": "Not now",
     "enable": "Enable",
     "title": "Get notified about new mail"
@@ -543,7 +543,9 @@
         "active": "This device was registered for private mail alerts. Delivery depends on server and device connectivity.",
         "denied": "Allow notifications for ZyndMail in your device settings.",
         "description": "Get private new-mail alerts on this device.",
-        "section": "Content-free alerts for authorized personal and shared mailboxes.",
+        "previews": "Show message previews",
+        "previews_description": "Show sender, subject and a short snippet. This text passes through Expo and may appear on your lock screen, subject to your device settings. Turn off for generic alerts.",
+        "section": "New-mail alerts for authorized personal and shared mailboxes.",
         "title": "Company mail alerts",
         "toggle": "Push notifications"
       },
