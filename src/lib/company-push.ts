@@ -152,6 +152,10 @@ async function storedCompanySession(accountId: string): Promise<{ subject: strin
   const expectedSubject = tokens.companyIdentity.subject;
   if (tokens.expiresAt && tokens.expiresAt < Date.now() + 60_000) {
     tokens = await refreshOAuthAccessToken(tokens);
+    await jmapClient.setStoredCredentials(accountId, {
+      ...credentials, accessToken: tokens.accessToken, refreshToken: tokens.refreshToken,
+      expiresAt: tokens.expiresAt,
+    });
   }
   const identity = validateCompanyAccessToken(tokens.accessToken, expectedSubject);
   return { subject: identity.subject, bearer: tokens.accessToken };

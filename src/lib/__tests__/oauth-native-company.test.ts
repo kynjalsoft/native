@@ -36,6 +36,7 @@ describe('company authorization code flow', () => {
       expect(params.get('client_id')).toBe(ZYNDMAIL_COMPANY.clientId);
       expect(params.get('redirect_uri')).toBe(ZYNDMAIL_COMPANY.redirectUri);
       expect(params.get('code_challenge_method')).toBe('S256');
+      expect(params.get('scope')?.split(' ')).toContain('offline_access');
       const nonce = params.get('nonce');
       secureFetch.mockResolvedValueOnce({
         ok: true,

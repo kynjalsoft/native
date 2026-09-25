@@ -138,10 +138,15 @@ export async function loginWithPkce(
   const challenge = generateCodeChallenge(verifier);
   const state = randomHex(16);
   const nonce = opts?.company ? randomHex(16) : null;
-  const scope = opts?.scopes
+  const requestedScope = opts?.scopes
     ?? (metadata.scopes_supported?.length
       ? ['openid', 'email', 'profile', 'offline_access'].filter((s) => metadata.scopes_supported!.includes(s)).join(' ') || metadata.scopes_supported.join(' ')
       : 'openid email profile offline_access');
+
+  // Company mail must survive the browser SSO idle window and app suspension.
+  const scope = opts?.company
+    ? [...new Set([...requestedScope.split(/\s+/), 'offline_access'])].join(' ')
+    : requestedScope;
 
   const params = new URLSearchParams({
     response_type: 'code',

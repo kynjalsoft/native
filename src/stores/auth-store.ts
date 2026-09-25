@@ -434,7 +434,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         company: true,
         clientId: ZYNDMAIL_COMPANY.clientId,
         redirectUri: ZYNDMAIL_COMPANY.redirectUri,
-        scopes: 'openid profile email',
+        scopes: 'openid profile email offline_access',
       });
       await completeOAuthHandoff(set, get, {
         flow: 'oauth', serverUrl: ZYNDMAIL_COMPANY.mailOrigin, tokens,
