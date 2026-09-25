@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Email, Identity, Mailbox } from '../../api/types';
-import { initiallyExpandedThreadMessage, messageDeliveryContext, threadMessageFolder } from '../thread-presentation';
+import { initiallyExpandedThreadMessage, messageDeliveryContext, threadMessageFolder, visibleConversationMessages } from '../thread-presentation';
 
 const message = (id: string, mailboxIds: Record<string, boolean>): Email => ({
   id, threadId: 'baq', mailboxIds, keywords: {}, size: 0,
@@ -50,5 +50,23 @@ describe('thread presentation', () => {
     expect(threadMessageFolder(message('first', { inbox: true }), folders, 'account:inbox')).toBe('Inbox');
     expect(threadMessageFolder(message('reply', { sent: true }), folders, 'account:inbox')).toBe('Sent');
     expect(threadMessageFolder(message('missing', { other: true }), folders, 'account:inbox')).toBeNull();
+  });
+
+  it('keeps an unsent reply in Drafts without counting it as a received conversation message', () => {
+    const folders = [
+      mailbox('account:inbox', 'Inbox', 'inbox', 'inbox'),
+      mailbox('account:drafts', 'Drafts', 'drafts', 'drafts'),
+    ];
+    const received = ['one', 'two', 'three', 'four', 'five'].map((id) => message(id, { inbox: true }));
+    const savedDraft = { ...message('six', { drafts: true }), keywords: { $draft: true } };
+    expect(visibleConversationMessages([...received, savedDraft], folders).map((email) => email.id))
+      .toEqual(['one', 'two', 'three', 'four', 'five']);
+    expect(initiallyExpandedThreadMessage('five', visibleConversationMessages([...received, savedDraft], folders)))
+      .toBe('five');
+  });
+
+  it('recognizes a draft by its folder even when the server omits the draft keyword', () => {
+    const folders = [mailbox('account:drafts', 'Drafts', 'drafts', 'drafts')];
+    expect(visibleConversationMessages([message('draft', { drafts: true })], folders)).toEqual([]);
   });
 });

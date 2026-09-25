@@ -35,7 +35,7 @@ import { useSheetDrag } from '../lib/use-sheet-drag';
 import { useLocaleStore } from '../stores/locale-store';
 import { findTrashMailbox, mailboxesForSiblingOf } from '../lib/mailbox-tree';
 import { pickEmailBody, plainTextBody } from '../lib/email-body';
-import { initiallyExpandedThreadMessage, threadMessageFolder } from '../lib/thread-presentation';
+import { initiallyExpandedThreadMessage, threadMessageFolder, visibleConversationMessages } from '../lib/thread-presentation';
 import { buildForwardAsAttachmentPayload } from '../lib/forward-as-attachment';
 import type { Email, EmailAddress, Identity, Mailbox } from '../api/types';
 import type { RootStackParamList } from '../navigation/types';
@@ -207,8 +207,9 @@ export default function EmailThreadScreen({ route, navigation }: Props) {
     if (pending) return pending;
     const p = getThreadEmails(threadId, ownerAccountId)
       .then((list) => {
-        for (const e of list) detailCache.set(e.id, e);
-        const ids = list.map((e) => e.id);
+        const messages = visibleConversationMessages(list, conversationMailboxes);
+        for (const e of messages) detailCache.set(e.id, e);
+        const ids = messages.map((e) => e.id);
         threadCache.set(threadId, ids);
         bumpCache();
         return ids;
@@ -224,7 +225,7 @@ export default function EmailThreadScreen({ route, navigation }: Props) {
       .finally(() => { threadInFlight.delete(threadId); });
     threadInFlight.set(threadId, p);
     return p;
-  }, [ownerAccountId, detailCache, threadCache, bumpCache, threadInFlight, activeEmailId]);
+  }, [ownerAccountId, detailCache, threadCache, bumpCache, threadInFlight, activeEmailId, conversationMailboxes]);
 
   const goToIndex = React.useCallback((index: number) => {
     if (index < 0 || index >= emails.length) return;

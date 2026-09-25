@@ -58,6 +58,18 @@ export function initiallyExpandedThreadMessage(openedId: string, messages: Email
     : messages[messages.length - 1]?.id ?? openedId;
 }
 
+/** Drafts belong to the composer and Drafts folder, not the read timeline. */
+export function visibleConversationMessages(messages: Email[], mailboxes: Mailbox[]): Email[] {
+  const draftMailboxIds = new Set(
+    mailboxes.filter((mailbox) => mailbox.role === 'drafts')
+      .map((mailbox) => mailbox.originalId ?? mailbox.id),
+  );
+  return messages.filter((message) =>
+    !message.keywords?.$draft &&
+    !Object.keys(message.mailboxIds ?? {}).some((id) => draftMailboxIds.has(id)),
+  );
+}
+
 /**
  * A conversation may include replies filed in Sent even when opened from
  * Inbox. Show the actual folder of each message, not the folder of the row

@@ -44,11 +44,11 @@ import {
 } from '../lib/thread-utils';
 import { isPermanentDelete, confirmPermanentDelete } from '../lib/delete-confirm';
 import { draftContextFromEmail, isDraftEmail } from '../lib/draft-context';
-import { getThreads, getFullEmail, emptyMailbox as apiEmptyMailbox } from '../api/email';
+import { getThreads, getEmails, getFullEmail, emptyMailbox as apiEmptyMailbox } from '../api/email';
 import type { RootStackParamList } from '../navigation/types';
 import type { Email, Identity } from '../api/types';
 import { jmapClient } from '../api/jmap-client';
-import { deliveryContextLabel, messageDeliveryContext } from '../lib/thread-presentation';
+import { deliveryContextLabel, messageDeliveryContext, visibleConversationMessages } from '../lib/thread-presentation';
 
 function getSenderName(email: Email): string {
   return email.from?.[0]?.name || email.from?.[0]?.email || 'Unknown';
@@ -352,22 +352,32 @@ export default function EmailListScreen({ onEmailPress, onComposePress, onIntera
     [emails, disableThreading],
   );
 
-  // Real conversation sizes from Thread/get (a thread's other messages may
-  // live in other folders); the loaded-page count is the fallback until the
-  // response lands and for messages whose thread the server no longer knows.
+  // Thread/get includes unsent drafts. Fetch only missing message metadata so
+  // Inbox's count matches the read timeline, while Drafts remains its own view.
   const [serverThreadCounts, setServerThreadCounts] = React.useState<Map<string, number>>(new Map());
   React.useEffect(() => {
-    if (disableThreading || visibleEmails.length === 0) return;
+    if (disableThreading || currentRole === 'drafts' || visibleEmails.length === 0) return;
     const ids = Array.from(new Set(visibleEmails.map((e) => e.threadId).filter(Boolean)));
     const missing = ids.filter((id) => !serverThreadCounts.has(id));
     if (missing.length === 0) return;
     let cancelled = false;
+    const accountMailboxes = mailboxes.filter((mailbox) => currentOwnerAccountId
+      ? mailbox.accountId === currentOwnerAccountId : !mailbox.isShared);
     getThreads(missing, currentOwnerAccountId)
-      .then((threads) => {
+      .then(async (threads) => {
+        const known = new Map(emails.map((email) => [email.id, email]));
+        const unknownIds = Array.from(new Set(threads.flatMap((thread) => thread.emailIds)))
+          .filter((id) => !known.has(id));
+        if (unknownIds.length > 0) {
+          for (const email of await getEmails(unknownIds, currentOwnerAccountId)) known.set(email.id, email);
+        }
         if (cancelled) return;
         setServerThreadCounts((prev) => {
           const next = new Map(prev);
-          for (const th of threads) next.set(th.id, th.emailIds.length);
+          for (const thread of threads) {
+            const loaded = thread.emailIds.map((id) => known.get(id)).filter((email): email is Email => !!email);
+            next.set(thread.id, visibleConversationMessages(loaded, accountMailboxes).length);
+          }
           return next;
         });
       })
