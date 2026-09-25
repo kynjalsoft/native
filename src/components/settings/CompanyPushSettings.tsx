@@ -1,5 +1,5 @@
 import React from 'react';
-import { ActivityIndicator, Text, View } from 'react-native';
+import { ActivityIndicator, AppState, View } from 'react-native';
 import { useAuthStore } from '../../stores/auth-store';
 import { useLocaleStore } from '../../stores/locale-store';
 import { useColors } from '../../theme/colors';
@@ -13,20 +13,28 @@ export function CompanyPushSettings(): React.ReactElement {
   const accountId = useAuthStore((s) => s.activeAccountId);
   const [status, setStatus] = React.useState<CompanyPushStatus | null>(null);
   const [busy, setBusy] = React.useState(false);
+  const statusRequest = React.useRef(0);
 
   React.useEffect(() => {
     let current = true;
     setStatus(null);
-    if (accountId) {
+    const refresh = () => {
+      if (!accountId) return;
+      const request = ++statusRequest.current;
       void companyPushStatus(accountId)
-        .then((next) => { if (current) setStatus(next); })
-        .catch(() => { if (current) setStatus({ status: 'ERROR', reason: 'Mail notification status could not be read.' }); });
-    }
-    return () => { current = false; };
+        .then((next) => { if (current && request === statusRequest.current) setStatus(next); })
+        .catch(() => { if (current && request === statusRequest.current) setStatus({ status: 'ERROR', reason: 'Mail notification status could not be read.' }); });
+    };
+    refresh();
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') refresh();
+    });
+    return () => { current = false; statusRequest.current += 1; subscription.remove(); };
   }, [accountId]);
 
   const onChange = async (enabled: boolean) => {
     if (!accountId || busy) return;
+    statusRequest.current += 1;
     setBusy(true);
     try {
       if (enabled) setStatus(await registerCompanyPush(accountId, true));
@@ -56,15 +64,10 @@ export function CompanyPushSettings(): React.ReactElement {
           <ToggleSwitch
             checked={status?.status === 'ACTIVE'}
             onChange={(value) => { void onChange(value); }}
-            disabled={!accountId || busy || !status || status.status === 'UNAVAILABLE'}
+            disabled={!accountId || busy || !status}
           />
         </View>
       </SettingItem>
-      {(status?.status === 'ERROR' || status?.status === 'UNAVAILABLE') && (
-        <Text accessibilityRole="alert" style={{ color: colors.textSecondary, paddingVertical: 8 }}>
-          {description}
-        </Text>
-      )}
     </SettingsSection>
   );
 }

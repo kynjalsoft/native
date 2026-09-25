@@ -94,9 +94,11 @@ async function relayReady(): Promise<boolean> {
   const abort = new AbortController();
   const timeout = setTimeout(() => abort.abort(), 5_000);
   try {
-    const response = await fetch(`${origin}/v1/push-health`, {
+    // The old webmail fallback issued a cacheable 301 for this path. A fresh
+    // probe URL prevents iOS from reusing that redirect after the relay goes live.
+    const response = await fetch(`${origin}/v1/push-health?probe=${Date.now().toString(36)}`, {
       method: 'GET', redirect: 'error', signal: abort.signal,
-      headers: { Accept: 'application/json' },
+      headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' },
     });
     if (!response.ok) return false;
     const body = await response.json() as Record<string, unknown>;

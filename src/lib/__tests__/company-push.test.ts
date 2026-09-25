@@ -64,7 +64,7 @@ describe('company Expo push boundary', () => {
   it('requires opt-in and registers the exact production identity without a mailbox payload', async () => {
     const fetchMock = vi.fn(async (url: string, init: RequestInit) => ({
       ok: true, status: 200,
-      json: async () => url.endsWith('/v1/push-health')
+      json: async () => url.includes('/v1/push-health?')
         ? { status: 'ok' } : { registrationId: 'registration-1' },
       request: init.body ? JSON.parse(init.body as string) : null,
     }));
@@ -92,15 +92,16 @@ describe('company Expo push boundary', () => {
     const result = await registerCompanyPush(accountId, true);
     expect(result).toMatchObject({ status: 'UNAVAILABLE' });
     expect('reason' in result ? result.reason : '').not.toContain('FetchRedirectException');
-    expect(fetchMock).toHaveBeenCalledWith('https://mail.zyndpay.io/v1/push-health', expect.objectContaining({
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringMatching(/^https:\/\/mail\.zyndpay\.io\/v1\/push-health\?probe=[a-z0-9]+$/), expect.objectContaining({
       method: 'GET', redirect: 'error',
+      headers: expect.objectContaining({ 'Cache-Control': 'no-cache' }),
     }));
     expect(expoToken).not.toHaveBeenCalled();
   });
 
   it('does not expose a native redirect exception if registration redirects after a healthy probe', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
-      if (url.endsWith('/v1/push-health')) return { ok: true, json: async () => ({ status: 'ok' }) };
+      if (url.includes('/v1/push-health?')) return { ok: true, json: async () => ({ status: 'ok' }) };
       throw new TypeError('FetchRedirectException: Redirect is not allowed');
     }));
     const result = await registerCompanyPush(accountId, true);
@@ -121,7 +122,7 @@ describe('company Expo push boundary', () => {
   it('keeps opt-out local when relay revocation cannot authenticate', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string) => ({
       ok: true, status: 200,
-      json: async () => url.endsWith('/v1/push-health')
+      json: async () => url.includes('/v1/push-health?')
         ? { status: 'ok' } : { registrationId: 'registration-1' },
     })));
     expect(await registerCompanyPush(accountId, true)).toEqual({ status: 'ACTIVE' });
