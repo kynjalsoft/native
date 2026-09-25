@@ -866,6 +866,10 @@ function EmailPane({
   // Freeze the pane's vertical scroll while a pinch is in flight so a two-
   // finger zoom can't fling the page.
   const [pinching, setPinching] = React.useState(false);
+  const scrollRef = React.useRef<ScrollView>(null);
+  const positionedAtOpenedMessage = React.useRef(false);
+  const [viewportHeight, setViewportHeight] = React.useState(0);
+  const [openedCard, setOpenedCard] = React.useState<{ y: number; height: number } | null>(null);
   // Which cards are open. Seed only the message the user opened; expanding
   // unread and Sent replies too made the Inbox conversation hard to follow.
   const [expanded, setExpanded] = React.useState<Set<string> | null>(null);
@@ -905,14 +909,35 @@ function EmailPane({
     });
   };
 
+  const conversation = threading && threadIds && threadIds.length > 1
+    ? threadIds.map((mid) => detailCache.get(mid)).filter((m): m is Email => !!m)
+    : null;
+  const openedCardIsLater = !!conversation && conversation[0]?.id !== id;
+  // The last card needs enough scrollable space below it to reach the top of
+  // the viewport. This keeps the selected new mail in view on first open.
+  const bottomPadding = openedCardIsLater && openedCard && viewportHeight
+    ? Math.max(spacing.md, viewportHeight - openedCard.height + spacing.sm)
+    : spacing.md;
+  React.useEffect(() => {
+    if (!openedCardIsLater || !expanded?.has(id) || !openedCard ||
+        !viewportHeight || positionedAtOpenedMessage.current) return;
+    // Layout includes the dynamic end inset by the next frame. Never move the
+    // scroller again after this initial focus, so reading/typing stays put.
+    const frame = requestAnimationFrame(() => {
+      const settled = requestAnimationFrame(() => {
+        positionedAtOpenedMessage.current = true;
+        scrollRef.current?.scrollTo({ y: Math.max(0, openedCard.y - spacing.sm), animated: false });
+      });
+      pendingFrame.current = settled;
+    });
+    const pendingFrame = { current: frame };
+    return () => cancelAnimationFrame(pendingFrame.current);
+  }, [openedCardIsLater, openedCard, expanded, id, viewportHeight]);
   if (!email) {
     return <EmailPaneSkeleton styles={styles} />;
   }
 
   const subject = email.subject || t('email_viewer.no_subject', '(No Subject)');
-  const conversation = threading && threadIds && threadIds.length > 1
-    ? threadIds.map((mid) => detailCache.get(mid)).filter((m): m is Email => !!m)
-    : null;
   const newest = conversation ? conversation[conversation.length - 1] : email;
   // Raw JMAP mailbox ids may collide across shared accounts. Interpret each
   // message only against the folders of the account that owns this pane.
@@ -923,8 +948,10 @@ function EmailPane({
   return (
     <View style={styles.container}>
       <ScrollView
+        ref={scrollRef}
         style={styles.scroll}
-        contentContainerStyle={{ paddingBottom: spacing.md }}
+        contentContainerStyle={{ paddingBottom: bottomPadding }}
+        onLayout={(event) => setViewportHeight(event.nativeEvent.layout.height)}
         scrollEnabled={!pinching}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="none"
@@ -961,26 +988,31 @@ function EmailPane({
 
         {conversation ? (
           conversation.map((m, index) => (
-            <ThreadMessageCard
-              key={m.id}
-              email={m}
-              expanded={expanded?.has(m.id) ?? m.id === id}
-              onToggleExpanded={() => toggleCard(m.id)}
-              onReply={onReply}
-              position={index + 1}
-              total={conversation.length}
-              folderLabel={threadMessageFolder(m, accountMailboxes, openedMailboxId)}
-              isSent={accountMailboxes.some((mailbox) => mailbox.role === 'sent' && !!m.mailboxIds?.[mailbox.originalId ?? mailbox.id])}
-              jmapAccountId={jmapAccountId}
-              identities={identities}
-              currentMailboxRole={currentMailboxRole}
-              themeOverride={themeOverrides[m.id] ?? null}
-              onSwipe={onSwipe}
-              onZoomChange={(z) => { setPinching(z.pinching); onZoomChange(z); }}
-              onToggleStar={onToggleStar}
-              onAddressPress={onAddressPress}
-              onEmailPatched={onEmailPatched}
-            />
+            <View key={m.id} onLayout={m.id === id ? (event) => {
+              const { y, height } = event.nativeEvent.layout;
+              setOpenedCard((previous) => previous?.y === y && previous.height === height
+                ? previous : { y, height });
+            } : undefined}>
+              <ThreadMessageCard
+                email={m}
+                expanded={expanded?.has(m.id) ?? m.id === id}
+                onToggleExpanded={() => toggleCard(m.id)}
+                onReply={onReply}
+                position={index + 1}
+                total={conversation.length}
+                folderLabel={threadMessageFolder(m, accountMailboxes, openedMailboxId)}
+                isSent={accountMailboxes.some((mailbox) => mailbox.role === 'sent' && !!m.mailboxIds?.[mailbox.originalId ?? mailbox.id])}
+                jmapAccountId={jmapAccountId}
+                identities={identities}
+                currentMailboxRole={currentMailboxRole}
+                themeOverride={themeOverrides[m.id] ?? null}
+                onSwipe={onSwipe}
+                onZoomChange={(z) => { setPinching(z.pinching); onZoomChange(z); }}
+                onToggleStar={onToggleStar}
+                onAddressPress={onAddressPress}
+                onEmailPatched={onEmailPatched}
+              />
+            </View>
           ))
         ) : (
           <MessageContent
