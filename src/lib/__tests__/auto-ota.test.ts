@@ -39,3 +39,8 @@ describe('automatic OTA activation', () => {
     expect(canAutoReloadMailUpdate({ ...idle, mailListBusy: true })).toBe(false);
   });
 });
+
+it('keeps automatic updates available with optional app lock disabled', () => {
+  expect(canAutoReloadMailUpdate({ ...idle, appLocked: false, lockEnabled: false })).toBe(true);
+  expect(canAutoReloadMailUpdate({ ...idle, appLocked: false, lockEnabled: false, routeName: 'Compose' })).toBe(false);
+});

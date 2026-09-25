@@ -1,6 +1,7 @@
 interface MailUpdateContext {
   appIsActive: boolean;
   appLocked: boolean;
+  lockEnabled?: boolean;
   unlockBusy: boolean;
   routeName: string | null;
   authRestored: boolean;
@@ -12,10 +13,9 @@ interface MailUpdateContext {
   mailListBusy: boolean;
 }
 
-/** Apply before device verification, never restart a mailbox just unlocked by
- * Face ID. A downloaded update waits for the next safe locked foreground. */
+/** Use an idle mailbox; when app lock is enabled, apply before verification. */
 export function canAutoReloadMailUpdate(context: MailUpdateContext): boolean {
-  return context.appIsActive && context.appLocked && !context.unlockBusy && context.routeName === 'Mail' &&
+  return context.appIsActive && (context.appLocked || context.lockEnabled === false) && !context.unlockBusy && context.routeName === 'Mail' &&
     context.authRestored && context.authenticated && !context.authenticating &&
     context.liveSession && !context.outboxFlushing && !context.sendUndoPending &&
     !context.mailListBusy;

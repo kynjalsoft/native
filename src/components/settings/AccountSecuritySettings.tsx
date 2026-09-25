@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Alert, View, Text, StyleSheet, Pressable, Linking, ActivityIndicator } from 'react-native';
+import * as LocalAuthentication from 'expo-local-authentication';
+import { useSettingsStore } from '../../stores/settings-store';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import {
   Key, Smartphone, Lock, Eye, EyeOff, ShieldCheck, Monitor, Trash2,
@@ -838,6 +840,34 @@ function EncryptionSection({
 
 // ── Screen ────────────────────────────────────────────────
 export function AccountSecuritySettings() {
+  const t = useLocaleStore((s) => s.t);
+  const enabled = useSettingsStore((s) => s.appLockEnabled);
+  const [checking, setChecking] = useState(false);
+  const changeLock = async (value: boolean) => {
+    if (checking) return;
+    setChecking(true);
+    try {
+      if (value && await LocalAuthentication.getEnrolledLevelAsync() === LocalAuthentication.SecurityLevel.NONE) {
+        Alert.alert(t('settings.security.app_lock', 'App lock'), t('settings.security.app_lock_setup', 'Set up a device passcode, Face ID or fingerprint before enabling app lock.'));
+        return;
+      }
+      useSettingsStore.getState().updateSetting('appLockEnabled', value);
+    } catch {
+      Alert.alert(t('settings.security.app_lock', 'App lock'), t('settings.security.app_lock_unavailable', 'Device verification is unavailable. App lock was not changed.'));
+    } finally { setChecking(false); }
+  };
+  return <>
+    <SettingsSection title={t('settings.security.this_device', 'This device')}>
+      <SettingItem label={t('settings.security.app_lock', 'App lock')}
+        description={t('settings.security.app_lock_description', 'Optional. Require Face ID, fingerprint or your device passcode on launch and after a minute away. Applies only to this device.')}>
+        <ToggleSwitch checked={enabled} disabled={checking} onChange={(value) => { void changeLock(value); }} />
+      </SettingItem>
+    </SettingsSection>
+    <ServerAccountSecuritySettings />
+  </>;
+}
+
+function ServerAccountSecuritySettings() {
   const c = useColors();
   const styles = React.useMemo(() => makeStyles(c), [c]);
   const certSupported = isClientCertSupported();

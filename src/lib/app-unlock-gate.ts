@@ -65,3 +65,8 @@ export class AppUnlockGate {
 export function shouldHideMailForAppState(appState: string | null): boolean {
   return appState !== 'active';
 }
+
+/** Preferences must hydrate before a protected mailbox can be displayed. */
+export function requiresMailboxUnlock(hydrated: boolean, enabled: boolean, locked: boolean): boolean {
+  return !hydrated || (enabled && locked);
+}

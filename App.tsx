@@ -70,7 +70,7 @@ import { spacing, typography, type ThemePalette } from './src/theme/tokens';
 import { useColors } from './src/theme/colors';
 import { isCompanyMailServer } from './src/lib/zyndmail-company';
 import { canAutoReloadMailUpdate } from './src/lib/auto-ota';
-import { AppUnlockGate, shouldHideMailForAppState } from './src/lib/app-unlock-gate';
+import { AppUnlockGate, shouldHideMailForAppState, requiresMailboxUnlock } from './src/lib/app-unlock-gate';
 import {
   isCompanyPushPresentation,
   registerCompanyPush,
@@ -281,13 +281,22 @@ function AppContent() {
   const sendUndoPending = useSendUndoStore((state) => state.pending != null || state.busy);
   const [appIsActive, setAppIsActive] = React.useState(AppState.currentState === 'active');
   const [privacyHidden, setPrivacyHidden] = React.useState(shouldHideMailForAppState(AppState.currentState));
-  const [appLocked, setAppLocked] = React.useState(true);
+  const [gateLocked, setAppLocked] = React.useState(true);
+  const lockEnabled = useSettingsStore((state) => state.appLockEnabled);
+  const settingsHydrated = useSettingsStore((state) => state.hydrated);
+  const appLocked = requiresMailboxUnlock(settingsHydrated, lockEnabled, gateLocked);
   const [unlockBusy, setUnlockBusy] = React.useState(false);
   const [unlockError, setUnlockError] = React.useState<string | null>(null);
   const unlockInFlight = React.useRef(false);
   const updateReloadInFlight = React.useRef(false);
   const [updateReloading, setUpdateReloading] = React.useState(false);
   const unlockGate = React.useRef(new AppUnlockGate());
+  React.useEffect(() => {
+    // Invalidate prior verification when the user changes the lock preference.
+    unlockGate.current.cancel();
+    setAppLocked(true);
+    setUnlockError(null);
+  }, [lockEnabled]);
   const [routeName, setRouteName] = React.useState<string | null>(null);
   const [mailListBusy, setMailListBusy] = React.useState(true);
   const lastForegroundCheck = React.useRef(0);
@@ -311,7 +320,7 @@ function AppContent() {
   const hasPersistedAccount = useAccountStore((state) => state.activeAccountId != null);
 
   const unlockMailbox = React.useCallback(async () => {
-    if (unlockInFlight.current || updateReloadInFlight.current || AppState.currentState !== 'active') return;
+    if (!useSettingsStore.getState().appLockEnabled || unlockInFlight.current || updateReloadInFlight.current || AppState.currentState !== 'active') return;
     unlockInFlight.current = true;
     setUnlockBusy(true);
     setUnlockError(null);
@@ -437,7 +446,7 @@ function AppContent() {
     if (!Updates.isEnabled || __DEV__ || !isUpdatePending ||
         unlockInFlight.current || updateReloadInFlight.current ||
         !canAutoReloadMailUpdate({
-          appIsActive, appLocked, unlockBusy, routeName, authRestored: hasRestoredSession,
+          appIsActive, appLocked, lockEnabled, unlockBusy, routeName, authRestored: hasRestoredSession,
           authenticated: isAuthenticated, authenticating: isAuthenticating,
           liveSession: haveLiveSession, outboxFlushing, sendUndoPending, mailListBusy,
         }) || Date.now() - lastReloadAttempt.current < 5 * 60_000) return;
@@ -449,7 +458,7 @@ function AppContent() {
       setUpdateReloading(false);
       console.warn('[updates] idle reload failed', error);
     });
-  }, [appIsActive, appLocked, unlockBusy, routeName, hasRestoredSession, isAuthenticated,
+  }, [appIsActive, appLocked, lockEnabled, unlockBusy, routeName, hasRestoredSession, isAuthenticated,
     isAuthenticating, haveLiveSession, outboxFlushing, sendUndoPending, mailListBusy, isUpdatePending]);
   React.useEffect(() => {
     void useOfflineCacheStore.getState().hydrate();
@@ -817,7 +826,7 @@ function AppContent() {
   // have a persisted active account, render the main UI immediately with
   // whatever the email-store hydrated from cache. restoreSession still runs
   // in the background and swaps in fresh data once it completes.
-  if (!hasRestoredSession && !hasPersistedAccount) {
+  if (!settingsHydrated || (!hasRestoredSession && !hasPersistedAccount)) {
     return (
       <>
         <StatusBar style={statusBarStyle} />

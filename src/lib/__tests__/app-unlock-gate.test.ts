@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AppUnlockGate, shouldHideMailForAppState } from '../app-unlock-gate';
+import { AppUnlockGate, shouldHideMailForAppState, requiresMailboxUnlock } from '../app-unlock-gate';
 
 describe('mailbox device unlock', () => {
   it('covers the app-switcher snapshot without treating Face ID inactivity as a lock', () => {
@@ -92,5 +92,16 @@ describe('mailbox return window', () => {
     gate.background(2_000);
     gate.active(1_000);
     expect(gate.isLocked).toBe(true);
+  });
+});
+
+ describe('optional mailbox lock', () => {
+  it('does not block cold launch or notification opening when disabled', () => {
+    expect(requiresMailboxUnlock(true, false, true)).toBe(false);
+  });
+  it('waits for preferences before exposing a previously protected mailbox', () => {
+    expect(requiresMailboxUnlock(false, false, false)).toBe(true);
+    expect(requiresMailboxUnlock(true, true, true)).toBe(true);
+    expect(requiresMailboxUnlock(true, true, false)).toBe(false);
   });
 });

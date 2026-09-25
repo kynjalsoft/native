@@ -601,6 +601,10 @@
       "mobile_explainer": "The mobile app has no plugin runtime. Install and manage plugins from the webmail under Settings → Plugins; themes and filters they provide are not applied here."
     },
     "security": {
+      "app_lock": "App lock",
+      "app_lock_description": "Optional. Require Face ID, fingerprint or your device passcode on launch and after a minute away. Applies only to this device.",
+      "app_lock_setup": "Set up a device passcode, Face ID or fingerprint before enabling app lock.",
+      "app_lock_unavailable": "Device verification is unavailable. App lock was not changed.",
       "client_cert": {
         "active": "Active: {alias}",
         "choose_another": "Choose another",
@@ -656,6 +660,7 @@
         "remove_title": "Remove public key?",
         "title": "Public Keys"
       },
+      "this_device": "This device",
       "two_factor": {
         "active": "Active",
         "code": "Verification code",

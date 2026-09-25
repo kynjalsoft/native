@@ -139,3 +139,12 @@ describe('settings-store', () => {
     });
   });
 });
+
+describe('device-local app lock', () => {
+  it('defaults existing installs to optional and does not sync the choice', () => {
+    expect(mergeWithDefaults({}).appLockEnabled).toBe(false);
+    expect(mergeWithDefaults({ appLockEnabled: true }).appLockEnabled).toBe(true);
+    expect(toExportShape({ ...useSettingsStore.getState(), appLockEnabled: true })).not.toHaveProperty('appLockEnabled');
+    expect(fromExportShape({ appLockEnabled: true })).not.toHaveProperty('appLockEnabled');
+  });
+});
