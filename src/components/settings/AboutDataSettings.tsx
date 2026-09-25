@@ -207,28 +207,11 @@ export function AboutDataSettings() {
               </Pressable>
             )}
           </View>
-          <Pressable
-            style={styles.ghLink}
-            accessibilityRole="link"
-            accessibilityLabel={t('settings.advanced.about.source_link', 'ZyndMail source code')}
-            onPress={() => void Linking.openURL(SOURCE_URL)}
-          >
-            <Text style={styles.ghText}>{t('settings.advanced.about.source', 'Source')}</Text>
-            <ExternalLink size={12} color={c.mutedForeground} />
-          </Pressable>
+          
         </View>
         <View style={styles.sourceNotice}>
-          <Text style={styles.sourceNoticeText}>
-            {t('settings.advanced.about.upstream_notice', 'Based on Bulwark Native. ZyndMail is licensed under AGPL-3.0-only.')}
-          </Text>
-          <Pressable
-            accessibilityRole="link"
-            accessibilityLabel={t('settings.advanced.about.license_link', 'Read the AGPL-3.0 license')}
-            onPress={() => void Linking.openURL(LICENSE_URL)}
-            hitSlop={8}
-          >
-            <Text style={styles.sourceNoticeLink}>{t('settings.advanced.about.license', 'Read the license')}</Text>
-          </Pressable>
+         
+         
         </View>
       </View>
 
