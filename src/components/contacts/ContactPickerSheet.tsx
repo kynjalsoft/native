@@ -1,7 +1,7 @@
 import React from 'react';
 import {
-  View, Text, StyleSheet, Pressable, Modal, TextInput, FlatList,
-  Animated, Dimensions, Easing,
+  View, Text, StyleSheet, Pressable, TextInput, FlatList,
+  Animated, Dimensions, Easing, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Search, X, Check } from 'lucide-react-native';
@@ -15,6 +15,7 @@ import ContactListRow from './ContactListRow';
 import { useSheetDrag } from '../../lib/use-sheet-drag';
 import { spacing, radius, typography, componentSizes, type ThemePalette } from '../../theme/tokens';
 import { useColors } from '../../theme/colors';
+import { SafeAreaModal } from '../SafeAreaModal';
 
 interface Props {
   visible: boolean;
@@ -92,7 +93,8 @@ export default function ContactPickerSheet({
   };
 
   return (
-    <Modal visible={visible} transparent animationType="none" statusBarTranslucent onRequestClose={onClose}>
+    <SafeAreaModal visible={visible} transparent animationType="none" statusBarTranslucent onRequestClose={onClose}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'height' : undefined}>
       <Animated.View style={[styles.overlay, { opacity: overlay }]}>
         <Pressable style={styles.overlayPress} onPress={onClose} />
       </Animated.View>
@@ -159,7 +161,8 @@ export default function ContactPickerSheet({
           />
         </SafeAreaView>
       </Animated.View>
-    </Modal>
+      </KeyboardAvoidingView>
+    </SafeAreaModal>
   );
 }
 

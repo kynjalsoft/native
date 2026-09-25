@@ -4,7 +4,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { X } from 'lucide-react-native';
 import { spacing, radius, typography, type ThemePalette } from '../../theme/tokens';
 import { useColors } from '../../theme/colors';
+import { useLocaleStore } from '../../stores/locale-store';
 import { useSheetDrag } from '../../lib/use-sheet-drag';
+import { haptic, type HapticKind } from '../../lib/haptics';
 
 export interface ActionSheetItem {
   key: string;
@@ -13,6 +15,7 @@ export interface ActionSheetItem {
   trailing?: React.ReactNode;
   destructive?: boolean;
   disabled?: boolean;
+  feedback?: HapticKind | false;
   onPress: () => void;
 }
 
@@ -32,6 +35,7 @@ interface ActionSheetProps {
  */
 export function ActionSheet({ visible, title, subtitle, items, onClose, children }: ActionSheetProps) {
   const c = useColors();
+  const t = useLocaleStore((s) => s.t);
   const styles = React.useMemo(() => makeStyles(c), [c]);
   const insets = useSafeAreaInsets();
   const slideY = React.useRef(new Animated.Value(500)).current;
@@ -72,7 +76,7 @@ export function ActionSheet({ visible, title, subtitle, items, onClose, children
               <Text style={styles.title} numberOfLines={1}>{title}</Text>
               {subtitle ? <Text style={styles.subtitle} numberOfLines={1}>{subtitle}</Text> : null}
             </View>
-            <Pressable onPress={onClose} hitSlop={8} style={styles.close}>
+            <Pressable onPress={onClose} hitSlop={8} style={styles.close} accessibilityRole="button" accessibilityLabel={t('common.close', 'Close')}>
               <X size={18} color={c.textSecondary} />
             </Pressable>
           </View>
@@ -81,8 +85,17 @@ export function ActionSheet({ visible, title, subtitle, items, onClose, children
         {items.map((item) => (
           <Pressable
             key={item.key}
-            onPress={item.disabled ? undefined : item.onPress}
+            disabled={item.disabled}
+            onPress={() => {
+              if (item.disabled) return;
+              const kind = item.feedback ?? (item.destructive ? 'medium' : 'selection');
+              if (kind) haptic(kind);
+              item.onPress();
+            }}
             style={({ pressed }) => [styles.item, pressed && styles.itemPressed, item.disabled && styles.itemDisabled]}
+            accessibilityRole="button"
+            accessibilityLabel={item.label}
+            accessibilityState={{ disabled: !!item.disabled }}
           >
             <View style={styles.itemIcon}>{item.icon}</View>
             <Text style={[styles.itemLabel, item.destructive && styles.itemLabelDestructive]}>{item.label}</Text>

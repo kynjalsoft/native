@@ -2282,6 +2282,12 @@
     }
   },
   "threads": {
+    "oldest_first": "Du plus ancien au plus récent",
+    "sent_to": "Envoyé à {address}",
+    "copied_to": "En copie à {address}",
+    "blind_copied_to": "En copie cachée à {address}",
+    "addressed_to": "Adressé à {address}",
+    "to_recipient": "À {address}",
     "messages_one": "{count} message",
     "messages_other": "{count} messages",
     "messages_tooltip": "{count, plural, one {# message dans cette conversation} other {# messages dans cette conversation}}",

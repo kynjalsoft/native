@@ -1,3 +1,4 @@
+import type { NavigatorScreenParams } from '@react-navigation/native';
 import type { Attachment, EmailAddress } from '../api/types';
 
 /** The message a reply / forward / draft edit starts from. */
@@ -50,7 +51,7 @@ export interface ComposeDraftContext {
 }
 
 export type RootStackParamList = {
-  MainTabs: undefined;
+  MainTabs: NavigatorScreenParams<MainTabsParamList> | undefined;
   EmailThread: {
     emailId: string;
     threadId: string;

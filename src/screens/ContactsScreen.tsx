@@ -1,3 +1,4 @@
+import { haptic } from '../lib/haptics';
 import React from 'react';
 import {
   View,
@@ -18,7 +19,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
-  Search, Plus, UserCircle, X, Menu, Trash2, Tag, FolderInput, Upload, CheckSquare, Share2,
+  Search, Plus, UserCircle, X, Menu, Trash2, Tag, FolderInput, Upload, CheckSquare, Share2, MoreVertical,
 } from 'lucide-react-native';
 import type { RootStackParamList } from '../navigation/types';
 import type { ContactCard } from '../api/types';
@@ -38,6 +39,7 @@ import {
   TagAssignSheet,
 } from '../components/contacts';
 import Dialog from '../components/Dialog';
+import { ActionSheet } from '../components/email/ActionSheet';
 import ContactsSidebarDrawer from '../components/contacts/ContactsSidebarDrawer';
 import { useSettingsStore } from '../stores/settings-store';
 import { spacing, radius, typography, componentSizes, type ThemePalette } from '../theme/tokens';
@@ -100,7 +102,6 @@ export default function ContactsScreen() {
   const loading = useContactsStore((s) => s.loading);
   const error = useContactsStore((s) => s.error);
   const selectedCategory = useContactsStore((s) => s.selectedCategory);
-  const hydrated = useContactsStore((s) => s.hydrated);
   const fetchAddressBooks = useContactsStore((s) => s.fetchAddressBooks);
   const fetchContacts = useContactsStore((s) => s.fetchContacts);
   const hydrate = useContactsStore((s) => s.hydrate);
@@ -113,8 +114,24 @@ export default function ContactsScreen() {
 
   const [searchQuery, setSearchQuery] = React.useState('');
   const [searchActive, setSearchActive] = React.useState(false);
+  const [manualRefreshing, setManualRefreshing] = React.useState(false);
+  const manualRefreshInFlight = React.useRef(false);
   const [drawerOpen, setDrawerOpen] = React.useState(false);
   const [selection, setSelection] = React.useState<Set<string>>(new Set());
+  const [batchActionsOpen, setBatchActionsOpen] = React.useState(false);
+  const batchSheetTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  React.useEffect(() => () => {
+    if (batchSheetTimer.current) clearTimeout(batchSheetTimer.current);
+  }, []);
+  // Give the native modal time to close before opening a picker or share sheet.
+  const afterBatchSheetCloses = (action: () => void) => {
+    setBatchActionsOpen(false);
+    if (batchSheetTimer.current) clearTimeout(batchSheetTimer.current);
+    batchSheetTimer.current = setTimeout(() => {
+      batchSheetTimer.current = null;
+      action();
+    }, 250);
+  };
   const [confirmBulkDelete, setConfirmBulkDelete] = React.useState(false);
   const [moveSheetOpen, setMoveSheetOpen] = React.useState(false);
   const [tagSheetOpen, setTagSheetOpen] = React.useState(false);
@@ -130,6 +147,21 @@ export default function ContactsScreen() {
     void fetchAddressBooks();
     void fetchContacts();
   }, [fetchAddressBooks, fetchContacts]);
+
+  const onManualRefresh = React.useCallback(async () => {
+    if (manualRefreshInFlight.current) return;
+    manualRefreshInFlight.current = true;
+    haptic('light');
+    setManualRefreshing(true);
+    try {
+      // The server may provision the default book on AddressBook/get.
+      await fetchAddressBooks();
+      await fetchContacts();
+    } finally {
+      manualRefreshInFlight.current = false;
+      setManualRefreshing(false);
+    }
+  }, [fetchContacts, fetchAddressBooks]);
 
   const groups = React.useMemo(() => contacts.filter(isGroup), [contacts]);
   const individuals = React.useMemo(() => contacts.filter((c) => !isGroup(c)), [contacts]);
@@ -171,6 +203,7 @@ export default function ContactsScreen() {
 
   const selectionMode = selection.size > 0;
   const toggleSelect = (id: string) => {
+    haptic('selection');
     setSelection((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -326,47 +359,28 @@ export default function ContactsScreen() {
       <View style={styles.header}>
         {selectionMode ? (
           <>
-            <Pressable onPress={clearSelection} style={styles.headerIconBtn} hitSlop={8}>
+            <Pressable onPress={clearSelection} style={styles.headerIconBtn} hitSlop={8} accessibilityRole="button" accessibilityLabel="Close selection">
               <X size={22} color={c.text} />
             </Pressable>
-            <Text style={styles.headerTitle}>{selection.size} selected</Text>
+            <Text style={styles.headerTitle} numberOfLines={1}>{selection.size} selected</Text>
             <View style={styles.headerActions}>
               <Pressable
                 onPress={selectAllVisible}
                 style={styles.headerIconBtn}
                 hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel="Select all visible contacts"
               >
                 <CheckSquare size={20} color={c.text} />
               </Pressable>
               <Pressable
-                onPress={() => { void exportSelected(); }}
+                onPress={() => setBatchActionsOpen(true)}
                 style={styles.headerIconBtn}
                 hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel="More actions"
               >
-                <Share2 size={20} color={c.text} />
-              </Pressable>
-              {addressBooks.length > 0 && (
-                <Pressable
-                  onPress={() => setMoveSheetOpen(true)}
-                  style={styles.headerIconBtn}
-                  hitSlop={8}
-                >
-                  <FolderInput size={20} color={c.text} />
-                </Pressable>
-              )}
-              <Pressable
-                onPress={() => setTagSheetOpen(true)}
-                style={styles.headerIconBtn}
-                hitSlop={8}
-              >
-                <Tag size={20} color={c.text} />
-              </Pressable>
-              <Pressable
-                onPress={() => setConfirmBulkDelete(true)}
-                style={styles.headerIconBtn}
-                hitSlop={8}
-              >
-                <Trash2 size={20} color={c.error} />
+                <MoreVertical size={20} color={c.text} />
               </Pressable>
             </View>
           </>
@@ -479,11 +493,8 @@ export default function ContactsScreen() {
         contentContainerStyle={styles.listContent}
         refreshControl={
           <RefreshControl
-            refreshing={loading && hydrated}
-            onRefresh={() => {
-              void fetchContacts();
-              void fetchAddressBooks();
-            }}
+            refreshing={manualRefreshing}
+            onRefresh={() => { void onManualRefresh(); }}
             tintColor={c.primary}
           />
         }
@@ -504,6 +515,34 @@ export default function ContactsScreen() {
             </View>
           )
         }
+      />
+
+      <ActionSheet
+        visible={batchActionsOpen && selectionMode}
+        title={`${selection.size} selected`}
+        onClose={() => setBatchActionsOpen(false)}
+        items={[
+          {
+            key: 'export', label: 'Export contacts',
+            icon: <Share2 size={20} color={c.textSecondary} />,
+            onPress: () => afterBatchSheetCloses(() => { void exportSelected(); }),
+          },
+          ...(addressBooks.length > 0 ? [{
+            key: 'move', label: 'Move to address book',
+            icon: <FolderInput size={20} color={c.textSecondary} />,
+            onPress: () => afterBatchSheetCloses(() => setMoveSheetOpen(true)),
+          }] : []),
+          {
+            key: 'tag', label: 'Add tag',
+            icon: <Tag size={20} color={c.textSecondary} />,
+            onPress: () => afterBatchSheetCloses(() => setTagSheetOpen(true)),
+          },
+          {
+            key: 'delete', label: 'Delete contacts', destructive: true,
+            icon: <Trash2 size={20} color={c.error} />,
+            onPress: () => afterBatchSheetCloses(() => setConfirmBulkDelete(true)),
+          },
+        ]}
       />
 
       <Dialog

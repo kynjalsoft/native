@@ -251,6 +251,7 @@ async function ensureFreshCredentials(
       expiresAt: creds.expiresAt,
       tokenEndpoint: creds.tokenEndpoint,
       clientId: creds.clientId,
+      companyIdentity: creds.companyIdentity,
     };
     const next = await refreshOAuthAccessToken(tokens);
     const updated: StoredCredentials = {
@@ -262,7 +263,8 @@ async function ensureFreshCredentials(
       clientId: next.clientId,
     };
     const current = await jmapClient.getStoredCredentials(accountId);
-    if (!current || current.accessToken !== updated.accessToken) {
+    if (!current || current.accessToken !== updated.accessToken ||
+        current.refreshToken !== updated.refreshToken || current.expiresAt !== updated.expiresAt) {
       await jmapClient.setStoredCredentials(accountId, updated);
     }
     return updated;

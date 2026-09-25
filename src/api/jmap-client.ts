@@ -14,7 +14,9 @@ import {
   type OAuthTokens,
   type OAuthTokenSource,
 } from '../lib/oauth';
+import type { CompanyIdentity } from '../lib/zyndmail-company';
 import { FirstTouchGate } from './first-touch-gate';
+import { assertMailDeletionAllowed, hasCompanyNoDeletePolicy } from '../lib/zyndmail-mail-policy';
 
 // Refresh OAuth access tokens this many ms before they actually expire so
 // in-flight requests don't race the expiry window.
@@ -56,6 +58,7 @@ export interface StoredCredentials {
   tokenEndpoint?: string;
   clientId?: string;
   tokenSource?: OAuthTokenSource;
+  companyIdentity?: CompanyIdentity;
 }
 
 /**
@@ -143,6 +146,10 @@ export class JMAPClient {
 
   get serverUrl(): string | null {
     return this.credentials?.serverUrl ?? null;
+  }
+
+  get hasCompanyNoDeletePolicy(): boolean {
+    return hasCompanyNoDeletePolicy(this.credentials);
   }
 
   // True when the session authenticates with a Bearer token (OAuth handoff or
@@ -304,6 +311,7 @@ export class JMAPClient {
       tokenEndpoint: tokens.tokenEndpoint,
       clientId: tokens.clientId,
       tokenSource: tokens.source,
+      companyIdentity: tokens.companyIdentity,
     };
 
     this.session = this.rewriteSessionUrls(await this.fetchSession(baseUrl), baseUrl);
@@ -326,11 +334,11 @@ export class JMAPClient {
     return { session: this.session, username, accountId };
   }
 
-  private async persistRefreshedTokens(next: OAuthTokens): Promise<void> {
-    if (!this.credentials) return;
-    if (this.credentials.accessToken === next.accessToken) return;
-    this.credentials = {
-      ...this.credentials,
+  private async persistRefreshedTokens(next: OAuthTokens, original: StoredCredentials): Promise<void> {
+    // Do not apply a late response to another account or signed-out session.
+    if (this.credentials !== original) return;
+    const updated = {
+      ...original,
       accessToken: next.accessToken,
       // Some IdPs rotate refresh tokens; others reuse. Fall back to the
       // existing one when the response omits it.
@@ -338,15 +346,13 @@ export class JMAPClient {
       expiresAt: next.expiresAt,
       tokenEndpoint: next.tokenEndpoint,
       clientId: next.clientId,
+      companyIdentity: next.companyIdentity,
     };
     const accountId = generateAccountId(
-      this.credentials.username,
-      this.credentials.serverUrl,
+      original.username,
+      original.serverUrl,
     );
-    await SecureStore.setItemAsync(
-      credentialsKey(accountId),
-      JSON.stringify(this.credentials),
-    );
+    await this.setStoredCredentials(accountId, updated);
     for (const l of this.tokenRefreshListeners) {
       try { l(); } catch { /* ignore */ }
     }
@@ -368,6 +374,7 @@ export class JMAPClient {
       tokenEndpoint: this.credentials.tokenEndpoint,
       clientId: this.credentials.clientId,
       source: this.credentials.tokenSource,
+      companyIdentity: this.credentials.companyIdentity,
     };
   }
 
@@ -382,6 +389,7 @@ export class JMAPClient {
       tokenEndpoint: creds.tokenEndpoint,
       clientId: creds.clientId,
       source: creds.tokenSource,
+      companyIdentity: creds.companyIdentity,
     };
   }
 
@@ -390,13 +398,14 @@ export class JMAPClient {
   // consumers of `authHeader` (SSE stream, file downloads) can make sure the
   // header they capture is not about to expire.
   async ensureFreshToken(): Promise<void> {
+    const original = this.credentials;
     const tokens = this.currentOAuthTokens();
     if (!tokens) return;
     if (tokens.expiresAt == null) return;
     if (tokens.expiresAt - Date.now() > TOKEN_REFRESH_LEEWAY_MS) return;
     try {
       const next = await refreshOAuthAccessToken(tokens);
-      await this.persistRefreshedTokens(next);
+      await this.persistRefreshedTokens(next, original!);
     } catch {
       // Surface as AuthenticationError on the next 401; refresh may be
       // temporarily failing (network) and the reactive retry path catches it.
@@ -409,11 +418,12 @@ export class JMAPClient {
   // the account instead of evicting it (webmail 1.7.6 "keep the session when
   // the auth server is briefly unreachable").
   async forceRefreshToken(): Promise<boolean> {
+    const original = this.credentials;
     const tokens = this.currentOAuthTokens();
     if (!tokens) return false;
     try {
       const next = await refreshOAuthAccessToken(tokens);
-      await this.persistRefreshedTokens(next);
+      await this.persistRefreshedTokens(next, original!);
       return true;
     } catch (err) {
       if (err instanceof TransientRefreshError) {
@@ -814,6 +824,7 @@ export class JMAPClient {
     using?: string[],
   ): Promise<JMAPResponseBody> {
     if (!this.session) throw new Error('Not connected');
+    assertMailDeletionAllowed(methodCalls, this.hasCompanyNoDeletePolicy);
 
     const body: JMAPRequestBody = {
       using: using ?? [CAPABILITIES.CORE, CAPABILITIES.MAIL],
@@ -1015,6 +1026,10 @@ export class JMAPClient {
 
   async setStoredCredentials(accountId: string, creds: StoredCredentials): Promise<void> {
     await SecureStore.setItemAsync(credentialsKey(accountId), JSON.stringify(creds));
+    // Background inbox/push renewal must also update the foreground bearer.
+    if (this.credentials && generateAccountId(this.credentials.username, this.credentials.serverUrl) === accountId) {
+      this.credentials = creds;
+    }
   }
 
   // ── Blob Download ─────────────────────────────────────

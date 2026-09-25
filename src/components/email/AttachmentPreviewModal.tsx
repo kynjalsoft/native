@@ -1,6 +1,6 @@
 import React from 'react';
 import {
-  View, Text, StyleSheet, Modal, Pressable, ScrollView, Image, ActivityIndicator, Platform, useWindowDimensions,
+  View, Text, StyleSheet, Pressable, ScrollView, Image, ActivityIndicator, Platform, useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
@@ -10,6 +10,8 @@ import { spacing, radius, typography, componentSizes, type ThemePalette } from '
 import { useColors } from '../../theme/colors';
 import { useLocaleStore } from '../../stores/locale-store';
 import EmailBodyView from '../EmailBodyView';
+import { SafeAreaModal } from '../SafeAreaModal';
+import { AdaptiveGlassSurface } from '../AdaptiveGlassSurface';
 import type { PreviewKind } from '../../lib/attachment-display';
 
 export interface PreviewItem {
@@ -139,20 +141,24 @@ export function AttachmentPreviewModal({ item, loading, onClose, onOpenExternal,
   };
 
   return (
-    <Modal visible={!!item || loading} animationType="slide" onRequestClose={onClose}>
+    <SafeAreaModal visible={!!item || loading} animationType="slide" onRequestClose={onClose} statusBarTranslucent>
       <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
         <View style={styles.header}>
-          <Pressable onPress={onClose} style={styles.headerBtn} hitSlop={8}>
+          <Pressable onPress={onClose} style={styles.headerBtn} hitSlop={8}
+            accessibilityRole="button" accessibilityLabel={t('common.close', 'Close')}>
+            <AdaptiveGlassSurface style={styles.headerBtnSurface} fallbackColor={c.surface} />
             <X size={22} color={c.text} />
           </Pressable>
           <Text style={styles.title} numberOfLines={1}>{item?.name ?? ''}</Text>
-          <Pressable onPress={onShare} style={styles.headerBtn} hitSlop={8} disabled={!item}>
+          <Pressable onPress={onShare} style={styles.headerBtn} hitSlop={8} disabled={!item}
+            accessibilityRole="button" accessibilityLabel={t('files.share', 'Share')}>
+            <AdaptiveGlassSurface style={styles.headerBtnSurface} fallbackColor={c.surface} />
             <Share2 size={20} color={item ? c.text : c.textMuted} />
           </Pressable>
         </View>
         {renderBody()}
       </SafeAreaView>
-    </Modal>
+    </SafeAreaModal>
   );
 }
 
@@ -163,14 +169,15 @@ function makeStyles(c: ThemePalette) {
     header: {
       flexDirection: 'row',
       alignItems: 'center',
-      height: componentSizes.headerHeight,
+      minHeight: componentSizes.headerHeight,
       paddingHorizontal: spacing.lg,
       borderBottomWidth: 1,
       borderBottomColor: c.border,
       gap: spacing.sm,
     },
-    headerBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: radius.md },
-    title: { ...typography.h3, color: c.text, flex: 1 },
+    headerBtn: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: radius.full },
+    headerBtnSurface: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, borderRadius: radius.full },
+    title: { ...typography.bodySemibold, color: c.text, flex: 1, textAlign: 'center', minWidth: 0 },
     centered: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.lg, gap: spacing.md },
     hint: { ...typography.body, color: c.textMuted, textAlign: 'center' },
     button: {

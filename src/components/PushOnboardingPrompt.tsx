@@ -18,6 +18,8 @@ import {
   setupPushNotifications,
   wasPushPromptDismissed,
 } from '../lib/push-notifications';
+import { isCompanyMailServer } from '../lib/zyndmail-company';
+import { companyPushRelayOrigin, companyPushStatus, registerCompanyPush } from '../lib/company-push';
 
 // Mirrors the webmail's push-notification-prompt: a short delay after login
 // so the inbox renders first, and never again for an account once dismissed.
@@ -25,7 +27,7 @@ const PROMPT_DELAY_MS = 1500;
 
 /**
  * Once-per-account invitation to turn on background notifications. Shown
- * only where push can actually work (Android with Play services), when the
+ * only where a supported push relay is configured, when the
  * user has not disabled mail notifications, and until either "Enable" or
  * "Not now" has been tapped for the active account.
  */
@@ -47,13 +49,17 @@ export function PushOnboardingPrompt(): React.ReactElement | null {
     setVisible(false);
     setError(null);
     if (!isAuthenticated || !client || !activeAccountId || !emailNotificationsEnabled) return;
-    if (!isPushSupported()) return;
+    const company = isCompanyMailServer(client.serverUrl ?? '');
+    if (company ? !companyPushRelayOrigin() : !isPushSupported()) return;
 
     let cancelled = false;
     const timer = setTimeout(() => {
       void (async () => {
         if (await wasPushPromptDismissed(activeAccountId)) return;
-        if (await isPushEnabledForAccount(activeAccountId)) return;
+        if (company) {
+          const status = await companyPushStatus(activeAccountId).catch(() => null);
+          if (!status || status.status === 'ACTIVE' || status.status === 'UNAVAILABLE') return;
+        } else if (await isPushEnabledForAccount(activeAccountId)) return;
         if (!cancelled) setVisible(true);
       })();
     }, PROMPT_DELAY_MS);
@@ -74,9 +80,14 @@ export function PushOnboardingPrompt(): React.ReactElement | null {
     setBusy(true);
     setError(null);
     try {
-      const relayBaseUrl = (await getEffectiveRelayBaseUrl()) || DEFAULT_RELAY_BASE_URL;
-      await setStoredRelayBaseUrl(relayBaseUrl);
-      await setupPushNotifications({ relayBaseUrl, accountLabel: username ?? undefined });
+      if (isCompanyMailServer(client?.serverUrl ?? '')) {
+        const status = await registerCompanyPush(activeAccountId, true);
+        if (status.status !== 'ACTIVE') throw new Error('reason' in status ? status.reason : 'Mail alerts are not active.');
+      } else {
+        const relayBaseUrl = (await getEffectiveRelayBaseUrl()) || DEFAULT_RELAY_BASE_URL;
+        await setStoredRelayBaseUrl(relayBaseUrl);
+        await setupPushNotifications({ relayBaseUrl, accountLabel: username ?? undefined });
+      }
       await dismissPushPrompt(activeAccountId);
       setVisible(false);
     } catch (err) {
@@ -99,10 +110,9 @@ export function PushOnboardingPrompt(): React.ReactElement | null {
           {t('push_prompt.title', 'Get notified about new mail')}
         </Text>
         <Text style={styles.body}>
-          {t(
-            'push_prompt.body',
-            'Turn on background notifications so new messages reach you while the app is closed.',
-          )}
+          {isCompanyMailServer(client?.serverUrl ?? '')
+            ? t('push_prompt.company_body', 'Get private alerts for activity in your authorized work mailboxes. No message content appears in the alert.')
+            : t('push_prompt.body', 'Turn on background notifications so new messages reach you while the app is closed.')}
         </Text>
         {error && <Text style={styles.error}>{error}</Text>}
         <View style={styles.actions}>

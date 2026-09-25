@@ -6,7 +6,7 @@
 // Mirrors the webmail's client-side PKCE flow (`lib/oauth/discovery.ts`,
 // `lib/oauth/pkce.ts`, login page `handleOAuthLogin`): discover the metadata
 // document, open the authorization endpoint in the system browser with a
-// S256 challenge, receive the code on `bulwarkmobile://auth/callback`, and
+// S256 challenge, receive the code on `zyndmail://auth/callback`, and
 // exchange it at the token endpoint. The resulting bundle is the same shape
 // the hand-off produces, so `connectWithOAuth` and the refresh path apply.
 
@@ -15,6 +15,12 @@ import { secureFetch } from './client-cert';
 import { HANDOFF_REDIRECT_URI, HandoffError, HandoffCancelledError, type OAuthTokens } from './oauth';
 import { generateCodeChallenge, generateCodeVerifier, DEFAULT_CLIENT_ID } from './totp-login';
 import { randomHex } from './random';
+import {
+  ZYNDMAIL_COMPANY,
+  validateCompanyAccessToken,
+  validateCompanyIdToken,
+  validateCompanyMetadata,
+} from './zyndmail-company';
 
 export interface OAuthMetadata {
   issuer?: string;
@@ -115,17 +121,32 @@ function parseCallbackParams(url: string): URLSearchParams {
 export async function loginWithPkce(
   serverUrl: string,
   metadata: OAuthMetadata,
-  opts?: { clientId?: string; scopes?: string; redirectUri?: string },
+  opts?: { clientId?: string; scopes?: string; redirectUri?: string; company?: boolean },
 ): Promise<OAuthTokens> {
+  if (opts?.company) {
+    if (serverUrl.replace(/\/+$/, '') !== ZYNDMAIL_COMPANY.mailOrigin) {
+      throw new HandoffError('ZyndPay Staff sign-in requires the company mail server.');
+    }
+    validateCompanyMetadata(metadata);
+    if (opts.clientId !== ZYNDMAIL_COMPANY.clientId || opts.redirectUri !== ZYNDMAIL_COMPANY.redirectUri) {
+      throw new HandoffError('ZyndPay Staff mobile client configuration did not match.');
+    }
+  }
   const clientId = opts?.clientId ?? DEFAULT_CLIENT_ID;
   const redirectUri = opts?.redirectUri ?? HANDOFF_REDIRECT_URI;
   const verifier = generateCodeVerifier();
   const challenge = generateCodeChallenge(verifier);
   const state = randomHex(16);
-  const scope = opts?.scopes
+  const nonce = opts?.company ? randomHex(16) : null;
+  const requestedScope = opts?.scopes
     ?? (metadata.scopes_supported?.length
       ? ['openid', 'email', 'profile', 'offline_access'].filter((s) => metadata.scopes_supported!.includes(s)).join(' ') || metadata.scopes_supported.join(' ')
       : 'openid email profile offline_access');
+
+  // Company mail must survive the browser SSO idle window and app suspension.
+  const scope = opts?.company
+    ? [...new Set([...requestedScope.split(/\s+/), 'offline_access'])].join(' ')
+    : requestedScope;
 
   const params = new URLSearchParams({
     response_type: 'code',
@@ -136,11 +157,15 @@ export async function loginWithPkce(
     code_challenge: challenge,
     code_challenge_method: 'S256',
   });
+  if (nonce) params.set('nonce', nonce);
   const authUrl = `${metadata.authorization_endpoint}${metadata.authorization_endpoint.includes('?') ? '&' : '?'}${params.toString()}`;
 
   const result = await WebBrowser.openAuthSessionAsync(authUrl, redirectUri);
   if (result.type === 'cancel' || result.type === 'dismiss') throw new HandoffCancelledError();
   if (result.type !== 'success' || !result.url) throw new HandoffError(`Sign-in failed: ${result.type}`);
+  if (opts?.company && result.url.split(/[?#]/, 1)[0] !== redirectUri) {
+    throw new HandoffError('ZyndPay Staff returned to an unexpected app address.');
+  }
 
   const cb = parseCallbackParams(result.url);
   const err = cb.get('error');
@@ -178,15 +203,26 @@ export async function loginWithPkce(
     access_token?: string;
     refresh_token?: string;
     expires_in?: number;
+    id_token?: string;
   };
   if (!data.access_token) throw new HandoffError('Token response missing access_token');
+  const validated = opts?.company ? validateCompanyAccessToken(data.access_token) : null;
+  if (validated && nonce) {
+    validateCompanyIdToken(data.id_token, nonce, validated.subject);
+    if (!data.refresh_token) throw new HandoffError('ZyndPay Staff did not grant a renewable session.');
+  }
   return {
     accessToken: data.access_token,
     refreshToken: data.refresh_token,
-    expiresAt: data.expires_in ? Date.now() + data.expires_in * 1000 : undefined,
+    expiresAt: validated?.expiresAt ?? (data.expires_in ? Date.now() + data.expires_in * 1000 : undefined),
     tokenEndpoint: metadata.token_endpoint,
     clientId,
     source: 'native',
+    companyIdentity: validated ? {
+      issuer: validated.issuer,
+      audience: validated.audience,
+      subject: validated.subject,
+    } : undefined,
   };
 }
 
@@ -197,7 +233,8 @@ export async function loginWithPkce(
 export async function revokeRefreshToken(serverUrl: string, tokens: OAuthTokens): Promise<void> {
   if (!tokens.refreshToken) return;
   try {
-    const metadata = await discoverOAuthMetadata(serverUrl);
+    const metadata = await discoverOAuthMetadata(tokens.companyIdentity ? ZYNDMAIL_COMPANY.issuer : serverUrl);
+    if (tokens.companyIdentity && metadata) validateCompanyMetadata(metadata);
     const endpoint = metadata?.revocation_endpoint;
     if (!endpoint || !/^https?:\/\//i.test(endpoint)) return;
     const body = new URLSearchParams({

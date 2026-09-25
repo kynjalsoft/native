@@ -2280,6 +2280,12 @@
     }
   },
   "threads": {
+    "oldest_first": "Oldest first",
+    "sent_to": "Sent to {address}",
+    "copied_to": "Copied to {address}",
+    "blind_copied_to": "Blind copied to {address}",
+    "addressed_to": "Addressed to {address}",
+    "to_recipient": "To {address}",
     "messages_one": "{count} message",
     "messages_other": "{count} messages",
     "messages_tooltip": "{count, plural, one {# message in this conversation} other {# messages in this conversation}}",

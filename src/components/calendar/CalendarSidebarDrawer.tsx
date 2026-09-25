@@ -1,27 +1,24 @@
 import React from 'react';
 import {
-  Animated,
-  Dimensions,
-  Easing,
-  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   Check, X, Upload, Rss, Shuffle, Star, Plus, Pencil, Share2, Eraser, Trash2,
 } from 'lucide-react-native';
 import type { Calendar } from '../../api/types';
 import { radius, spacing, typography, type ThemePalette } from '../../theme/tokens';
 import { useColors } from '../../theme/colors';
-import { useAnimDuration } from '../../theme/dynamic';
+import { useShouldAnimate } from '../../theme/dynamic';
 import { CALENDAR_COLOR_PALETTE, getCalendarColor } from '../../lib/calendar-utils';
 import { BIRTHDAY_CALENDAR_ID } from '../../lib/birthday-calendar';
 import { isWritableCalendar } from '../../lib/calendar-editability';
 import { useLocaleStore } from '../../stores/locale-store';
+import { SafeAreaModal } from '../SafeAreaModal';
 
 interface CalendarSidebarDrawerProps {
   visible: boolean;
@@ -65,53 +62,13 @@ export function CalendarSidebarDrawer({
   isSubscriptionCalendar,
 }: CalendarSidebarDrawerProps) {
   const c = useColors();
+  const insets = useSafeAreaInsets();
   const styles = React.useMemo(() => makeStyles(c), [c]);
-  const slideX = React.useRef(new Animated.Value(-Dimensions.get('window').width)).current;
-  const overlayOpacity = React.useRef(new Animated.Value(0)).current;
-  const openDuration = useAnimDuration(240);
-  const closeDuration = useAnimDuration(200);
+  // Native modal presentation owns both transitions; no animation runs on a detached view.
+  const animate = useShouldAnimate();
   const t = useLocaleStore((s) => s.t);
   const [expandedId, setExpandedId] = React.useState<string | null>(null);
-
-  // Also kicked from the Modal's onShow — the first open fires this effect
-  // before the modal's native view exists, so that animation is dropped and
-  // the drawer stays parked off-screen until the second open.
-  const runOpen = React.useCallback(() => {
-    Animated.parallel([
-      Animated.timing(slideX, {
-        toValue: 0,
-        duration: openDuration,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }),
-      Animated.timing(overlayOpacity, {
-        toValue: 1,
-        duration: openDuration,
-        useNativeDriver: true,
-      }),
-    ]).start();
-  }, [slideX, overlayOpacity, openDuration]);
-
-  React.useEffect(() => {
-    if (visible) {
-      runOpen();
-    } else {
-      setExpandedId(null);
-      Animated.parallel([
-        Animated.timing(slideX, {
-          toValue: -Dimensions.get('window').width,
-          duration: closeDuration,
-          easing: Easing.in(Easing.cubic),
-          useNativeDriver: true,
-        }),
-        Animated.timing(overlayOpacity, {
-          toValue: 0,
-          duration: closeDuration,
-          useNativeDriver: true,
-        }),
-      ]).start();
-    }
-  }, [visible, runOpen, slideX, overlayOpacity, closeDuration]);
+  React.useEffect(() => { if (!visible) setExpandedId(null); }, [visible]);
 
   const hiddenSet = React.useMemo(() => new Set(hiddenCalendarIds), [hiddenCalendarIds]);
 
@@ -135,22 +92,21 @@ export function CalendarSidebarDrawer({
   };
 
   return (
-    <Modal
+    <SafeAreaModal
       visible={visible}
       transparent
-      animationType="none"
+      presentationStyle="overFullScreen"
+      animationType={animate ? "fade" : "none"}
       statusBarTranslucent
       onRequestClose={onClose}
-      onShow={runOpen}
     >
-      <Animated.View style={[styles.overlay, { opacity: overlayOpacity }]}>
+      <View style={styles.overlay}>
         <Pressable style={styles.overlayPress} onPress={onClose} />
-      </Animated.View>
+      </View>
 
-      <Animated.View
-        style={[styles.drawer, { transform: [{ translateX: slideX }] }]}
-      >
-        <SafeAreaView style={styles.drawerSafe} edges={['top', 'bottom', 'left']}>
+      <View style={styles.drawer} accessibilityViewIsModal onAccessibilityEscape={onClose}>
+        {/* Read stable screen insets outside the modal root, which can report zero during presentation. */}
+        <View style={[styles.drawerSafe, { paddingTop: insets.top, paddingBottom: insets.bottom, paddingLeft: insets.left }]}>
           <View style={styles.header}>
             <Pressable onPress={onClose} style={styles.headerClose} hitSlop={8}>
               <X size={20} color={c.text} />
@@ -207,9 +163,9 @@ export function CalendarSidebarDrawer({
               </View>
             )}
           </ScrollView>
-        </SafeAreaView>
-      </Animated.View>
-    </Modal>
+        </View>
+      </View>
+    </SafeAreaModal>
   );
 }
 

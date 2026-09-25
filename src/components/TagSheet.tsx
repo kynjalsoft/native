@@ -1,3 +1,4 @@
+import { haptic } from '../lib/haptics';
 import React from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Pressable, Modal, Animated, Easing,
@@ -99,7 +100,7 @@ export function TagSheet({ visible, onClose, keywords, selectedEmails, onToggle 
               return (
                 <Pressable
                   key={kw.id}
-                  onPress={() => onToggle(token, !applied)}
+                  onPress={() => { haptic('selection'); onToggle(token, !applied); }}
                   style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
                 >
                   <Tag size={16} color={dot} fill={dot} />
@@ -115,7 +116,7 @@ export function TagSheet({ visible, onClose, keywords, selectedEmails, onToggle 
             return (
               <Pressable
                 key={`unknown:${id}`}
-                onPress={() => onToggle(token, !applied)}
+                onPress={() => { haptic('selection'); onToggle(token, !applied); }}
                 style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
               >
                 <Tag size={16} color={tokenColors.tags.gray.dot} fill={tokenColors.tags.gray.dot} />

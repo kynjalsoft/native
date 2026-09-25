@@ -128,6 +128,7 @@ vi.mock('../../api/jmap-client', () => ({
     accountId: 'acc-1',
     username: 'test@example.com',
     serverUrl: 'https://mail.example.com',
+    hasCompanyNoDeletePolicy: false,
     currentSession: { apiUrl: 'https://mail.example.com/jmap/' },
     // refreshEmails / loadMoreEmails chunk by this value when fetching ids.
     getMaxObjectsInGet: () => 500,
@@ -145,6 +146,7 @@ import { generateAccountId } from '../../lib/account-utils';
 const TEST_ACCOUNT_ID = generateAccountId('test@example.com', 'https://mail.example.com');
 
 import * as emailApi from '../../api/email';
+import { jmapClient } from '../../api/jmap-client';
 import { useEmailStore } from '../email-store';
 import { useSettingsStore } from '../settings-store';
 
@@ -162,6 +164,7 @@ const mockSearchEmails = emailApi.searchEmails as ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  (jmapClient as typeof jmapClient & { hasCompanyNoDeletePolicy: boolean }).hasCompanyNoDeletePolicy = false;
   useEmailStore.getState().reset();
   // Wire the store's active account to the one the mocked jmapClient is
   // serving, so the guard inside fetchMailboxes / refreshEmails / etc.
@@ -171,6 +174,23 @@ beforeEach(() => {
 });
 
 describe('email-store', () => {
+  it('keeps company mail visible and out of the offline outbox when delete is attempted', async () => {
+    (jmapClient as typeof jmapClient & { hasCompanyNoDeletePolicy: boolean }).hasCompanyNoDeletePolicy = true;
+    useEmailStore.setState({
+      emails: [{ id: 'e1', mailboxIds: { inbox: true } } as any],
+      mailboxes: [
+        { id: 'inbox', name: 'Inbox', role: 'inbox' },
+        { id: 'trash', name: 'Trash', role: 'trash' },
+      ] as any,
+    });
+
+    await expect(useEmailStore.getState().deleteEmail('e1', 'trash', 'inbox'))
+      .rejects.toThrow(/disabled by your organization/);
+    await expect(useEmailStore.getState().deleteEmailsBatch(['e1'], 'trash', 'inbox'))
+      .rejects.toThrow(/disabled by your organization/);
+    expect(useEmailStore.getState().emails.map((email) => email.id)).toEqual(['e1']);
+    expect(mockDeleteEmail).not.toHaveBeenCalled();
+  });
   describe('fetchMailboxes', () => {
     it('should load mailboxes', async () => {
       const mailboxes = [

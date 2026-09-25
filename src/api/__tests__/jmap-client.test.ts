@@ -148,6 +148,23 @@ describe('JMAPClient', () => {
       expect(result.methodResponses[0][0]).toBe('Mailbox/get');
     });
 
+    it('does not send a destructive company mail request after switching from a public account', async () => {
+      global.fetch = mockFetch([{ status: 200, json: MOCK_SESSION }]) as any;
+      await client.connectWithToken('https://mail.zyndpay.io', 'company-token');
+      global.fetch = mockFetch([{ status: 200, json: { methodResponses: [] } }]) as any;
+
+      await expect(client.request([['Email/set', { accountId: 'acc-1', destroy: ['message-1'] }, '0']]))
+        .rejects.toThrow(/disabled by your organization/);
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    it('leaves a public account free to use its server-granted delete permission', async () => {
+      global.fetch = mockFetch([{ status: 200, json: { methodResponses: [] } }]) as any;
+
+      await client.request([['Email/set', { accountId: 'acc-1', destroy: ['message-1'] }, '0']]);
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+    });
+
     it('should throw AuthenticationError on 401 during request', async () => {
       global.fetch = mockFetch([{ status: 401 }]) as any;
 
@@ -296,4 +313,41 @@ describe('JMAPClient', () => {
         .rejects.toThrow('Invalid credentials');
     });
   });
+});
+
+describe('OAuth persistence across foreground and background clients', () => {
+  it('uses background-rotated credentials in the live client and after reopening', async () => {
+    const store = new Map<string, string>();
+    vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => { store.set(key, value); });
+    vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => store.get(key) ?? null);
+    global.fetch = mockFetch([{ status: 200, json: MOCK_SESSION }]) as any;
+    const client = new JMAPClient();
+    const { accountId } = await client.connectWithOAuth('https://mail.example.com', {
+      accessToken: 'old-access', refreshToken: 'old-refresh', expiresAt: Date.now() + 3600000,
+      tokenEndpoint: 'https://auth.example.com/token', clientId: 'mobile',
+    });
+    const original = (await client.getStoredCredentials(accountId))!;
+    await client.setStoredCredentials(accountId, { ...original, accessToken: 'renewed-access', refreshToken: 'renewed-refresh' });
+    expect(client.authHeader).toBe('Bearer renewed-access');
+    const reopened = new JMAPClient();
+    await reopened.loadAccount(accountId);
+    expect(reopened.authHeader).toBe('Bearer renewed-access');
+    expect((await reopened.getStoredOAuthTokens(accountId))?.refreshToken).toBe('renewed-refresh');
+  });
+});
+
+it('persists a rotated refresh token even when the access token is unchanged', async () => {
+  const oauth = await import('../../lib/oauth');
+  const store = new Map<string, string>();
+  vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => { store.set(key, value); });
+  vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => store.get(key) ?? null);
+  global.fetch = mockFetch([{ status: 200, json: MOCK_SESSION }]) as any;
+  const client = new JMAPClient();
+  const tokens = { accessToken: 'same-access', refreshToken: 'first-refresh', expiresAt: Date.now() + 3600000,
+    tokenEndpoint: 'https://auth.example.com/token', clientId: 'mobile' };
+  const { accountId } = await client.connectWithOAuth('https://mail.example.com', tokens);
+  const refresh = vi.spyOn(oauth, 'refreshOAuthAccessToken').mockResolvedValue({ ...tokens, refreshToken: 'rotated-refresh' });
+  expect(await client.forceRefreshToken()).toBe(true);
+  expect((await client.getStoredOAuthTokens(accountId))?.refreshToken).toBe('rotated-refresh');
+  refresh.mockRestore();
 });

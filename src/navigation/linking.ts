@@ -1,4 +1,4 @@
-// Deep links: `bulwarkmobile://…` app links, webmail permalinks
+// Deep links: `zyndmail://…` app links, webmail permalinks
 // (https://<webmail>/mail/message/<id> etc. - same path grammar as the
 // webmail's lib/deep-links.ts) and `mailto:` URLs. Parsing is pure so it can
 // be unit-tested; `handleDeepLink` performs the navigation.
@@ -8,7 +8,7 @@ import { parseMailtoUrl } from '../lib/mailto';
 import type { RootStackParamList } from './types';
 import { setPendingSettingsTab } from './pending-settings-tab';
 
-export const APP_SCHEME = 'bulwarkmobile';
+export const APP_SCHEME = 'zyndmail';
 
 export type DeepLink =
   | { kind: 'message'; emailId: string; accountId?: string }
@@ -35,13 +35,14 @@ function toAddresses(list: string[]): EmailAddress[] {
 
 /**
  * Split a URL into path segments and query, tolerating both `scheme://host/
- * path` (https permalinks, `bulwarkmobile://mail/...` where "mail" lands in
+ * path` (https permalinks, `zyndmail://mail/...` where "mail" lands in
  * the host slot) and `scheme:path` forms.
  */
 function splitUrl(url: string): { segments: string[]; search: URLSearchParams } | null {
   const m = /^([a-z][a-z0-9+.-]*):(?:\/\/)?([^?#]*)(?:\?([^#]*))?/i.exec(url.trim());
   if (!m) return null;
   const scheme = m[1].toLowerCase();
+  if (scheme !== APP_SCHEME && scheme !== 'http' && scheme !== 'https') return null;
   let path = m[2];
   // For https permalinks the first segment is the webmail host; drop it and
   // an optional locale prefix (`/de/mail/...`).

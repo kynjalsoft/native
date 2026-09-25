@@ -1,6 +1,6 @@
 import React from 'react';
 import {
-  Modal,
+  KeyboardAvoidingView,
   View,
   Text,
   ScrollView,
@@ -69,6 +69,7 @@ import {
 import { Button } from '..';
 import { ParticipantInput } from './ParticipantInput';
 import { RecurrenceEditor } from './RecurrenceEditor';
+import { SafeAreaModal } from '../SafeAreaModal';
 
 type RecurrenceOption = 'none' | 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom';
 
@@ -417,10 +418,11 @@ export function EventModal({
   );
 
   return (
-    <Modal
+    <SafeAreaModal
       visible={visible}
       animationType="slide"
       presentationStyle="fullScreen"
+      statusBarTranslucent
       onRequestClose={onClose}
     >
       <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
@@ -442,11 +444,12 @@ export function EventModal({
           </Button>
         </View>
 
-        <ScrollView
-          style={styles.body}
-          contentContainerStyle={styles.bodyContent}
-          keyboardShouldPersistTaps="handled"
-        >
+        <KeyboardAvoidingView style={styles.body} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <ScrollView
+            style={styles.body}
+            contentContainerStyle={styles.bodyContent}
+            keyboardShouldPersistTaps="handled"
+          >
           <TextInput
             value={title}
             onChangeText={setTitle}
@@ -767,7 +770,8 @@ export function EventModal({
               <Text style={styles.deleteBtnText}>{t('calendar.events.delete', 'Delete event')}</Text>
             </Pressable>
           )}
-        </ScrollView>
+          </ScrollView>
+        </KeyboardAvoidingView>
 
         {showStartDate && (
           <DateTimePicker
@@ -830,7 +834,7 @@ export function EventModal({
           />
         )}
       </SafeAreaView>
-    </Modal>
+    </SafeAreaModal>
   );
 }
 

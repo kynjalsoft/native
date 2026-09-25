@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import {
-  View, Text, StyleSheet, Pressable, TextInput, FlatList, Modal, Alert,
+  View, Text, StyleSheet, Pressable, TextInput, FlatList, Alert,
 } from 'react-native';
 import { ChevronRight, X, Plus, Trash2, BookUser } from 'lucide-react-native';
 import { SettingsSection, SettingItem, RadioGroup, ToggleSwitch } from './settings-section';
 import Button from '../Button';
+import { KeyboardSafeModal } from '../KeyboardSafeModal';
 import { spacing, radius, typography, type ThemePalette } from '../../theme/tokens';
 import { useColors } from '../../theme/colors';
 import { useSettingsStore, type ExternalContentPolicy } from '../../stores/settings-store';
@@ -179,7 +180,7 @@ export function ContentSendersSettings() {
         )}
       </SettingsSection>
 
-      <Modal
+      <KeyboardSafeModal
         visible={modalOpen}
         transparent
         animationType="fade"
@@ -251,7 +252,7 @@ export function ContentSendersSettings() {
             )}
           </Pressable>
         </Pressable>
-      </Modal>
+      </KeyboardSafeModal>
     </View>
   );
 }

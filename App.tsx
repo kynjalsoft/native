@@ -1,7 +1,11 @@
 import React from 'react';
-import { ActivityIndicator, AppState, Linking, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, AppState, Linking, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
+import * as Notifications from 'expo-notifications';
+import * as Updates from 'expo-updates';
+import * as LocalAuthentication from 'expo-local-authentication';
 import { useColorScheme } from 'react-native';
+import { initialWindowMetrics, SafeAreaProvider } from 'react-native-safe-area-context';
 import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator, type NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -46,21 +50,33 @@ import { useContactsStore } from './src/stores/contacts-store';
 import { useEmailStore } from './src/stores/email-store';
 import { useHasCalendar, useHasContacts, useHasFiles } from './src/lib/capabilities';
 import { useSettingsStore } from './src/stores/settings-store';
+import { haptic, setHapticsEnabled } from './src/lib/haptics';
 import { useLocaleStore } from './src/stores/locale-store';
 import { useNetworkStore } from './src/stores/network-store';
 import { useUpdatesStore } from './src/stores/updates-store';
 import { UpdateBanner } from './src/components/UpdateBanner';
-import { PushOnboardingPrompt } from './src/components/PushOnboardingPrompt';
 import { ToastHost } from './src/components/ToastHost';
+import { AdaptiveGlassSurface } from './src/components/AdaptiveGlassSurface';
+import { AppLockOverlay } from './src/components/AppLockOverlay';
 import { getEmails } from './src/api/email';
 import { handleDeepLink, parseDeepLink, shareToDeepLink, type DeepLink } from './src/navigation/linking';
 import { addShareListener, getInitialShare, shareAttachments } from './src/lib/share-intent';
 import { OfflineCacheBanner } from './src/components/OfflineCacheBanner';
 import { useOfflineCacheStore } from './src/stores/offline-cache-store';
 import { useOutboxStore } from './src/stores/outbox-store';
+import { useSendUndoStore } from './src/stores/send-undo-store';
 import { runOfflineSync } from './src/lib/offline-sync';
 import { spacing, typography, type ThemePalette } from './src/theme/tokens';
 import { useColors } from './src/theme/colors';
+import { isCompanyMailServer } from './src/lib/zyndmail-company';
+import { canAutoReloadMailUpdate } from './src/lib/auto-ota';
+import { AppUnlockGate, shouldHideMailForAppState } from './src/lib/app-unlock-gate';
+import {
+  isCompanyPushPresentation,
+  registerCompanyPush,
+  resolveCompanyPush,
+  revokeCompanyPush,
+} from './src/lib/company-push';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<MainTabsParamList>();
@@ -88,7 +104,7 @@ async function navigateToNotificationTap(payload: NotificationTapPayload): Promi
   });
 }
 
-// Deep links (bulwarkmobile://, webmail https permalinks, mailto:) and
+  // Deep links (zyndmail://, webmail https permalinks, mailto:) and
 // Android share-sheet payloads all end up here once the navigator is ready.
 async function openDeepLink(link: DeepLink): Promise<void> {
   await handleDeepLink(link, {
@@ -121,7 +137,9 @@ function LoadingScreen({ message }: { message: string }) {
   );
 }
 
-function MainTabsNavigator({ navigation }: NativeStackScreenProps<RootStackParamList, 'MainTabs'>) {
+function MainTabsNavigator({ navigation, onMailListBusyChange }: NativeStackScreenProps<RootStackParamList, 'MainTabs'> & {
+  onMailListBusyChange: (busy: boolean) => void;
+}) {
   const c = useColors();
   const mailboxes = useEmailStore((state) => state.mailboxes);
   const logout = useAuthStore((state) => state.logout);
@@ -135,21 +153,29 @@ function MainTabsNavigator({ navigation }: NativeStackScreenProps<RootStackParam
     <View style={{ flex: 1, backgroundColor: c.background }}>
       <UpdateBanner />
       <OfflineCacheBanner />
-      <PushOnboardingPrompt />
       <ToastHost />
     <Tab.Navigator
+      screenListeners={({ navigation: tabNavigation, route }) => ({
+        tabPress: () => {
+          const available = route.name !== 'Calendar' || hasCalendar;
+          const contactsAvailable = route.name !== 'Contacts' || hasContacts;
+          const filesAvailable = route.name !== 'Files' || hasFiles;
+          if (available && contactsAvailable && filesAvailable && !tabNavigation.isFocused()) haptic('selection');
+        },
+      })}
       screenOptions={{
         headerShown: false,
         tabBarActiveTintColor: c.text,
         tabBarInactiveTintColor: c.textSecondary,
         tabBarStyle: {
-          backgroundColor: c.background,
+          backgroundColor: 'transparent',
           borderTopColor: c.border,
           borderTopWidth: 1,
           elevation: 0,
           shadowOpacity: 0,
           shadowColor: 'transparent',
         },
+        tabBarBackground: () => <AdaptiveGlassSurface style={{ flex: 1 }} fallbackColor={c.background} />,
         tabBarLabelStyle: {
           fontSize: 10,
           fontWeight: '500',
@@ -177,6 +203,7 @@ function MainTabsNavigator({ navigation }: NativeStackScreenProps<RootStackParam
       >
         {() => (
           <EmailListScreen
+            onInteractionStateChange={onMailListBusyChange}
             onComposePress={() => navigation.navigate('Compose')}
             onEmailPress={(email) => {
               navigation.navigate('EmailThread', {
@@ -243,25 +270,100 @@ function MainTabsNavigator({ navigation }: NativeStackScreenProps<RootStackParam
   );
 }
 
-export default function App() {
+function AppContent() {
+  const { isUpdatePending } = Updates.useUpdates();
   const hasRestoredSession = useAuthStore((state) => state.hasRestoredSession);
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const isAuthenticating = useAuthStore((state) => state.isLoading);
   const client = useAuthStore((state) => state.client);
   const restoreSession = useAuthStore((state) => state.restoreSession);
+  const outboxFlushing = useOutboxStore((state) => state.flushing);
+  const sendUndoPending = useSendUndoStore((state) => state.pending != null || state.busy);
+  const [appIsActive, setAppIsActive] = React.useState(AppState.currentState === 'active');
+  const [privacyHidden, setPrivacyHidden] = React.useState(shouldHideMailForAppState(AppState.currentState));
+  const [appLocked, setAppLocked] = React.useState(true);
+  const [unlockBusy, setUnlockBusy] = React.useState(false);
+  const [unlockError, setUnlockError] = React.useState<string | null>(null);
+  const unlockInFlight = React.useRef(false);
+  const updateReloadInFlight = React.useRef(false);
+  const [updateReloading, setUpdateReloading] = React.useState(false);
+  const unlockGate = React.useRef(new AppUnlockGate());
+  const [routeName, setRouteName] = React.useState<string | null>(null);
+  const [mailListBusy, setMailListBusy] = React.useState(true);
+  const lastForegroundCheck = React.useRef(0);
+  const lastReloadAttempt = React.useRef(0);
 
   // Resolve the user's theme preference to a concrete light/dark style for the
   // system status bar. The rest of the app's colors are still hard-coded dark
   // until the StyleSheet migration to a theme-aware `useColors` hook lands.
   const themePref = useSettingsStore((state) => state.theme);
+  const hapticsEnabled = useSettingsStore((state) => state.hapticsEnabled);
+  React.useEffect(() => { setHapticsEnabled(hapticsEnabled); }, [hapticsEnabled]);
   const systemScheme = useColorScheme();
   const resolvedScheme: 'light' | 'dark' =
     themePref === 'system' ? (systemScheme === 'light' ? 'light' : 'dark') : themePref;
   const statusBarStyle: 'light' | 'dark' = resolvedScheme === 'light' ? 'dark' : 'light';
+  const appColors = useColors();
   // Persisted active account is the signal that the user was already signed
   // in on the previous launch. When present we render the main UI with the
   // cached mail list instead of the "Restoring session" spinner; the real
   // JMAP session comes up in the background.
   const hasPersistedAccount = useAccountStore((state) => state.activeAccountId != null);
+
+  const unlockMailbox = React.useCallback(async () => {
+    if (unlockInFlight.current || updateReloadInFlight.current || AppState.currentState !== 'active') return;
+    unlockInFlight.current = true;
+    setUnlockBusy(true);
+    setUnlockError(null);
+    const epoch = unlockGate.current.begin();
+    try {
+      const enrolledLevel = await LocalAuthentication.getEnrolledLevelAsync();
+      if (enrolledLevel === LocalAuthentication.SecurityLevel.NONE) {
+        setUnlockError('Set up a device passcode, Face ID or Touch ID in your device settings to unlock this mailbox.');
+        return;
+      }
+      const result = await LocalAuthentication.authenticateAsync({
+        promptMessage: 'Unlock ZyndMail',
+        cancelLabel: 'Cancel',
+        fallbackLabel: 'Use device passcode',
+        disableDeviceFallback: false,
+        biometricsSecurityLevel: 'strong',
+      });
+      if (!result.success) {
+        if (result.error !== 'user_cancel' && result.error !== 'system_cancel') {
+          setUnlockError('Device verification was not completed. Please try again.');
+        }
+        return;
+      }
+      if (unlockGate.current.verified(epoch, AppState.currentState)) setAppLocked(false);
+    } catch (error) {
+      setUnlockError(error instanceof Error ? error.message : 'Device verification is unavailable.');
+    } finally {
+      unlockInFlight.current = false;
+      setUnlockBusy(false);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    if (hasRestoredSession && !isAuthenticated) {
+      unlockGate.current.cancel();
+      setAppLocked(true);
+    }
+  }, [hasRestoredSession, isAuthenticated]);
+
+  const confirmSignOut = React.useCallback(() => {
+    Alert.alert(
+      'Sign out on this device?',
+      'Local cached mail and unsent offline changes on this device will be removed.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Sign out', style: 'destructive', onPress: () => {
+          unlockGate.current.cancel();
+          void useAuthStore.getState().logoutAll();
+        } },
+      ],
+    );
+  }, []);
 
   React.useEffect(() => {
     if (!hasRestoredSession) {
@@ -307,6 +409,48 @@ export default function App() {
   const offlineCacheDays = useSettingsStore((s) => s.offlineCacheDays);
   const offlineCacheMaxMB = useSettingsStore((s) => s.offlineCacheMaxMB);
   const haveLiveSession = useAuthStore((s) => s.session != null);
+  React.useEffect(() => {
+    // Native startup already checks for updates. Check again when returning
+    // from the background, without making a network request on every focus.
+    const subscription = AppState.addEventListener('change', (state) => {
+      setAppIsActive(state === 'active');
+      setPrivacyHidden(shouldHideMailForAppState(state));
+      if (state === 'background') {
+        unlockGate.current.background();
+        setUnlockError(null);
+      } else if (state === 'active') {
+        unlockGate.current.active();
+        setAppLocked(unlockGate.current.isLocked);
+      }
+      if (state !== 'active' || !Updates.isEnabled || __DEV__ ||
+          !useNetworkStore.getState().online ||
+          Date.now() - lastForegroundCheck.current < 15 * 60_000) return;
+      lastForegroundCheck.current = Date.now();
+      void Updates.checkForUpdateAsync()
+        .then(async (result) => { if (result.isAvailable) await Updates.fetchUpdateAsync(); })
+        .catch((error) => console.warn('[updates] foreground check failed', error));
+    });
+    return () => subscription.remove();
+  }, []);
+
+  React.useEffect(() => {
+    if (!Updates.isEnabled || __DEV__ || !isUpdatePending ||
+        unlockInFlight.current || updateReloadInFlight.current ||
+        !canAutoReloadMailUpdate({
+          appIsActive, appLocked, unlockBusy, routeName, authRestored: hasRestoredSession,
+          authenticated: isAuthenticated, authenticating: isAuthenticating,
+          liveSession: haveLiveSession, outboxFlushing, sendUndoPending, mailListBusy,
+        }) || Date.now() - lastReloadAttempt.current < 5 * 60_000) return;
+    lastReloadAttempt.current = Date.now();
+    updateReloadInFlight.current = true;
+    setUpdateReloading(true);
+    void Updates.reloadAsync().catch((error) => {
+      updateReloadInFlight.current = false;
+      setUpdateReloading(false);
+      console.warn('[updates] idle reload failed', error);
+    });
+  }, [appIsActive, appLocked, unlockBusy, routeName, hasRestoredSession, isAuthenticated,
+    isAuthenticating, haveLiveSession, outboxFlushing, sendUndoPending, mailListBusy, isUpdatePending]);
   React.useEffect(() => {
     void useOfflineCacheStore.getState().hydrate();
     // Attachments shared out of the app linger in the cache dir; drop the
@@ -433,6 +577,7 @@ export default function App() {
   const activeAccountId = useAuthStore((s) => s.activeAccountId);
   React.useEffect(() => {
     if (!isAuthenticated || !client) return;
+    if (isCompanyMailServer(client.serverUrl ?? '')) return;
 
     let cancelled = false;
     const doSetup = async () => {
@@ -470,6 +615,75 @@ export default function App() {
       unsubscribe();
     };
   }, [client, isAuthenticated, emailNotificationsEnabled, activeAccountId]);
+
+  // The company relay owns its JMAP subscription. The fork must never also
+  // register the same company mailbox with Bulwark's public FCM relay.
+  React.useEffect(() => {
+    if (!isAuthenticated || !client || !activeAccountId || !isCompanyMailServer(client.serverUrl ?? '')) return;
+    if (!emailNotificationsEnabled) {
+      void revokeCompanyPush(activeAccountId).catch(() => undefined);
+      return;
+    }
+    const refresh = (force = false) => { void registerCompanyPush(activeAccountId, false, force); };
+    refresh();
+    const stateSubscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') refresh();
+    });
+    const tokenSubscription = Notifications.addPushTokenListener(() => refresh(true));
+    const nativeTokenSubscription = addTokenRefreshListener(() => refresh(true));
+    return () => {
+      stateSubscription.remove();
+      tokenSubscription.remove();
+      nativeTokenSubscription();
+    };
+  }, [client, isAuthenticated, activeAccountId, emailNotificationsEnabled]);
+
+  // Keep the response pending through sign-in/Face ID. Resolve the opaque
+  // reference with current access before opening its exact mail account/message.
+  React.useEffect(() => {
+    if (!isAuthenticated || appLocked) return;
+    let cancelled = false;
+    let opening = false;
+    const openCompanyPush = async (response: Notifications.NotificationResponse | null) => {
+      if (opening || !response || !isCompanyPushPresentation(response.notification.request.content)) return;
+      opening = true;
+      try {
+        const accounts = useAccountStore.getState().accounts;
+        const companyAccount = accounts.find((account) => isCompanyMailServer(account.serverUrl));
+        if (!companyAccount) return;
+        if (useAuthStore.getState().activeAccountId !== companyAccount.id) {
+          await useAuthStore.getState().switchAccount(companyAccount.id);
+        }
+        if (cancelled || useAuthStore.getState().activeAccountId !== companyAccount.id) return;
+        const destination = await resolveCompanyPush(companyAccount.id, response.notification.request.content.data);
+        if (!cancelled && destination) {
+          // The auth gate can flip before NavigationContainer has mounted.
+          for (let attempt = 0; attempt < 20 && !cancelled && !navigationRef.isReady(); attempt++) {
+            await new Promise((resolve) => setTimeout(resolve, 100));
+          }
+          if (!cancelled && navigationRef.isReady() &&
+              useAuthStore.getState().isAuthenticated &&
+              useAuthStore.getState().activeAccountId === companyAccount.id) {
+            if (destination.target === 'EMAIL') {
+              navigationRef.navigate('EmailThread', {
+                emailId: destination.emailId, threadId: destination.threadId,
+                jmapAccountId: destination.accountId, emailIds: [destination.emailId],
+              });
+            } else {
+              navigationRef.navigate('UnifiedInbox');
+            }
+            await Notifications.clearLastNotificationResponseAsync();
+          }
+        }
+      } finally { opening = false; }
+    };
+    void Notifications.getLastNotificationResponseAsync()
+      .then((response) => openCompanyPush(response)).catch(() => undefined);
+    const listener = Notifications.addNotificationResponseReceivedListener((response) => {
+      void openCompanyPush(response).catch(() => undefined);
+    });
+    return () => { cancelled = true; listener.remove(); };
+  }, [isAuthenticated, appLocked]);
 
   // Live updates (SSE with polling fallback), re-armed on every account
   // switch and every re-established session — the singleton `client` object
@@ -622,10 +836,17 @@ export default function App() {
   }
 
   return (
-    <NavigationContainer ref={navigationRef}>
+    <View style={{ flex: 1 }}>
+    <NavigationContainer
+      ref={navigationRef}
+      onReady={() => setRouteName(navigationRef.getCurrentRoute()?.name ?? null)}
+      onStateChange={() => setRouteName(navigationRef.getCurrentRoute()?.name ?? null)}
+    >
       <StatusBar style={statusBarStyle} />
       <Stack.Navigator screenOptions={{ headerShown: false }}>
-        <Stack.Screen name="MainTabs" component={MainTabsNavigator} />
+        <Stack.Screen name="MainTabs">
+          {(props) => <MainTabsNavigator {...props} onMailListBusyChange={setMailListBusy} />}
+        </Stack.Screen>
         <Stack.Screen name="EmailThread" component={EmailThreadScreen} />
         <Stack.Screen name="EmailSource" component={EmailSourceScreen} />
         <Stack.Screen
@@ -665,10 +886,31 @@ export default function App() {
         </Stack.Screen>
       </Stack.Navigator>
     </NavigationContainer>
+    {appLocked ? <AppLockOverlay
+      busy={unlockBusy || updateReloading}
+      updating={updateReloading}
+      error={unlockError}
+      onUnlock={() => { void unlockMailbox(); }}
+      onSignOut={confirmSignOut}
+    /> : null}
+    {privacyHidden ? <View
+      accessible={false}
+      style={[styles.privacyCover, { backgroundColor: appColors.background }]}
+    /> : null}
+    </View>
+  );
+}
+
+export default function App() {
+  return (
+    <SafeAreaProvider initialMetrics={initialWindowMetrics}>
+      <AppContent />
+    </SafeAreaProvider>
   );
 }
 
 const styles = StyleSheet.create({
+  privacyCover: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, zIndex: 101 },
   loadingContainer: {
     flex: 1,
     alignItems: 'center',
@@ -679,4 +921,3 @@ const styles = StyleSheet.create({
     ...typography.body,
   },
 });
-

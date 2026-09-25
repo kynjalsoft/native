@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -16,6 +15,7 @@ import {
 } from 'lucide-react-native';
 import { SettingsSection, Select } from './settings-section';
 import Button from '../Button';
+import { KeyboardSafeModal } from '../KeyboardSafeModal';
 import { spacing, radius, typography, type ThemePalette } from '../../theme/tokens';
 import { useColors } from '../../theme/colors';
 import { ownMailboxes, mailboxSubtreeIds } from '../../lib/mailbox-tree';
@@ -261,7 +261,7 @@ export function FolderSettings() {
                 <Pressable
                   key={mb.id}
                   onPress={() => openEdit(mb)}
-                  onLongPress={() => !mb.role && confirmDelete(mb)}
+                  onLongPress={() => !jmapClient.hasCompanyNoDeletePolicy && !mb.role && confirmDelete(mb)}
                   style={({ pressed }) => [
                     styles.folderRow,
                     pressed && styles.folderRowPressed,
@@ -297,7 +297,7 @@ export function FolderSettings() {
         )}
       </SettingsSection>
 
-      <Modal visible={!!editor} animationType="slide" transparent onRequestClose={closeEditor}>
+      <KeyboardSafeModal visible={!!editor} animationType="slide" transparent onRequestClose={closeEditor}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalSheet}>
             <View style={styles.modalHeader}>
@@ -363,7 +363,7 @@ export function FolderSettings() {
                 </>
               )}
 
-              {editor?.kind === 'edit' && !editor.mailbox.role && (
+              {editor?.kind === 'edit' && !editor.mailbox.role && !jmapClient.hasCompanyNoDeletePolicy && (
                 <Pressable
                   onPress={() => {
                     closeEditor();
@@ -389,7 +389,7 @@ export function FolderSettings() {
             </View>
           </View>
         </View>
-      </Modal>
+      </KeyboardSafeModal>
     </View>
   );
 }

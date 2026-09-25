@@ -1,13 +1,15 @@
+import { haptic } from '../lib/haptics';
 import React from 'react';
 import { View, Text, StyleSheet, FlatList, Pressable, TextInput, Image, ActivityIndicator, Modal, Platform, ScrollView, TouchableWithoutFeedback, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { PushOnboardingPrompt } from '../components/PushOnboardingPrompt';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import * as DocumentPicker from 'expo-document-picker';
 import {
   Search, SquarePen, Menu, Filter, Square, SquareCheck, Minus, X,
   Star, Paperclip, Mail as MailIcon, MailOpen, Trash2, RotateCcw, CalendarDays,
   Archive, FolderInput, Tag, Import, ArrowDownWideNarrow, ArrowUpNarrowWide,
-  Pin, Reply, Forward, ShieldAlert, ShieldCheck, Folder,
+  Pin, Reply, Forward, ShieldAlert, ShieldCheck, Folder, MoreVertical,
 } from 'lucide-react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -15,11 +17,13 @@ import { spacing, radius, typography, componentSizes, type ThemePalette } from '
 import { useColors } from '../theme/colors';
 import { useTypography, useDensity } from '../theme/dynamic';
 import SidebarDrawer from '../components/SidebarDrawer';
+import { KeyboardSafeModal } from '../components/KeyboardSafeModal';
 import SenderAvatar from '../components/SenderAvatar';
 import { SwipeableRow } from '../components/SwipeableRow';
 import { MoveSheet } from '../components/MoveSheet';
 import { TagSheet } from '../components/TagSheet';
 import { UndoSnackbar } from '../components/UndoSnackbar';
+import { ActionSheet } from '../components/email/ActionSheet';
 import { OfflineBanner } from '../components/OfflineBanner';
 import { useNetworkStore } from '../stores/network-store';
 import { useEmailStore, effectiveFolderScope, type EmailFilters } from '../stores/email-store';
@@ -40,9 +44,11 @@ import {
 } from '../lib/thread-utils';
 import { isPermanentDelete, confirmPermanentDelete } from '../lib/delete-confirm';
 import { draftContextFromEmail, isDraftEmail } from '../lib/draft-context';
-import { getThreads, getFullEmail, emptyMailbox as apiEmptyMailbox } from '../api/email';
+import { getThreads, getEmails, getFullEmail, emptyMailbox as apiEmptyMailbox } from '../api/email';
 import type { RootStackParamList } from '../navigation/types';
-import type { Email } from '../api/types';
+import type { Email, Identity } from '../api/types';
+import { jmapClient } from '../api/jmap-client';
+import { deliveryContextLabel, messageDeliveryContext, visibleConversationMessages } from '../lib/thread-presentation';
 
 function getSenderName(email: Email): string {
   return email.from?.[0]?.name || email.from?.[0]?.email || 'Unknown';
@@ -82,6 +88,8 @@ const EmailRow = React.memo(function EmailRow({
   threadCount,
   showPreview,
   showRecipient,
+  isSent,
+  identities,
   tagIds,
   keywordDefs,
   disableAvatarImages,
@@ -96,6 +104,8 @@ const EmailRow = React.memo(function EmailRow({
   threadCount: number;
   showPreview: boolean;
   showRecipient: boolean;
+  isSent: boolean;
+  identities: Identity[];
   /** Comma-joined tag ids of the row (thread union) — a string so memo holds. */
   tagIds: string;
   keywordDefs: KeywordDef[];
@@ -117,6 +127,11 @@ const EmailRow = React.memo(function EmailRow({
   const locale = useLocaleStore((s) => s.locale);
   const tr = useLocaleStore((s) => s.t);
   const { name: senderName, email: senderEmail } = getCounterpart(item, showRecipient);
+  const delivery = messageDeliveryContext(item, identities, isSent);
+  const ownSender = identities.some((identity) => identity.email.toLowerCase() === item.from?.[0]?.email?.toLowerCase());
+  const routingHint = delivery && (delivery.kind === 'copied' || delivery.kind === 'blindCopied' || ownSender)
+    ? deliveryContextLabel(delivery, tr)
+    : null;
   const unread = isUnread(item);
   const starred = isStarred(item);
   const pinned = isPinned(item);
@@ -223,6 +238,8 @@ const EmailRow = React.memo(function EmailRow({
           )}
         </View>
 
+        {routingHint && <Text style={[styles.emailPreview, dyn.caption]} numberOfLines={1}>{routingHint}</Text>}
+
         {/* Row 3: Preview - hidden in compact density modes regardless of toggle */}
         {showPreview && density.showPreview && (
           <Text style={[styles.emailPreview, dyn.body]} numberOfLines={2}>
@@ -245,9 +262,10 @@ const emailKeyExtractor = (item: Email) => item.id;
 interface EmailListScreenProps {
   onEmailPress?: (email: Email) => void;
   onComposePress?: () => void;
+  onInteractionStateChange?: (busy: boolean) => void;
 }
 
-export default function EmailListScreen({ onEmailPress, onComposePress }: EmailListScreenProps) {
+export default function EmailListScreen({ onEmailPress, onComposePress, onInteractionStateChange }: EmailListScreenProps) {
   const c = useColors();
   const styles = React.useMemo(() => makeStyles(c), [c]);
   const { t } = useLocaleStore();
@@ -305,9 +323,11 @@ export default function EmailListScreen({ onEmailPress, onComposePress }: EmailL
   const disableThreading = useSettingsStore((s) => s.disableThreading);
   const sortAscending = useSettingsStore((s) => s.mailSortAscending);
   const showAvatarsInJunk = useSettingsStore((s) => s.showAvatarsInJunk);
+  const identities = useSettingsStore((s) => s.identities);
   const deleteAction = useSettingsStore((s) => s.deleteAction);
   const permanentlyDeleteJunk = useSettingsStore((s) => s.permanentlyDeleteJunk);
   const networkOnline = useNetworkStore((s) => s.online);
+  const companyNoDelete = jmapClient.hasCompanyNoDeletePolicy;
 
   const currentMailbox = React.useMemo(
     () => mailboxes.find((m) => m.id === currentMailboxId),
@@ -332,22 +352,32 @@ export default function EmailListScreen({ onEmailPress, onComposePress }: EmailL
     [emails, disableThreading],
   );
 
-  // Real conversation sizes from Thread/get (a thread's other messages may
-  // live in other folders); the loaded-page count is the fallback until the
-  // response lands and for messages whose thread the server no longer knows.
+  // Thread/get includes unsent drafts. Fetch only missing message metadata so
+  // Inbox's count matches the read timeline, while Drafts remains its own view.
   const [serverThreadCounts, setServerThreadCounts] = React.useState<Map<string, number>>(new Map());
   React.useEffect(() => {
-    if (disableThreading || visibleEmails.length === 0) return;
+    if (disableThreading || currentRole === 'drafts' || visibleEmails.length === 0) return;
     const ids = Array.from(new Set(visibleEmails.map((e) => e.threadId).filter(Boolean)));
     const missing = ids.filter((id) => !serverThreadCounts.has(id));
     if (missing.length === 0) return;
     let cancelled = false;
+    const accountMailboxes = mailboxes.filter((mailbox) => currentOwnerAccountId
+      ? mailbox.accountId === currentOwnerAccountId : !mailbox.isShared);
     getThreads(missing, currentOwnerAccountId)
-      .then((threads) => {
+      .then(async (threads) => {
+        const known = new Map(emails.map((email) => [email.id, email]));
+        const unknownIds = Array.from(new Set(threads.flatMap((thread) => thread.emailIds)))
+          .filter((id) => !known.has(id));
+        if (unknownIds.length > 0) {
+          for (const email of await getEmails(unknownIds, currentOwnerAccountId)) known.set(email.id, email);
+        }
         if (cancelled) return;
         setServerThreadCounts((prev) => {
           const next = new Map(prev);
-          for (const th of threads) next.set(th.id, th.emailIds.length);
+          for (const thread of threads) {
+            const loaded = thread.emailIds.map((id) => known.get(id)).filter((email): email is Email => !!email);
+            next.set(thread.id, visibleConversationMessages(loaded, accountMailboxes).length);
+          }
           return next;
         });
       })
@@ -452,9 +482,37 @@ export default function EmailListScreen({ onEmailPress, onComposePress }: EmailL
   // Batch (multi-select) sheets.
   const [batchMoveOpen, setBatchMoveOpen] = React.useState(false);
   const [tagSheetOpen, setTagSheetOpen] = React.useState(false);
+  const [batchActionsOpen, setBatchActionsOpen] = React.useState(false);
+  const batchSheetTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  React.useEffect(() => () => {
+    if (batchSheetTimer.current) clearTimeout(batchSheetTimer.current);
+  }, []);
+  // iOS cannot present the next modal while the action sheet is dismissing.
+  const afterBatchSheetCloses = (action: () => void) => {
+    setBatchActionsOpen(false);
+    if (batchSheetTimer.current) clearTimeout(batchSheetTimer.current);
+    batchSheetTimer.current = setTimeout(() => {
+      batchSheetTimer.current = null;
+      action();
+    }, 250);
+  };
 
   // Selection state
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
+  const [manualRefreshing, setManualRefreshing] = React.useState(false);
+  const manualRefreshInFlight = React.useRef(false);
+  const onManualRefresh = React.useCallback(async () => {
+    if (manualRefreshInFlight.current) return;
+    manualRefreshInFlight.current = true;
+    haptic('light');
+    setManualRefreshing(true);
+    try {
+      await refreshEmails();
+    } finally {
+      manualRefreshInFlight.current = false;
+      setManualRefreshing(false);
+    }
+  }, [refreshEmails]);
   const selectionMode = selectedIds.size > 0;
   const allSelected =
     visibleEmails.length > 0 && visibleEmails.every((e) => selectedIds.has(e.id));
@@ -470,6 +528,7 @@ export default function EmailListScreen({ onEmailPress, onComposePress }: EmailL
   React.useEffect(() => { emailsRef.current = emails; }, [emails]);
 
   const toggleSelect = React.useCallback((id: string) => {
+    haptic('selection');
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -522,6 +581,7 @@ export default function EmailListScreen({ onEmailPress, onComposePress }: EmailL
   // Trash / permanent delete with the confirm the webmail shows before any
   // destroy (Trash folder, "permanent" delete action, junk auto-permanent).
   const deleteIds = React.useCallback(async (ids: string[]) => {
+    if (companyNoDelete) return;
     if (!currentMailboxId) return;
     if (!trashMailboxId) {
       Alert.alert(
@@ -539,7 +599,7 @@ export default function EmailListScreen({ onEmailPress, onComposePress }: EmailL
     if (permanent && !(await confirmPermanentDelete(ids.length, t))) return;
     if (ids.length === 1) await deleteEmailAction(ids[0], trashMailboxId, currentMailboxId);
     else await deleteEmailsBatch(ids, trashMailboxId, currentMailboxId);
-  }, [currentMailboxId, trashMailboxId, inJunk, deleteAction, permanentlyDeleteJunk, deleteEmailAction, deleteEmailsBatch, t]);
+  }, [companyNoDelete, currentMailboxId, trashMailboxId, inJunk, deleteAction, permanentlyDeleteJunk, deleteEmailAction, deleteEmailsBatch, t]);
 
   const handleSwipeAction = React.useCallback((id: string, action: SwipeAction) => {
     if (action === 'none') return;
@@ -602,8 +662,8 @@ export default function EmailListScreen({ onEmailPress, onComposePress }: EmailL
       const flags = rowFlags.get(key);
       return (
         <SwipeableRow
-          leftAction={selectionMode ? 'none' : swipeLeftAction}
-          rightAction={selectionMode ? 'none' : swipeRightAction}
+          leftAction={selectionMode || (companyNoDelete && swipeLeftAction === 'delete') ? 'none' : swipeLeftAction}
+          rightAction={selectionMode || (companyNoDelete && swipeRightAction === 'delete') ? 'none' : swipeRightAction}
           mode={swipeMode}
           context={{ unread: isUnread(item), starred: isStarred(item), pinned: isPinned(item), inJunk }}
           onAction={(action) => handleSwipeAction(item.id, action)}
@@ -613,6 +673,8 @@ export default function EmailListScreen({ onEmailPress, onComposePress }: EmailL
             threadCount={threadCountFor(item)}
             showPreview={showPreview}
             showRecipient={showRecipient}
+            isSent={currentRole === 'sent'}
+            identities={identities}
             tagIds={rowTagIds.get(key) ?? ''}
             keywordDefs={keywordDefs}
             disableAvatarImages={inJunk && !showAvatarsInJunk}
@@ -629,7 +691,7 @@ export default function EmailListScreen({ onEmailPress, onComposePress }: EmailL
     [
       selectedIds, selectionMode, handleRowPress, toggleSelect, swipeLeftAction, swipeRightAction,
       swipeMode, handleSwipeAction, disableThreading, rowFlags, rowTagIds, threadCountFor,
-      showPreview, showRecipient, keywordDefs, inJunk, showAvatarsInJunk,
+      showPreview, showRecipient, currentRole, identities, keywordDefs, inJunk, showAvatarsInJunk, companyNoDelete,
     ],
   );
 
@@ -638,6 +700,7 @@ export default function EmailListScreen({ onEmailPress, onComposePress }: EmailL
   }, []);
 
   const toggleSelectAllVisible = React.useCallback(() => {
+    if (visibleEmails.length) haptic('selection');
     setSelectedIds((prev) => {
       const allCurrent = visibleEmails.length > 0 && visibleEmails.every((e) => prev.has(e.id));
       if (allCurrent) return new Set();
@@ -840,6 +903,13 @@ export default function EmailListScreen({ onEmailPress, onComposePress }: EmailL
   // "Empty folder" for Trash and Junk (webmail banner; #711 pagination lives
   // in the api helper).
   const [emptying, setEmptying] = React.useState(false);
+  const interactionBusy = loading || drawerOpen || filterMenuOpen || importing ||
+    pendingMoveId !== null || batchMoveOpen || tagSheetOpen || selectionMode ||
+    openingDraftId !== null || searchFocused || datePickerField !== null || emptying;
+  React.useEffect(() => {
+    onInteractionStateChange?.(interactionBusy);
+  }, [onInteractionStateChange, interactionBusy]);
+  React.useEffect(() => () => onInteractionStateChange?.(true), [onInteractionStateChange]);
   const canEmptyFolder =
     (currentRole === 'trash' || inJunk) && !!currentMailbox && (currentMailbox.totalEmails > 0 || emails.length > 0);
   const handleEmptyFolder = () => {
@@ -893,25 +963,16 @@ export default function EmailListScreen({ onEmailPress, onComposePress }: EmailL
       {/* Header */}
       {selectionMode ? (
         <View style={styles.header}>
-          <Pressable onPress={clearSelection} style={styles.headerButton}>
+          <Pressable onPress={clearSelection} style={styles.headerButton} accessibilityRole="button" accessibilityLabel={t('common.close', 'Close')}>
             <X size={20} color={c.text} />
           </Pressable>
-          <Text style={styles.headerTitle}>{selectedIds.size} selected</Text>
-          <Pressable
-            onPress={() => { void handleBulkStar(); }}
-            style={styles.headerButton}
-            hitSlop={6}
-          >
-            <Star
-              size={20}
-              color={allSelectedAreStarred ? c.starred : c.text}
-              fill={allSelectedAreStarred ? c.starred : 'transparent'}
-            />
-          </Pressable>
+          <Text style={styles.headerTitle} numberOfLines={1}>{selectedIds.size} selected</Text>
           <Pressable
             onPress={() => { void handleBulkMarkReadToggle(); }}
             style={styles.headerButton}
             hitSlop={6}
+            accessibilityRole="button"
+            accessibilityLabel={allSelectedAreRead ? t('context_menu.mark_unread', 'Mark unread') : t('context_menu.mark_read', 'Mark read')}
           >
             {allSelectedAreRead ? (
               <MailIcon size={20} color={c.text} />
@@ -919,49 +980,8 @@ export default function EmailListScreen({ onEmailPress, onComposePress }: EmailL
               <MailOpen size={20} color={c.text} />
             )}
           </Pressable>
-          <Pressable
-            onPress={() => setTagSheetOpen(true)}
-            style={styles.headerButton}
-            hitSlop={6}
-          >
-            <Tag size={20} color={c.text} />
-          </Pressable>
-          <Pressable
-            onPress={() => setBatchMoveOpen(true)}
-            style={styles.headerButton}
-            hitSlop={6}
-          >
-            <FolderInput size={20} color={c.text} />
-          </Pressable>
-          {canSpamSelection && (
-            <Pressable
-              onPress={() => { void handleBulkSpam(); }}
-              style={styles.headerButton}
-              hitSlop={6}
-              accessibilityLabel={inJunk ? t('context_menu.not_spam', 'Not spam') : t('context_menu.mark_as_spam', 'Report spam')}
-            >
-              {inJunk ? (
-                <ShieldCheck size={20} color={c.text} />
-              ) : (
-                <ShieldAlert size={20} color={c.text} />
-              )}
-            </Pressable>
-          )}
-          {canArchiveSelection && (
-            <Pressable
-              onPress={() => { void handleBulkArchive(); }}
-              style={styles.headerButton}
-              hitSlop={6}
-            >
-              <Archive size={20} color={c.text} />
-            </Pressable>
-          )}
-          <Pressable
-            onPress={() => { void handleBulkDelete(); }}
-            style={styles.headerButton}
-            hitSlop={6}
-          >
-            <Trash2 size={20} color={c.text} />
+          <Pressable onPress={() => setBatchActionsOpen(true)} style={styles.headerButton} hitSlop={6} accessibilityRole="button" accessibilityLabel={t('email_viewer.more', 'More actions')}>
+            <MoreVertical size={20} color={c.text} />
           </Pressable>
         </View>
       ) : (
@@ -993,6 +1013,8 @@ export default function EmailListScreen({ onEmailPress, onComposePress }: EmailL
           />
         </View>
       )}
+
+      {!selectionMode && <PushOnboardingPrompt />}
 
       {/* Search bar (always visible) */}
       <View style={styles.searchBar}>
@@ -1285,8 +1307,8 @@ export default function EmailListScreen({ onEmailPress, onComposePress }: EmailL
           contentContainerStyle={styles.listContent}
           onEndReached={() => { void loadMoreEmails(); }}
           onEndReachedThreshold={0.3}
-          refreshing={loading}
-          onRefresh={() => { void refreshEmails(); }}
+          refreshing={manualRefreshing}
+          onRefresh={() => { void onManualRefresh(); }}
         />
       )}
 
@@ -1300,7 +1322,47 @@ export default function EmailListScreen({ onEmailPress, onComposePress }: EmailL
 
       <SidebarDrawer visible={drawerOpen} onClose={() => setDrawerOpen(false)} />
 
-      <Modal
+      <ActionSheet
+        visible={batchActionsOpen && selectionMode}
+        title={t('context_menu.items_selected', `${selectedIds.size} selected`, { count: selectedIds.size })}
+        onClose={() => setBatchActionsOpen(false)}
+        items={[
+          {
+            key: 'star',
+            label: allSelectedAreStarred ? t('context_menu.unstar', 'Unstar') : t('context_menu.star', 'Star'),
+            icon: <Star size={20} color={c.textSecondary} />,
+            onPress: () => { setBatchActionsOpen(false); void handleBulkStar(); },
+          },
+          {
+            key: 'tag', label: t('context_menu.tag', 'Tag'),
+            icon: <Tag size={20} color={c.textSecondary} />,
+            onPress: () => afterBatchSheetCloses(() => setTagSheetOpen(true)),
+          },
+          {
+            key: 'move', label: t('context_menu.move_to', 'Move to folder'),
+            icon: <FolderInput size={20} color={c.textSecondary} />,
+            onPress: () => afterBatchSheetCloses(() => setBatchMoveOpen(true)),
+          },
+          ...(canSpamSelection ? [{
+            key: 'spam',
+            label: inJunk ? t('context_menu.not_spam', 'Not spam') : t('context_menu.mark_as_spam', 'Report spam'),
+            icon: inJunk ? <ShieldCheck size={20} color={c.textSecondary} /> : <ShieldAlert size={20} color={c.textSecondary} />,
+            onPress: () => { setBatchActionsOpen(false); void handleBulkSpam(); },
+          }] : []),
+          ...(canArchiveSelection ? [{
+            key: 'archive', label: t('context_menu.archive', 'Archive'),
+            icon: <Archive size={20} color={c.textSecondary} />,
+            onPress: () => { setBatchActionsOpen(false); void handleBulkArchive(); },
+          }] : []),
+          ...(!companyNoDelete ? [{
+            key: 'delete', label: t('context_menu.delete', 'Delete'), destructive: true,
+            icon: <Trash2 size={20} color={c.error} />,
+            onPress: () => afterBatchSheetCloses(() => { void handleBulkDelete(); }),
+          }] : []),
+        ]}
+      />
+
+      <KeyboardSafeModal
         visible={filterMenuOpen}
         transparent
         animationType="fade"
@@ -1484,7 +1546,7 @@ export default function EmailListScreen({ onEmailPress, onComposePress }: EmailL
             </TouchableWithoutFeedback>
           </View>
         </TouchableWithoutFeedback>
-      </Modal>
+      </KeyboardSafeModal>
 
       {datePickerField !== null && (() => {
         const current = filters[datePickerField];

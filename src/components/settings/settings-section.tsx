@@ -13,6 +13,7 @@ import { spacing, radius, typography, type ThemePalette } from '../../theme/toke
 import { useColors } from '../../theme/colors';
 import ToggleSwitchComponent from '../ToggleSwitch';
 import { useLocaleStore } from '../../stores/locale-store';
+import { haptic } from '../../lib/haptics';
 
 /**
  * Mirrors webmail settings-section.tsx:
@@ -195,6 +196,7 @@ export function Select({ value, onChange, options, style }: SelectProps) {
                       pressed && styles.selectItemPressed,
                     ]}
                     onPress={() => {
+                      if (!selected) haptic('selection');
                       onChange(opt.value);
                       setOpen(false);
                     }}

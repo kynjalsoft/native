@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { jmapClient, AuthenticationError, NetworkError } from '../api/jmap-client';
+import { resetUnifiedCache } from '../api/unified-inbox';
 import type { JMAPSession } from '../api/types';
 import { getIdentities } from '../api/identity';
 import { fetchPrincipal, isStalwartSupported } from '../api/account-security';
@@ -12,9 +13,16 @@ import { generateAccountId } from '../lib/account-utils';
 import { runWebmailHandoff, redeemPairingCode, HandoffCancelledError, HandoffError, type HandoffResult } from '../lib/oauth';
 import { discoverOAuthMetadata, loginWithPkce, probeWebmail, revokeRefreshToken } from '../lib/oauth-native';
 import {
+  ZYNDMAIL_COMPANY,
+  isCompanyMailServer,
+  validateCompanyAccessToken,
+  validateCompanyTokenEndpoint,
+} from '../lib/zyndmail-company';
+import {
   teardownPushNotifications,
   teardownPushNotificationsForAccount,
 } from '../lib/push-notifications';
+import { revokeCompanyPush } from '../lib/company-push';
 
 // Persist middleware hydrates asynchronously on cold start. Without this
 // guard, restoreSession() can read the account-store before AsyncStorage has
@@ -57,6 +65,7 @@ export interface AuthState {
   loginViaWebmail: (webmailUrl: string, opts?: { addAccount?: boolean }) => Promise<void>;
   /** OAuth/OIDC (PKCE) straight against the mail server's authorization server. */
   loginViaOAuth: (serverUrl: string, opts?: { addAccount?: boolean }) => Promise<void>;
+  loginViaCompany: (opts?: { addAccount?: boolean }) => Promise<void>;
   loginViaPairing: (webmailUrl: string, code: string, opts?: { addAccount?: boolean }) => Promise<void>;
   logout: () => Promise<void>;
   logoutAll: () => Promise<void>;
@@ -72,6 +81,7 @@ export interface AuthState {
 // the user is signing out of everything — we don't want stale snapshots
 // lingering on disk for accounts that no longer exist.
 function clearAllFeatureStores(): void {
+  resetUnifiedCache();
   useEmailStore.getState().clearAllAccounts();
   useContactsStore.getState().reset();
   useCalendarStore.getState().reset();
@@ -82,6 +92,7 @@ function clearAllFeatureStores(): void {
 // not yet per-account) contacts and calendar stores. Used by logout when
 // signing one account out while others remain.
 function clearAccountFeatureStores(accountId: string | null): void {
+  resetUnifiedCache(accountId ?? undefined);
   if (accountId) {
     useEmailStore.getState().removeAccount(accountId);
   } else {
@@ -171,6 +182,22 @@ async function completeOAuthHandoff(
   result: Extract<HandoffResult, { flow: 'oauth' }>,
   opts?: { addAccount?: boolean },
 ): Promise<void> {
+  if (isCompanyMailServer(result.serverUrl)) {
+    validateCompanyTokenEndpoint(result.tokens.tokenEndpoint, result.tokens.clientId);
+    const validated = validateCompanyAccessToken(result.tokens.accessToken);
+    result = {
+      ...result,
+      tokens: {
+        ...result.tokens,
+        expiresAt: validated.expiresAt,
+        companyIdentity: {
+          issuer: validated.issuer,
+          audience: validated.audience,
+          subject: validated.subject,
+        },
+      },
+    };
+  }
   // Adding an account must not destroy the live one: the singleton keeps the
   // previous connection until the new sign-in has actually succeeded, and a
   // failure puts it straight back.
@@ -213,6 +240,9 @@ function applyConnectedState(
   username: string,
   accountId: string,
 ): void {
+  // A new JMAP session can have different shared-account grants and mailbox
+  // rights even when the registry account id has not changed.
+  resetUnifiedCache(accountId);
   set({
     isAuthenticated: true,
     isLoading: false,
@@ -242,6 +272,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   login: async (serverUrl, username, password, opts) => {
     set({ isLoading: true, error: null });
+    if (isCompanyMailServer(serverUrl)) {
+      const message = 'ZyndPay Staff mail requires browser sign-in.';
+      set({ isLoading: false, error: message });
+      throw new HandoffError(message);
+    }
     // Adding an additional account: keep the live connection until the new
     // sign-in succeeded so a typo doesn't kill the current session.
     const previous = opts?.addAccount && get().isAuthenticated ? jmapClient.snapshot() : null;
@@ -298,6 +333,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   loginViaWebmail: async (webmailUrl, opts) => {
+    if (isCompanyMailServer(webmailUrl)) return get().loginViaCompany(opts);
     set({ isLoading: true, error: null });
     // Discovery finds the *JMAP* host; a Bulwark webmail is not necessarily
     // served there. Opening `/login?mobile_redirect_uri=…` on a bare Stalwart
@@ -328,6 +364,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
 
     if (result.flow === 'password') {
+      if (isCompanyMailServer(result.serverUrl)) {
+        const message = 'ZyndPay Staff mail requires browser sign-in.';
+        set({ isLoading: false, error: message });
+        throw new HandoffError(message);
+      }
       // Hand the credentials to the existing password login path so account
       // registration + feature-store wiring all behave identically to a
       // manual sign-in.
@@ -353,6 +394,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   loginViaOAuth: async (serverUrl, opts) => {
+    if (isCompanyMailServer(serverUrl)) return get().loginViaCompany(opts);
     set({ isLoading: true, error: null });
     const base = serverUrl.replace(/\/+$/, '');
     let tokens;
@@ -378,6 +420,31 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           : err instanceof Error
             ? err.message
             : 'OAuth sign-in failed';
+      set({ isLoading: false, error: message });
+      throw err;
+    }
+  },
+
+  loginViaCompany: async (opts) => {
+    set({ isLoading: true, error: null });
+    try {
+      const metadata = await discoverOAuthMetadata(ZYNDMAIL_COMPANY.issuer);
+      if (!metadata) throw new HandoffError('ZyndPay Staff identity is unavailable.');
+      const tokens = await loginWithPkce(ZYNDMAIL_COMPANY.mailOrigin, metadata, {
+        company: true,
+        clientId: ZYNDMAIL_COMPANY.clientId,
+        redirectUri: ZYNDMAIL_COMPANY.redirectUri,
+        scopes: 'openid profile email offline_access',
+      });
+      await completeOAuthHandoff(set, get, {
+        flow: 'oauth', serverUrl: ZYNDMAIL_COMPANY.mailOrigin, tokens,
+      }, opts);
+    } catch (err) {
+      if (err instanceof HandoffCancelledError) {
+        set({ isLoading: false, error: null });
+        return;
+      }
+      const message = err instanceof Error ? err.message : 'ZyndPay Staff sign-in failed';
       set({ isLoading: false, error: message });
       throw err;
     }
@@ -423,7 +490,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     // relay mapping before we lose credentials. Other logged-in accounts'
     // push setups remain untouched. Do not abort logout on failure.
     if (currentId) {
-      await teardownPushNotificationsForAccount(currentId).catch(() => undefined);
+      const current = accountStore.getAccountById(currentId);
+      if (current && isCompanyMailServer(current.serverUrl)) {
+        await revokeCompanyPush(currentId).catch(() => undefined);
+      } else {
+        await teardownPushNotificationsForAccount(currentId).catch(() => undefined);
+      }
     } else {
       await teardownPushNotifications().catch(() => undefined);
     }
@@ -469,6 +541,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   logoutAll: async () => {
     const accountStore = useAccountStore.getState();
     const ids = accountStore.accounts.map((a) => a.id);
+    for (const account of accountStore.accounts) {
+      if (isCompanyMailServer(account.serverUrl)) {
+        await revokeCompanyPush(account.id).catch(() => undefined);
+      }
+    }
     await teardownPushNotifications().catch(() => undefined);
     for (const id of ids) await revokeStoredRefreshToken(id);
     await jmapClient.clearAllCredentials(ids);
@@ -584,10 +661,16 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       return;
     }
     const accountStore = useAccountStore.getState();
-    if (!accountStore.getAccountById(accountId)) return;
-    await teardownPushNotificationsForAccount(accountId).catch(() => undefined);
+    const account = accountStore.getAccountById(accountId);
+    if (!account) return;
+    if (isCompanyMailServer(account.serverUrl)) {
+      await revokeCompanyPush(accountId).catch(() => undefined);
+    } else {
+      await teardownPushNotificationsForAccount(accountId).catch(() => undefined);
+    }
     await revokeStoredRefreshToken(accountId);
     await jmapClient.clearAccountCredentials(accountId).catch(() => undefined);
+    resetUnifiedCache(accountId);
     useEmailStore.getState().removeAccount(accountId);
     accountStore.removeAccount(accountId);
   },

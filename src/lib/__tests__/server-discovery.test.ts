@@ -140,6 +140,11 @@ describe('probeJmapServer', () => {
 describe('discoverServerForEmail', () => {
   beforeEach(() => vi.clearAllMocks());
 
+  it('routes staff addresses to the pinned company mail origin', async () => {
+    await expect(discoverServerForEmail('finance@zyndpay.io')).resolves.toBe('https://mail.zyndpay.io');
+    expect(mockSecureFetch).not.toHaveBeenCalled();
+  });
+
   it('returns a known account server for the same domain without probing', async () => {
     respondFor({});
     const found = await discoverServerForEmail('ada@example.com', {

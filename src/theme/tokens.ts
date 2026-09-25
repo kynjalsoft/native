@@ -134,7 +134,7 @@ export const DARK_COLORS: ThemePalette = {
 
   text: '#fafafa',
   textSecondary: '#a1a1aa',
-  textMuted: '#71717a',
+  textMuted: '#85858f',
   textInverse: '#0f172a',
   textLink: '#60a5fa',
 
@@ -228,7 +228,7 @@ export const LIGHT_COLORS: ThemePalette = {
 
   text: '#0f172a',
   textSecondary: '#64748b',
-  textMuted: '#94a3b8',
+  textMuted: '#6b7280',
   textInverse: '#ffffff',
   textLink: '#1d4ed8',
 

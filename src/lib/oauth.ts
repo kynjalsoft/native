@@ -1,6 +1,7 @@
 import * as WebBrowser from 'expo-web-browser';
 import { secureFetch } from './client-cert';
 import { randomHex } from './random';
+import { validateCompanyAccessToken, validateCompanyTokenEndpoint, type CompanyIdentity } from './zyndmail-company';
 
 // Webmail-mediated login. The app opens the webmail's normal login page with
 // extra `mobile_redirect_uri` and `mobile_state` query params. The webmail
@@ -9,7 +10,7 @@ import { randomHex } from './random';
 // the URL fragment. Fragments aren't sent to the server, so password and
 // token material don't appear in HTTP access logs along the way.
 
-export const HANDOFF_REDIRECT_URI = 'bulwarkmobile://auth/callback';
+export const HANDOFF_REDIRECT_URI = 'zyndmail://auth/callback';
 
 export type OAuthTokenSource = 'handoff' | 'pairing' | 'totp' | 'native';
 
@@ -23,6 +24,8 @@ export interface OAuthTokens {
   // token, so revoking it on sign-out would also sign the desktop out;
   // every other source is safe to revoke.
   source?: OAuthTokenSource;
+  /** Pinned issuer, audience and subject for a company-issued token. */
+  companyIdentity?: CompanyIdentity;
 }
 
 export type HandoffResult =
@@ -56,7 +59,7 @@ export class TransientRefreshError extends Error {
   }
 }
 
-// The state is the only guard against a forged `bulwarkmobile://` redirect
+// The state is the only guard against a forged `zyndmail://` redirect
 // delivering foreign credentials, so it comes from the platform CSPRNG.
 function randomState(): string {
   return randomHex(16);
@@ -276,6 +279,9 @@ export async function refreshOAuthAccessToken(tokens: OAuthTokens): Promise<OAut
   if (!tokens.refreshToken) {
     throw new HandoffError('No refresh token available');
   }
+  if (tokens.companyIdentity) {
+    validateCompanyTokenEndpoint(tokens.tokenEndpoint, tokens.clientId);
+  }
 
   const cacheKey = tokens.refreshToken;
   let promise = activeRefreshes.get(cacheKey);
@@ -320,13 +326,17 @@ export async function refreshOAuthAccessToken(tokens: OAuthTokens): Promise<OAut
         if (!data.access_token) {
           throw new HandoffError('Token refresh response missing access_token');
         }
+        const validated = tokens.companyIdentity
+          ? validateCompanyAccessToken(data.access_token, tokens.companyIdentity.subject)
+          : null;
         return {
           accessToken: data.access_token,
           refreshToken: data.refresh_token ?? tokens.refreshToken!,
-          expiresAt: data.expires_in ? Date.now() + data.expires_in * 1000 : undefined,
+          expiresAt: validated?.expiresAt ?? (data.expires_in ? Date.now() + data.expires_in * 1000 : undefined),
           tokenEndpoint: tokens.tokenEndpoint,
           clientId: tokens.clientId,
           source: tokens.source,
+          companyIdentity: tokens.companyIdentity,
         };
       } finally {
         activeRefreshes.delete(cacheKey);
@@ -335,7 +345,13 @@ export async function refreshOAuthAccessToken(tokens: OAuthTokens): Promise<OAut
     activeRefreshes.set(cacheKey, promise);
   }
 
-  return promise;
+  const next = await promise;
+  // A concurrent caller may have a stricter identity guard than the caller
+  // that created the shared refresh. Check the result for every waiter.
+  if (tokens.companyIdentity) {
+    validateCompanyAccessToken(next.accessToken, tokens.companyIdentity.subject);
+  }
+  return next;
 }
 
 WebBrowser.maybeCompleteAuthSession();

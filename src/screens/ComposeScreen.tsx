@@ -1,9 +1,11 @@
+import { haptic } from '../lib/haptics';
 import React from 'react';
 import {
   View, Text, StyleSheet, TextInput, Pressable, ScrollView,
   Keyboard, Dimensions, Platform, ActivityIndicator, Alert, Modal, Switch,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { KeyboardSafeModal } from '../components/KeyboardSafeModal';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import {
   X, Send, Paperclip, ChevronDown, Bold, Italic, Underline, Strikethrough,
@@ -33,12 +35,14 @@ import { useLocaleStore } from '../stores/locale-store';
 import { useSettingsStore } from '../stores/settings-store';
 import { useAccountStore } from '../stores/account-store';
 import { useSendUndoStore } from '../stores/send-undo-store';
+import { toast } from '../stores/toast-store';
 import { type EmailTemplate } from '../stores/templates-store';
 import { getIdentities } from '../api/identity';
 import {
-  sendEmail, createDraft, destroyEmails, patchKeywordsForEmails, type OutgoingAttachment, type OutgoingEmail,
+  sendEmail, createDraft, destroyEmails, patchKeywordsForEmails, SubmissionOutcomeUnknownError,
+  type OutgoingAttachment, type OutgoingEmail,
 } from '../api/email';
-import { jmapClient, RequestTimeoutError } from '../api/jmap-client';
+import { jmapClient, NetworkError, RequestTimeoutError } from '../api/jmap-client';
 import { uploadBlob, uploadBytes } from '../api/blob';
 import { buildReplyRecipients, type ReplySource } from '../lib/reply-recipients';
 import { buildReplySubject, buildForwardSubject } from '../lib/subject-prefix';
@@ -64,7 +68,7 @@ import {
 import {
   generateSubAddress, extractDomain, suggestTagsForDomain, getTagValidationError, MAX_TAG_LENGTH,
 } from '../lib/sub-addressing';
-import { sanitizeDisplayName } from '../lib/rfc5322-mailbox';
+import { resolveOutboundSender } from '../lib/outbound-sender';
 import type { EmailAddress, Identity } from '../api/types';
 import type { RootStackParamList } from '../navigation/types';
 
@@ -540,8 +544,7 @@ export default function ComposeScreen({ route, navigation }: Props) {
           ? `<div>${escapeHtml(prefillBody).replace(/\r?\n/g, '<br>')}</div><p><br></p>`
           : '<p><br></p>';
       }
-      // Quick reply "More options" hands the typed text over as prefillBody;
-      // it goes above the quote.
+      // Place any supplied text above the quoted message.
       const typed = prefillBody
         ? `<div>${escapeHtml(prefillBody).replace(/\r?\n/g, '<br>')}</div>`
         : '';
@@ -964,8 +967,10 @@ export default function ComposeScreen({ route, navigation }: Props) {
   );
   const hasBodyContent = bodyPlain.trim().length > 0
     || attachments.some((a) => a.blobId && !a.error);
+  const [sendOutcomeUnknown, setSendOutcomeUnknown] = React.useState(false);
   const canSend =
     !sending &&
+    !sendOutcomeUnknown &&
     !hasUploadInFlight &&
     !hasUploadError &&
     hasValidRecipients &&
@@ -1113,19 +1118,7 @@ export default function ComposeScreen({ route, navigation }: Props) {
   // ── Outgoing message assembly ─────────────────────────────────────────
 
   const senderAddress = React.useCallback((identity: Identity): { from: EmailAddress; envelopeMailFrom?: string } => {
-    const name = sanitizeDisplayName(identity.name);
-    let from: EmailAddress;
-    if (fromOverride?.email.trim()) {
-      const overrideName = sanitizeDisplayName(fromOverride.name);
-      from = overrideName ? { name: overrideName, email: fromOverride.email.trim() } : { email: fromOverride.email.trim() };
-    } else {
-      const email = subAddressTag ? generateSubAddress(identity.email, subAddressTag, subAddressDelimiter) : identity.email;
-      from = name ? { name, email } : { email };
-    }
-    // A From that isn't the identity's own address still goes out through
-    // the identity's envelope sender.
-    const envelopeMailFrom = from.email.toLowerCase() !== identity.email.toLowerCase() ? identity.email : undefined;
-    return { from, envelopeMailFrom };
+    return resolveOutboundSender(identity, { fromOverride, subAddressTag, subAddressDelimiter });
   }, [fromOverride, subAddressTag, subAddressDelimiter]);
 
   const buildOutgoing = React.useCallback((identity: Identity, liveHtml: string, opts: { forDraft: boolean }): OutgoingEmail => {
@@ -1985,10 +1978,15 @@ export default function ComposeScreen({ route, navigation }: Props) {
         holdForSeconds,
         { draftsMailboxId: draftsMailbox?.id, draftId: draftIdRef.current ?? undefined },
       );
+      haptic(result.filingWarning ? 'warning' : 'success');
       draftIdRef.current = null;
       lastSavedRef.current = null;
       if (result.filingWarning) {
         console.warn('[compose] post-send filing warning:', result.filingWarning);
+        toast.warning(
+          t('email_composer.filing_warning_title', 'Message submitted'),
+          t('email_composer.filing_warning_body', 'Sent filing needs attention. Check Sent and Drafts before sending again.'),
+        );
       }
       // Flag the original so the list shows the reply/forward arrow; best
       // effort - the message already left.
@@ -2030,22 +2028,27 @@ export default function ComposeScreen({ route, navigation }: Props) {
           delaySeconds: holdForSeconds,
           createdAt: Date.now(),
         });
+      } else if (!result.filingWarning) {
+        toast.success(t('email_composer.submitted', 'Submitted to mail server'));
       }
       allowLeaveRef.current = true;
       navigation.goBack();
     } catch (e) {
-      if (e instanceof RequestTimeoutError) {
-        // The request may have reached the server; a blind retry would send
-        // the message twice (#702).
+      if (e instanceof RequestTimeoutError || e instanceof NetworkError || e instanceof SubmissionOutcomeUnknownError) {
+        // A lost or malformed reply may follow a successful submission. Hold
+        // this composer rather than allow a second tap to duplicate the mail.
+        haptic('warning');
+        setSendOutcomeUnknown(true);
         Alert.alert(
-          t('email_composer.send_timeout_title', 'No answer from the server'),
+          t('email_composer.send_unknown_title', 'Send needs review'),
           t(
-            'email_composer.send_timeout_body',
-            'The message may already have gone out. Check your Sent folder before sending it again.',
+            'email_composer.send_unknown_body',
+            'The server did not confirm whether it submitted this message. Sending is paused here to avoid a duplicate. Check Sent before composing another message.',
           ),
         );
         return;
       }
+      haptic('error');
       Alert.alert(
         t('email_composer.send_failed', 'Send failed'),
         e instanceof Error ? e.message : 'Failed to send email',
@@ -2199,6 +2202,14 @@ export default function ComposeScreen({ route, navigation }: Props) {
           </Button>
         </View>
       </View>
+
+      {sendOutcomeUnknown && (
+        <View style={styles.sendReviewBanner} accessibilityRole="alert">
+          <Text style={styles.sendReviewText}>
+            {t('email_composer.send_unknown_banner', 'Send paused. Check Sent before composing another message.')}
+          </Text>
+        </View>
+      )}
 
       <View style={[styles.flex, { paddingBottom: bottomPad }]}>
         <ScrollView
@@ -2355,7 +2366,7 @@ export default function ComposeScreen({ route, navigation }: Props) {
         </ScrollView>
       </View>
 
-      <Modal
+      <KeyboardSafeModal
         visible={linkPromptVisible}
         transparent
         animationType="fade"
@@ -2403,7 +2414,7 @@ export default function ComposeScreen({ route, navigation }: Props) {
             </View>
           </View>
         </View>
-      </Modal>
+      </KeyboardSafeModal>
 
       {/* Text colour palette */}
       <Modal visible={colorPickerOpen} transparent animationType="fade" onRequestClose={() => setColorPickerOpen(false)}>
@@ -2534,7 +2545,7 @@ export default function ComposeScreen({ route, navigation }: Props) {
       )}
 
       {/* Template placeholders */}
-      <Modal
+      <KeyboardSafeModal
         visible={!!placeholderPrompt}
         transparent
         animationType="fade"
@@ -2586,10 +2597,10 @@ export default function ComposeScreen({ route, navigation }: Props) {
             </View>
           </View>
         </View>
-      </Modal>
+      </KeyboardSafeModal>
 
       {/* From options: sub-address tag / From override */}
-      <Modal visible={fromOptionsOpen} transparent animationType="fade" onRequestClose={() => setFromOptionsOpen(false)}>
+      <KeyboardSafeModal visible={fromOptionsOpen} transparent animationType="fade" onRequestClose={() => setFromOptionsOpen(false)}>
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>{t('email_composer.from', 'From')}</Text>
@@ -2666,7 +2677,7 @@ export default function ComposeScreen({ route, navigation }: Props) {
             </View>
           </View>
         </View>
-      </Modal>
+      </KeyboardSafeModal>
 
       <TemplateSheet
         visible={templateSheetOpen}
@@ -2713,6 +2724,12 @@ function makeStyles(c: ThemePalette) {
   headerSubtitle: { ...typography.caption, color: c.textMuted, marginTop: -2 },
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   sendButtonDisabled: { opacity: 0.5 },
+  sendReviewBanner: {
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    backgroundColor: c.warningBg,
+  },
+  sendReviewText: { ...typography.bodyMedium, color: c.text },
 
   fieldRow: {
     flexDirection: 'row',

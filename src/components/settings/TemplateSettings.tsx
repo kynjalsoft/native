@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
   Alert,
-  Modal,
   Pressable,
   ScrollView,
   Share,
@@ -13,6 +12,7 @@ import {
 import { Download, FileText, Plus, Star, Trash2, Upload, X } from 'lucide-react-native';
 import { SettingsSection, ToggleSwitch } from './settings-section';
 import Button from '../Button';
+import { KeyboardSafeModal } from '../KeyboardSafeModal';
 import { radius, spacing, typography, type ThemePalette } from '../../theme/tokens';
 import { useColors } from '../../theme/colors';
 import { useTemplatesStore, type EmailTemplate } from '../../stores/templates-store';
@@ -196,7 +196,7 @@ export function TemplateSettings() {
       </SettingsSection>
 
       {/* Edit/Create modal */}
-      <Modal visible={!!editing} animationType="slide" transparent onRequestClose={closeEditor}>
+      <KeyboardSafeModal visible={!!editing} animationType="slide" transparent onRequestClose={closeEditor}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalSheet}>
             <View style={styles.modalHeader}>
@@ -259,10 +259,10 @@ export function TemplateSettings() {
             </View>
           </View>
         </View>
-      </Modal>
+      </KeyboardSafeModal>
 
       {/* Import modal */}
-      <Modal visible={importVisible} animationType="slide" transparent onRequestClose={() => setImportVisible(false)}>
+      <KeyboardSafeModal visible={importVisible} animationType="slide" transparent onRequestClose={() => setImportVisible(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalSheet}>
             <View style={styles.modalHeader}>
@@ -292,7 +292,7 @@ export function TemplateSettings() {
             </View>
           </View>
         </View>
-      </Modal>
+      </KeyboardSafeModal>
     </View>
   );
 }

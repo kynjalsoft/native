@@ -3,6 +3,7 @@ import { useColorScheme } from 'react-native';
 import { useSettingsStore } from '../stores/settings-store';
 import { LIGHT_COLORS, DARK_COLORS, type ThemePalette } from './tokens';
 import { getBuiltinTheme } from './builtin-themes';
+import { withReadableBodyText } from './contrast';
 
 export type { ThemePalette };
 
@@ -20,7 +21,7 @@ export function resolvePalette(scheme: 'light' | 'dark', themeId: string | null)
   const key = `${scheme}:${theme.id}`;
   const cached = paletteCache.get(key);
   if (cached) return cached;
-  const merged: ThemePalette = { ...base, ...(scheme === 'light' ? theme.light : theme.dark) };
+  const merged = withReadableBodyText({ ...base, ...(scheme === 'light' ? theme.light : theme.dark) });
   paletteCache.set(key, merged);
   return merged;
 }

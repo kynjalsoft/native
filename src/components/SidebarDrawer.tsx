@@ -1,10 +1,11 @@
+import { haptic } from '../lib/haptics';
 import React from 'react';
 import {
   View, Text, StyleSheet, Pressable, ScrollView, Modal, TextInput, Alert,
-  Animated, Dimensions, Easing, ActivityIndicator,
+  ActivityIndicator,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   Inbox, Send, File as FileIcon, Trash2, Ban, Archive, Star,
   Folder, FolderOpen, ChevronDown, ChevronRight, X, Settings, LogOut, Check, Plus,
@@ -14,7 +15,7 @@ import {
 } from 'lucide-react-native';
 import { spacing, radius, typography, type ThemePalette } from '../theme/tokens';
 import { useColors } from '../theme/colors';
-import { useAnimDuration } from '../theme/dynamic';
+import { useShouldAnimate } from '../theme/dynamic';
 import { useEmailStore } from '../stores/email-store';
 import { useAuthStore } from '../stores/auth-store';
 import { useAccountStore } from '../stores/account-store';
@@ -36,6 +37,9 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation/types';
 import type { Mailbox } from '../api/types';
+import { SafeAreaModal } from './SafeAreaModal';
+import { setPendingSettingsTab } from '../navigation/pending-settings-tab';
+import { KeyboardSafeModal } from './KeyboardSafeModal';
 
 const CHEVRON_SLOT = 20;
 const INDENT_STEP = 12;
@@ -265,31 +269,33 @@ function NamePrompt({ title, message, initial, confirmLabel, onSubmit, onClose }
     onSubmit(name);
   };
   return (
-    <Modal visible transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
-      <Pressable style={styles.sheetOverlay} onPress={onClose} />
-      <View style={styles.promptCard}>
-        <Text style={styles.sheetTitle}>{title}</Text>
-        {message ? <Text style={styles.promptMessage}>{message}</Text> : null}
-        <TextInput
-          value={value}
-          onChangeText={setValue}
-          placeholder={t('mailbox_context_menu.placeholder_folder_name', 'Folder name')}
-          placeholderTextColor={c.textMuted}
-          style={styles.promptInput}
-          autoFocus
-          onSubmitEditing={submit}
-          returnKeyType="done"
-        />
-        <View style={styles.promptActions}>
-          <Pressable onPress={onClose} style={styles.promptButton} hitSlop={6}>
-            <Text style={styles.promptButtonText}>{t('common.cancel', 'Cancel')}</Text>
-          </Pressable>
-          <Pressable onPress={submit} style={styles.promptButton} hitSlop={6} disabled={!value.trim()}>
-            <Text style={[styles.promptButtonText, { color: c.primary }, !value.trim() && { opacity: 0.5 }]}>{confirmLabel}</Text>
-          </Pressable>
+    <KeyboardSafeModal visible transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
+      <View style={styles.promptBackdrop}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+        <View style={styles.promptCard}>
+          <Text style={styles.sheetTitle}>{title}</Text>
+          {message ? <Text style={styles.promptMessage}>{message}</Text> : null}
+          <TextInput
+            value={value}
+            onChangeText={setValue}
+            placeholder={t('mailbox_context_menu.placeholder_folder_name', 'Folder name')}
+            placeholderTextColor={c.textMuted}
+            style={styles.promptInput}
+            autoFocus
+            onSubmitEditing={submit}
+            returnKeyType="done"
+          />
+          <View style={styles.promptActions}>
+            <Pressable onPress={onClose} style={styles.promptButton} hitSlop={6}>
+              <Text style={styles.promptButtonText}>{t('common.cancel', 'Cancel')}</Text>
+            </Pressable>
+            <Pressable onPress={submit} style={styles.promptButton} hitSlop={6} disabled={!value.trim()}>
+              <Text style={[styles.promptButtonText, { color: c.primary }, !value.trim() && { opacity: 0.5 }]}>{confirmLabel}</Text>
+            </Pressable>
+          </View>
         </View>
       </View>
-    </Modal>
+    </KeyboardSafeModal>
   );
 }
 
@@ -299,6 +305,8 @@ interface SidebarDrawerProps {
 }
 
 export default function SidebarDrawer({ visible, onClose }: SidebarDrawerProps) {
+  const insets = useSafeAreaInsets();
+  const companyNoDelete = jmapClient.hasCompanyNoDeletePolicy;
   const c = useColors();
   const styles = React.useMemo(() => makeStyles(c), [c]);
   const t = useLocaleStore((s) => s.t);
@@ -393,6 +401,7 @@ export default function SidebarDrawer({ visible, onClose }: SidebarDrawerProps) 
   }, []);
 
   const toggleExpand = React.useCallback((id: string) => {
+    haptic('selection');
     setExpandedFolders((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id); else next.add(id);
@@ -402,6 +411,7 @@ export default function SidebarDrawer({ visible, onClose }: SidebarDrawerProps) 
   }, [persistExpanded]);
 
   const toggleSection = (key: keyof typeof STORAGE_KEYS, setter: React.Dispatch<React.SetStateAction<boolean>>) => {
+    haptic('selection');
     setter((prev) => {
       const next = !prev;
       void AsyncStorage.setItem(STORAGE_KEYS[key], String(next)).catch(() => {});
@@ -410,6 +420,7 @@ export default function SidebarDrawer({ visible, onClose }: SidebarDrawerProps) 
   };
 
   const handleSelect = React.useCallback((id: string) => {
+    haptic('selection');
     // A tag view was open: leave it so the folder shows its own mail.
     if (filters.keyword) clearSearchAndFilters();
     void selectMailbox(id);
@@ -418,12 +429,14 @@ export default function SidebarDrawer({ visible, onClose }: SidebarDrawerProps) 
 
   // Tap the unread count → the folder filtered to unread (webmail sidebar).
   const handleSelectUnread = React.useCallback((id: string) => {
+    haptic('selection');
     void selectMailbox(id).then(() => setFilters({ isUnread: true }));
     onClose();
   }, [selectMailbox, setFilters, onClose]);
 
   // Tag view (#175): every folder, messages carrying the tag.
   const selectTag = React.useCallback((id: string) => {
+    haptic('selection');
     setFilters({ keyword: keywordToken(id) });
     onClose();
   }, [setFilters, onClose]);
@@ -502,7 +515,7 @@ export default function SidebarDrawer({ visible, onClose }: SidebarDrawerProps) 
         ),
       });
     }
-    if (mb.role === 'trash' || mb.role === 'junk' || mb.role === 'spam') {
+    if (!companyNoDelete && (mb.role === 'trash' || mb.role === 'junk' || mb.role === 'spam')) {
       actions.push({
         key: 'empty',
         label: t('mailbox_context_menu.empty_folder', 'Empty folder'),
@@ -566,7 +579,7 @@ export default function SidebarDrawer({ visible, onClose }: SidebarDrawerProps) 
         }),
       });
     }
-    if (!mb.role && mb.myRights?.mayDelete !== false) {
+    if (!companyNoDelete && !mb.role && mb.myRights?.mayDelete !== false) {
       actions.push({
         key: 'delete',
         label: t('mailbox_context_menu.delete_folder', 'Delete folder'),
@@ -672,33 +685,15 @@ export default function SidebarDrawer({ visible, onClose }: SidebarDrawerProps) 
 
   const unifiedIcon = (role: UnifiedRole): LucideIcon => iconFor(role, undefined, false, false);
 
-  const slideX = React.useRef(new Animated.Value(-Dimensions.get('window').width)).current;
-  const overlayOpacity = React.useRef(new Animated.Value(0)).current;
-  const openDuration = useAnimDuration(240);
-  const closeDuration = useAnimDuration(200);
-
-  // Runs the slide-in. Kicked from both the visible effect and the Modal's
-  // onShow: on the very first open the modal's native view is not attached yet
-  // when the effect fires, so that first animation is dropped and the drawer
-  // stays parked off-screen. Re-running it once the modal is on screen commits
-  // the final offset (a no-op on every subsequent open).
-  const runOpen = React.useCallback(() => {
-    Animated.parallel([
-      Animated.timing(slideX, { toValue: 0, duration: openDuration, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
-      Animated.timing(overlayOpacity, { toValue: 1, duration: openDuration, useNativeDriver: true }),
-    ]).start();
-  }, [slideX, overlayOpacity, openDuration]);
-
+  // Native modal presentation owns both transitions; no animation runs on a detached view.
+  const animate = useShouldAnimate();
   React.useEffect(() => {
-    if (visible) {
-      runOpen();
-    } else {
-      Animated.parallel([
-        Animated.timing(slideX, { toValue: -Dimensions.get('window').width, duration: closeDuration, easing: Easing.in(Easing.cubic), useNativeDriver: true }),
-        Animated.timing(overlayOpacity, { toValue: 0, duration: closeDuration, useNativeDriver: true }),
-      ]).start();
+    if (!visible) {
+      setAccountMenuOpen(false);
+      setSheet(null);
+      setPrompt(null);
     }
-  }, [visible, runOpen, slideX, overlayOpacity, closeDuration]);
+  }, [visible]);
 
   const accountEmail = username || '';
   const initials = React.useMemo(
@@ -738,20 +733,21 @@ export default function SidebarDrawer({ visible, onClose }: SidebarDrawerProps) 
   const tagViewActive = !!filters.keyword;
 
   return (
-    <Modal
+    <SafeAreaModal
       visible={visible}
       transparent
-      animationType="none"
+      presentationStyle="overFullScreen"
+      animationType={animate ? "fade" : "none"}
       statusBarTranslucent
       onRequestClose={onClose}
-      onShow={runOpen}
     >
-      <Animated.View style={[styles.overlay, { opacity: overlayOpacity }]}>
+      <View style={styles.overlay}>
         <Pressable style={styles.overlayPress} onPress={onClose} />
-      </Animated.View>
+      </View>
 
-      <Animated.View style={[styles.drawer, { transform: [{ translateX: slideX }] }]}>
-        <SafeAreaView style={styles.drawerSafe} edges={['top', 'bottom', 'left']}>
+      <View style={styles.drawer} accessibilityViewIsModal onAccessibilityEscape={onClose}>
+        {/* Read stable screen insets outside the modal root, which can report zero during presentation. */}
+        <View style={[styles.drawerSafe, { paddingTop: insets.top, paddingBottom: insets.bottom, paddingLeft: insets.left }]}>
           {/* Header: close + account switcher */}
           <View style={styles.header}>
             <Pressable onPress={onClose} style={styles.headerClose} hitSlop={8}>
@@ -1025,7 +1021,7 @@ export default function SidebarDrawer({ visible, onClose }: SidebarDrawerProps) 
               <Pressable
                 style={styles.sectionSettings}
                 hitSlop={8}
-                onPress={() => { onClose(); navigation.navigate('MainTabs'); }}
+                onPress={() => { setPendingSettingsTab('folders'); onClose(); navigation.navigate('MainTabs', { screen: 'Settings' }); }}
                 accessibilityLabel={t('sidebar.settings', 'Settings')}
               >
                 <Settings size={14} color={c.textMuted} />
@@ -1116,8 +1112,8 @@ export default function SidebarDrawer({ visible, onClose }: SidebarDrawerProps) 
               </>
             )}
           </ScrollView>
-        </SafeAreaView>
-      </Animated.View>
+        </View>
+      </View>
 
       {sheet && <ActionSheet title={sheet.title} actions={sheet.actions} onClose={() => setSheet(null)} />}
       {prompt && (
@@ -1130,7 +1126,7 @@ export default function SidebarDrawer({ visible, onClose }: SidebarDrawerProps) 
           onClose={() => setPrompt(null)}
         />
       )}
-    </Modal>
+    </SafeAreaModal>
   );
 }
 
@@ -1442,15 +1438,14 @@ function makeStyles(c: ThemePalette) {
   },
   sheetRowText: { ...typography.body, color: c.text },
   promptCard: {
-    position: 'absolute',
-    left: spacing.lg, right: spacing.lg,
-    top: '30%',
+    marginHorizontal: spacing.lg,
     backgroundColor: c.popover,
     borderRadius: radius.md,
     borderWidth: 1,
     borderColor: c.border,
     paddingVertical: spacing.sm,
   },
+  promptBackdrop: { flex: 1, justifyContent: 'center' },
   promptMessage: { ...typography.caption, color: c.textSecondary, paddingHorizontal: spacing.lg },
   promptInput: {
     ...typography.body,

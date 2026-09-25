@@ -1,7 +1,11 @@
 apply plugin: "com.android.application"
 apply plugin: "org.jetbrains.kotlin.android"
 apply plugin: "com.facebook.react"
-apply plugin: "com.google.gms.google-services"
+// CI compiles native code without a Firebase project. Signed preview builds
+// must supply our own google-services.json; never bundle Bulwark's project.
+if (file('google-services.json').exists()) {
+    apply plugin: "com.google.gms.google-services"
+}
 
 def projectRoot = rootDir.getAbsoluteFile().getParentFile().getAbsolutePath()
 def appVersionName = file("${projectRoot}/VERSION").text.trim()
@@ -91,7 +95,7 @@ android {
 
     namespace 'com.anonymous.bulwarkmobile'
     defaultConfig {
-        applicationId 'com.anonymous.bulwarkmobile'
+        applicationId 'io.zyndpay.mail'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1

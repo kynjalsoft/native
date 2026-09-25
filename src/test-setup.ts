@@ -48,6 +48,7 @@ vi.mock('react-native', () => {
   }
   return {
     Platform: { OS: 'android', Version: 33, select: <T,>(spec: { default?: T; android?: T; ios?: T }) => spec.android ?? spec.default ?? spec.ios },
+    AppState: { currentState: 'active' },
     NativeModules: {},
     NativeEventEmitter,
     PermissionsAndroid: {
@@ -60,10 +61,17 @@ vi.mock('react-native', () => {
 });
 
 vi.mock('expo-secure-store', () => ({
+  WHEN_PASSCODE_SET_THIS_DEVICE_ONLY: 6,
   setItemAsync: vi.fn(async () => undefined),
   getItemAsync: vi.fn(async () => null),
   deleteItemAsync: vi.fn(async () => undefined),
 }));
+
+vi.mock('expo-constants', () => ({ default: {
+  easConfig: null,
+  expoConfig: null,
+} }));
+vi.mock('expo-device', () => ({ isDevice: false }));
 
 // expo-web-browser transitively pulls in expo-modules-core, which evaluates
 // RN-only globals at module load. The unit tests don't exercise the real
@@ -124,6 +132,8 @@ vi.mock('expo-file-system/legacy', () => ({
   FileSystemUploadType: { BINARY_CONTENT: 0 },
 }));
 vi.mock('expo-haptics', () => ({
+  performAndroidHapticsAsync: vi.fn(async () => undefined),
+  AndroidHaptics: { Segment_Tick: 'tick', Confirm: 'confirm', Reject: 'reject', Long_Press: 'long', Context_Click: 'click' },
   impactAsync: vi.fn(async () => undefined),
   notificationAsync: vi.fn(async () => undefined),
   selectionAsync: vi.fn(async () => undefined),

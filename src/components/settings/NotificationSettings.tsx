@@ -16,6 +16,8 @@ import { useColors } from '../../theme/colors';
 import { useAuthStore } from '../../stores/auth-store';
 import { useLocaleStore } from '../../stores/locale-store';
 import { useSettingsStore } from '../../stores/settings-store';
+import { isCompanyMailServer } from '../../lib/zyndmail-company';
+import { CompanyPushSettings } from './CompanyPushSettings';
 import {
   DEFAULT_RELAY_BASE_URL,
   getStoredRelayBaseUrl,
@@ -70,7 +72,8 @@ export function NotificationSettings() {
   const calEnabled = useSettingsStore((s) => s.calendarNotificationsEnabled);
   const invitationParsing = useSettingsStore((s) => s.calendarInvitationParsingEnabled);
 
-  const supported = isPushSupported();
+  const company = isCompanyMailServer(client?.serverUrl ?? '');
+  const supported = !company && isPushSupported();
   const [relayUrl, setRelayUrl] = useState(DEFAULT_RELAY_BASE_URL);
   const [pushEnabled, setPushEnabled] = useState(false);
   const [pushStatus, setPushStatus] = useState<PushStatus>({ kind: 'idle' });
@@ -217,6 +220,7 @@ export function NotificationSettings() {
 
   return (
     <View style={styles.container}>
+      {company ? <CompanyPushSettings /> : <>
       <SettingsSection
         title={t('settings.notifications.push.title', 'Background Notifications')}
         description={t(
@@ -349,6 +353,7 @@ export function NotificationSettings() {
           )}
         </SettingsSection>
       )}
+      </>}
 
       <SettingsSection
         title={t('settings.notifications.email.title', 'Email Notifications')}

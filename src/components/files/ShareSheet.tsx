@@ -2,7 +2,8 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Modal,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -11,6 +12,7 @@ import {
   TouchableWithoutFeedback,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Folder, FileText, Trash2, UserPlus, Users } from 'lucide-react-native';
 
 import { getPrincipals, isFolder, ownPrincipalId, setFileNodeShare } from '../../api/files';
@@ -18,6 +20,7 @@ import type { FileNode, FileNodeRights, Principal } from '../../api/types';
 import { spacing, radius, typography, type ThemePalette } from '../../theme/tokens';
 import { useColors } from '../../theme/colors';
 import { useLocaleStore } from '../../stores/locale-store';
+import { SafeAreaModal } from '../SafeAreaModal';
 
 type RolePreset = 'read' | 'readWrite' | 'manager';
 
@@ -67,6 +70,7 @@ export default function ShareSheet({ node, onClose, onChanged }: ShareSheetProps
   const c = useColors();
   const styles = React.useMemo(() => makeStyles(c), [c]);
   const t = useLocaleStore((s) => s.t);
+  const insets = useSafeAreaInsets();
 
   const [principals, setPrincipals] = useState<Principal[]>([]);
   const [loadingPrincipals, setLoadingPrincipals] = useState(false);
@@ -151,11 +155,12 @@ export default function ShareSheet({ node, onClose, onChanged }: ShareSheetProps
   };
 
   return (
-    <Modal visible transparent animationType="slide" onRequestClose={onClose}>
+    <SafeAreaModal visible transparent animationType="slide" onRequestClose={onClose}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <TouchableWithoutFeedback onPress={onClose}>
         <View style={styles.backdrop}>
           <TouchableWithoutFeedback>
-            <View style={styles.sheet}>
+            <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, spacing.md) }]}>
               <View style={styles.titleRow}>
                 <Icon size={18} color={c.textMuted} />
                 <Text style={styles.title} numberOfLines={1}>
@@ -275,7 +280,8 @@ export default function ShareSheet({ node, onClose, onChanged }: ShareSheetProps
           </TouchableWithoutFeedback>
         </View>
       </TouchableWithoutFeedback>
-    </Modal>
+      </KeyboardAvoidingView>
+    </SafeAreaModal>
   );
 }
 

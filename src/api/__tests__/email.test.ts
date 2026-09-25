@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('../jmap-client', () => ({
   jmapClient: {
     accountId: 'acc-1',
+    hasCompanyNoDeletePolicy: false,
     request: vi.fn(),
     getAccountName: vi.fn(() => 'me@example.com'),
     getSharedMailAccounts: vi.fn(() => []),
@@ -14,6 +15,8 @@ vi.mock('../jmap-client', () => ({
 }));
 
 import { jmapClient } from '../jmap-client';
+import { resolveOutboundSender } from '../../lib/outbound-sender';
+import type { Identity } from '../types';
 import {
   getMailboxes,
   getSharedMailboxes,
@@ -26,12 +29,14 @@ import {
   deleteEmail,
   searchEmails,
   sendEmail,
+  createDraft,
 } from '../email';
 
 const mockRequest = jmapClient.request as ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  (jmapClient as typeof jmapClient & { hasCompanyNoDeletePolicy: boolean }).hasCompanyNoDeletePolicy = false;
 });
 
 describe('email operations', () => {
@@ -331,6 +336,92 @@ describe('email operations', () => {
   });
 
   describe('sendEmail', () => {
+    it.each([
+      ['new personal', 'compose', 'alex@zyndpay.io', 'Alex Doe', 'Alex Doe | ZyndPay'],
+      ['reply from support', 'reply', 'support@zyndpay.io', 'Alex Doe', 'ZyndPay Support'],
+      ['reply all from sales', 'replyAll', 'sales@zyndpay.io', 'Alex Doe', 'ZyndPay Sales'],
+      ['forward from support', 'forward', 'support@zyndpay.io', 'Alex Doe', 'ZyndPay Support'],
+    ])('serializes the governed From for %s without changing identityId', async (_label, mode, address, configuredName, expectedName) => {
+      mockRequest.mockResolvedValue({ methodResponses: [
+        ['Email/set', { created: { draft: { id: 'e-new' } } }, '0'],
+        ['EmailSubmission/set', { created: { 'sub-1': { id: 's-1' } } }, '1'],
+      ] });
+      const selected = { id: 'selected-identity', email: address, name: configuredName } as Identity;
+      const sender = resolveOutboundSender(selected);
+      await sendEmail({
+        from: [sender.from],
+        to: [{ email: 'recipient@example.org' }],
+        subject: mode === 'forward' ? 'Fwd: Example' : mode === 'compose' ? 'Example' : 'Re: Example',
+        textBody: 'Fixture only',
+        inReplyTo: mode.startsWith('reply') ? ['original@example.org'] : undefined,
+      }, selected.id, 'sent-mb');
+      const calls = mockRequest.mock.calls[0][0];
+      expect(calls[0][1].create.draft.from).toEqual([{ name: expectedName, email: address }]);
+      expect(calls[1][1].create['sub-1'].identityId).toBe(selected.id);
+      expect(calls[0][1].create.draft.inReplyTo).toEqual(mode.startsWith('reply') ? ['original@example.org'] : undefined);
+    });
+
+    it('does not report success when the server omits the submission result', async () => {
+      mockRequest.mockResolvedValue({ methodResponses: [
+        ['Email/set', { created: { draft: { id: 'e-new' } } }, '0'],
+        ['EmailSubmission/set', {}, '1'],
+      ] });
+
+      await expect(sendEmail(
+        { from: [{ email: 'me@example.com' }], to: [{ email: 'you@example.com' }], subject: 'Hello', textBody: 'Hi' },
+        'identity-1', 'sent-mb', undefined, { draftsMailboxId: 'drafts-mb' },
+      )).rejects.toThrow('submission outcome');
+      expect(mockRequest).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not report success when submission is acknowledged without the created message id', async () => {
+      mockRequest.mockResolvedValue({ methodResponses: [
+        ['Email/set', {}, '0'],
+        ['EmailSubmission/set', { created: { 'sub-1': { id: 's-1' } } }, '1'],
+      ] });
+
+      await expect(sendEmail(
+        { from: [{ email: 'me@example.com' }], to: [{ email: 'you@example.com' }], subject: 'Hello', textBody: 'Hi' },
+        'identity-1', 'sent-mb', undefined, { draftsMailboxId: 'drafts-mb' },
+      )).rejects.toThrow('submission outcome');
+      expect(mockRequest).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not attempt forbidden cleanup of a retained company draft after submission', async () => {
+      (jmapClient as typeof jmapClient & { hasCompanyNoDeletePolicy: boolean }).hasCompanyNoDeletePolicy = true;
+      mockRequest.mockResolvedValue({ methodResponses: [
+        ['Email/set', { created: { draft: { id: 'e-new' } } }, '0'],
+        ['EmailSubmission/set', { created: { 'sub-1': { id: 's-1' } } }, '1'],
+      ] });
+
+      const result = await sendEmail(
+        { from: [{ email: 'me@example.com' }], to: [{ email: 'you@example.com' }], subject: 'Hello', textBody: 'Hi' },
+        'identity-1', 'sent-mb', undefined, { draftsMailboxId: 'drafts-mb', draftId: 'old-draft' },
+      );
+
+      expect(result.emailSubmissionId).toBe('s-1');
+      expect(result.filingWarning).toBeUndefined();
+      expect(mockRequest).toHaveBeenCalledTimes(1);
+    });
+    it('files a submitted draft with patches that preserve unrelated mailbox membership', async () => {
+      mockRequest.mockResolvedValue({ methodResponses: [
+        ['Email/set', { created: { draft: { id: 'e-new' } } }, '0'],
+        ['EmailSubmission/set', { created: { 'sub-1': { id: 's-1' } } }, '1'],
+      ] });
+
+      await sendEmail(
+        { from: [{ email: 'me@example.com' }], to: [{ email: 'you@example.com' }], subject: 'Hello', textBody: 'Hi' },
+        'identity-1', 'sent~box', undefined, { draftsMailboxId: 'draft/box' },
+      );
+
+      const submission = mockRequest.mock.calls[0][0][1][1];
+      expect(submission.onSuccessUpdateEmail['#sub-1']).toEqual({
+        'mailboxIds/sent~0box': true,
+        'mailboxIds/draft~1box': null,
+        'keywords/$draft': null,
+        'keywords/$seen': true,
+      });
+    });
     it('should create email and submission in one request', async () => {
       mockRequest.mockResolvedValue({
         methodResponses: [
@@ -409,5 +500,49 @@ describe('email operations', () => {
       expect(emailCreate.references).toEqual(['msg-0@example.com', 'msg-1@example.com']);
       expect(emailCreate['header:In-Reply-To:asText']).toBeUndefined();
     });
+  });
+
+  it('retains earlier company draft versions without attempting destructive cleanup', async () => {
+    (jmapClient as typeof jmapClient & { hasCompanyNoDeletePolicy: boolean }).hasCompanyNoDeletePolicy = true;
+    mockRequest.mockResolvedValue({ methodResponses: [
+      ['Email/set', { created: { draft: { id: 'new-draft' } } }, '0'],
+    ] });
+
+    const id = await createDraft(
+      { from: [{ email: 'me@example.com' }], to: [], subject: 'Draft', textBody: 'Body' },
+      'drafts-mb', 'old-draft',
+    );
+
+    expect(id).toBe('new-draft');
+    expect(mockRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('serializes a governed shared From when saving a draft', async () => {
+    mockRequest.mockResolvedValue({ methodResponses: [
+      ['Email/set', { created: { draft: { id: 'new-draft' } } }, '0'],
+    ] });
+    const selected = { id: 'support-id', email: 'support@zyndpay.io', name: 'Alex Doe' } as Identity;
+    const { from } = resolveOutboundSender(selected);
+    await createDraft({ from: [from], to: [], subject: 'Draft', textBody: 'Fixture only' }, 'drafts-mb');
+    expect(mockRequest.mock.calls[0][0][0][1].create.draft.from).toEqual([
+      { name: 'ZyndPay Support', email: 'support@zyndpay.io' },
+    ]);
+    expect(mockRequest.mock.calls[0][0][0][1].create.draft.keywords).toEqual({ $seen: true, $draft: true });
+  });
+
+  it('keeps the governed From and selected identity when submitting a reopened draft', async () => {
+    mockRequest.mockResolvedValue({ methodResponses: [
+      ['Email/set', { created: { draft: { id: 'sent-copy' } } }, '0'],
+      ['EmailSubmission/set', { created: { 'sub-1': { id: 'submission' } } }, '1'],
+    ] });
+    const selected = { id: 'sales-id', email: 'sales@zyndpay.io', name: 'Alex Doe' } as Identity;
+    const { from } = resolveOutboundSender(selected);
+    await sendEmail({
+      from: [from], to: [{ email: 'recipient@example.org' }], subject: 'Draft resumed', textBody: 'Fixture only',
+    }, selected.id, 'sent-mb', undefined, { draftsMailboxId: 'drafts-mb', draftId: 'earlier-draft' });
+    const calls = mockRequest.mock.calls[0][0];
+    expect(calls[0][1].create.draft.from).toEqual([{ name: 'ZyndPay Sales', email: selected.email }]);
+    expect(calls[1][1].create['sub-1'].identityId).toBe('sales-id');
+    expect(calls[1][1].onSuccessUpdateEmail['#sub-1']['mailboxIds/sent-mb']).toBe(true);
   });
 });

@@ -96,6 +96,8 @@
     "attachment_too_large": "This file is larger than the server allows ({size} > {max}).",
     "attachments_too_large_total": "The attachments would exceed the {max} this server allows per message.",
     "editor_unavailable": "Could not read the message content. Copy your text, then close and reopen the composer.",
+    "filing_warning_body": "Sent filing needs attention. Check Sent and Drafts before sending again.",
+    "filing_warning_title": "Message submitted",
     "identity_unavailable": "Identity unavailable",
     "image_load_failed": "Could not load image",
     "no_recipient": "(no recipient)",
@@ -124,6 +126,10 @@
     "send_now": "Send now",
     "send_timeout_body": "The message may already have gone out. Check your Sent folder before sending it again.",
     "send_timeout_title": "No answer from the server",
+    "send_unknown_banner": "Send paused. Check Sent before composing another message.",
+    "send_unknown_body": "The server did not confirm whether it submitted this message. Sending is paused here to avoid a duplicate. Check Sent before composing another message.",
+    "send_unknown_title": "Send needs review",
+    "submitted": "Submitted to mail server",
     "undo_send_label": "Sending in {seconds}s…",
     "uploading": "Uploading...",
     "validation": {
@@ -308,6 +314,9 @@
       "password_title": "Sign in to {host}",
       "provider_detail": "You'll type it on their page. ZyndMail stores the resulting sign-in token on this device.",
       "provider_title": "Your password stays with your provider",
+      "qr_close": "Close scanner",
+      "qr_flashlight_off": "Turn off flashlight",
+      "qr_flashlight_on": "Turn on flashlight",
       "qr_hint": "Settings → Security → Link device shows a code. Point the camera at it.",
       "qr_hint_title": "Open your webmail on a computer",
       "qr_title": "Sign-in code",
@@ -332,6 +341,7 @@
   },
   "push_prompt": {
     "body": "Turn on background notifications so new messages reach you while the app is closed.",
+    "company_body": "Get private alerts for activity in your authorized work mailboxes. No message content appears in the alert.",
     "dismiss": "Not now",
     "enable": "Enable",
     "title": "Get notified about new mail"
@@ -358,10 +368,15 @@
     "advanced": {
       "about": {
         "deprecated_update": "Update required: {version}",
-        "mobile_title": "ZyndMail Preview",
+        "license": "Read the license",
+        "license_link": "Read the AGPL-3.0 license",
+        "mobile_title": "ZyndMail",
         "security_update": "Security update: {version}",
+        "source": "Source",
+        "source_link": "ZyndMail source code",
         "update_available": "Update: {version}",
-        "update_store_hint": "available in TestFlight / App Store"
+        "update_store_hint": "available in TestFlight / App Store",
+        "upstream_notice": "Based on Bulwark Native. ZyndMail is licensed under AGPL-3.0-only."
       },
       "export_settings": {
         "saved_to": "Saved to {path}"
@@ -487,6 +502,8 @@
     },
     "layout": {
       "description": "Tune the email list interactions for mobile.",
+      "haptics": "Haptic feedback",
+      "haptics_description": "Subtle touch feedback for selections and actions on this device.",
       "quick_actions": {
         "description": "The three buttons shown between Prev/Next at the bottom of an open email. Defaults to Reply, Reply All and Forward.",
         "label": "Reader quick actions",
@@ -522,6 +539,14 @@
       "title": "Message list order"
     },
     "notifications": {
+      "company": {
+        "active": "This device was registered for private mail alerts. Delivery depends on server and device connectivity.",
+        "denied": "Allow notifications for ZyndMail in your device settings.",
+        "description": "Get private new-mail alerts on this device.",
+        "section": "Content-free alerts for authorized personal and shared mailboxes.",
+        "title": "Company mail alerts",
+        "toggle": "Push notifications"
+      },
       "email": {
         "sound_channel_hint": "Sound and vibration for mail alerts are controlled by the Android notification channel: long-press a notification or open the system app settings."
       },

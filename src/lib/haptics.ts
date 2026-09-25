@@ -1,4 +1,4 @@
-import { Platform } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import * as Haptics from 'expo-haptics';
 
 // Tactile feedback helpers. Every call is fire-and-forget and swallows
@@ -9,16 +9,30 @@ import * as Haptics from 'expo-haptics';
 export type HapticKind = 'selection' | 'light' | 'medium' | 'heavy' | 'success' | 'warning' | 'error';
 
 let enabled = true;
+let lastFeedbackAt = -Infinity;
 
-/** Global kill switch (e.g. when the user disables animations). */
+/** Independent device preference; reduced motion does not disable touch feedback. */
 export function setHapticsEnabled(value: boolean): void {
   enabled = value;
 }
 
 export function haptic(kind: HapticKind = 'light'): void {
-  if (!enabled || Platform.OS === 'web') return;
+  if (!enabled || Platform.OS === 'web' || AppState.currentState !== 'active') return;
+  // Nested controls can reach the same action in one frame. Never stack pulses.
+  const now = Date.now();
+  if (now - lastFeedbackAt < 80) return;
+  lastFeedbackAt = now;
   let promise: Promise<void>;
   try {
+    if (Platform.OS === 'android') {
+      const effect = kind === 'selection' ? Haptics.AndroidHaptics.Segment_Tick
+        : kind === 'success' ? Haptics.AndroidHaptics.Confirm
+        : kind === 'error' || kind === 'warning' ? Haptics.AndroidHaptics.Reject
+        : kind === 'medium' || kind === 'heavy' ? Haptics.AndroidHaptics.Long_Press
+        : Haptics.AndroidHaptics.Context_Click;
+      void Haptics.performAndroidHapticsAsync(effect).catch(() => undefined);
+      return;
+    }
     switch (kind) {
       case 'selection':
         promise = Haptics.selectionAsync();

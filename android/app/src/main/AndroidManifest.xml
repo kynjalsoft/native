@@ -2,7 +2,6 @@
   <uses-permission android:name="android.permission.CAMERA"/>
   <uses-permission android:name="android.permission.INTERNET"/>
   <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
-  <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
   <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" tools:replace="android:maxSdkVersion"/>
   <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
   <uses-permission android:name="android.permission.RECORD_AUDIO" tools:node="remove"/>
@@ -15,10 +14,14 @@
     </intent>
   </queries>
   <application android:name=".MainApplication" android:label="@string/app_name" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:allowBackup="false" android:theme="@style/AppTheme" android:supportsRtl="true" android:enableOnBackInvokedCallback="false" android:fullBackupContent="@xml/secure_store_backup_rules" android:dataExtractionRules="@xml/secure_store_data_extraction_rules">
-    <meta-data android:name="expo.modules.updates.ENABLED" android:value="false"/>
+    <meta-data android:name="expo.modules.updates.ENABLED" android:value="true"/>
     <meta-data android:name="expo.modules.updates.ENABLE_BSDIFF_PATCH_SUPPORT" android:value="true"/>
     <meta-data android:name="expo.modules.updates.EXPO_UPDATES_CHECK_ON_LAUNCH" android:value="ALWAYS"/>
     <meta-data android:name="expo.modules.updates.EXPO_UPDATES_LAUNCH_WAIT_MS" android:value="0"/>
+    <meta-data android:name="expo.modules.updates.EXPO_UPDATE_URL" android:value="https://u.expo.dev/e9054c93-18de-4d6a-bc34-38c020130b82"/>
+    <meta-data android:name="expo.modules.updates.EXPO_RUNTIME_VERSION" android:value="@string/expo_runtime_version"/>
+    <meta-data android:name="expo.modules.updates.UPDATES_CONFIGURATION_REQUEST_HEADERS_KEY" android:value="{&quot;expo-channel-name&quot;:&quot;production&quot;}"/>
+    <meta-data android:name="com.google.firebase.messaging.default_notification_channel_id" android:value="mail-activity"/>
     <activity android:name=".MainActivity" android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|uiMode|smallestScreenSize|assetsPaths|locale|layoutDirection" android:launchMode="singleTask" android:windowSoftInputMode="adjustResize" android:theme="@style/Theme.App.SplashScreen" android:exported="true" android:screenOrientation="portrait">
       <intent-filter>
         <action android:name="android.intent.action.MAIN"/>
@@ -28,7 +31,7 @@
         <action android:name="android.intent.action.VIEW"/>
         <category android:name="android.intent.category.DEFAULT"/>
         <category android:name="android.intent.category.BROWSABLE"/>
-        <data android:scheme="bulwarkmobile"/>
+        <data android:scheme="zyndmail"/>
       </intent-filter>
       <intent-filter>
         <action android:name="android.intent.action.VIEW"/>
@@ -56,9 +59,11 @@
       </intent-filter>
     </activity>
     <service android:name=".BulwarkMessagingService" android:exported="false">
-      <intent-filter><action android:name="com.google.firebase.MESSAGING_EVENT"/></intent-filter>
+      <intent-filter>
+        <action android:name="com.google.firebase.MESSAGING_EVENT"/>
+      </intent-filter>
     </service>
+    <service android:name="expo.modules.notifications.service.ExpoFirebaseMessagingService" tools:node="remove"/>
     <service android:name=".BulwarkPushTaskService" android:exported="false"/>
-    <meta-data android:name="com.google.firebase.messaging.default_notification_channel_id" android:value="bulwark_mail"/>
   </application>
 </manifest>
