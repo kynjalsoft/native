@@ -1,48 +1,25 @@
-<div align="center">
+# ZyndMail
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/bulwarkmail/webmail/refs/heads/main/public/branding/Bulwark_Logo_with_Lettering_White_and_Color.svg" />
-  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/bulwarkmail/webmail/refs/heads/main/public/branding/Bulwark_Logo_with_Lettering_Dark_Color.svg" />
-  <img src="https://raw.githubusercontent.com/bulwarkmail/webmail/refs/heads/main/public/branding/Bulwark_Logo_with_Lettering_Dark_Color.svg" alt="Bulwark Webmail" width="280" />
-</picture>
+ZyndMail is the iOS and Android mail app for ZyndPay's company mail and, later, authorized customers using compatible JMAP servers. This repository is the mobile app's canonical source: [kynjalsoft/zyndmail](https://github.com/kynjalsoft/zyndmail). It is based on [Bulwark Native](https://github.com/bulwarkmail/native) and remains licensed under AGPL-3.0-only.
 
-</div>
+The app uses React Native and Expo SDK 57. Its production bundle and package ID are `io.zyndpay.mail`, its EAS project is `e9054c93-18de-4d6a-bc34-38c020130b82`, and production JavaScript updates use the `production` channel. Those identities are independent of the GitHub repository name.
 
-# Bulwark Mobile
-
-> **Beta - work in progress.** Many features are unfinished or rough. Expect bugs, missing functionality, and breaking changes between releases. Do not rely on this for primary email yet.
-
-React Native (Expo SDK 54) client for [Bulwark Webmail](https://github.com/bulwarkmail/webmail) - a JMAP-based mail, calendar, and contacts app.
-
-## What works today
-
-- Sign in to any JMAP server (e.g. Stalwart)
-- Multiple accounts
-- Email list, threads, compose
-- Calendar (basic)
-- Contacts (basic)
-- Push notifications via FCM relay
-- In-app sideload updates from GitHub Releases
-
-## What's missing or rough
-
-- iOS builds, but push notifications and client certificates are Android-only so far
-- S/MIME, plugins, themes - UI stubs only (filters & rules, the vacation responder and file storage are real implementations)
-- Calendar editing is partial; contacts editing is basic
-- No Play Store distribution yet (sideload APK from Releases); iOS ships via TestFlight
-
-## Run locally
+## Develop and validate
 
 ```bash
-npm install
+npm ci
+npm test
+npm run typecheck
+npm run i18n:check
 npx expo start
 ```
 
-Then press `a` for Android, `i` for iOS, or scan the QR with Expo Go.
+Expo Go does not include every native capability used by signed ZyndMail builds. Use an appropriate development or signed build for device behavior, especially notifications, biometrics and native attachments.
 
-For a release APK build see [.github/workflows/release-android.yml](.github/workflows/release-android.yml).
-For iOS builds and TestFlight distribution see [docs/ios-release.md](docs/ios-release.md).
+## Release and acceptance
 
-## License
+EAS Build produces the signed [iOS TestFlight and Android artifacts](docs/ios-release.md). EAS Update delivers compatible JavaScript and assets, but a new signed binary is required when the native runtime changes. See the [production migration and acceptance checklist](docs/zyndmail-production-release.md) before describing a feature as live on devices. The separate ZyndPay repository owns the mail server, webmail and push relay.
 
-AGPL-3.0-only. See [LICENSE](LICENSE).
+## License and upstream
+
+ZyndMail is based on Bulwark Native. Source attribution and the license link are available in the app's About screen. See [LICENSE](LICENSE) for the AGPL-3.0-only terms.
