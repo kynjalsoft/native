@@ -18,13 +18,14 @@ import { useUpdatesStore } from '../../stores/updates-store';
 import { runOfflineSync, formatBytes } from '../../lib/offline-sync';
 import { clearCachedData } from '../../lib/clear-cached-data';
 import { supportsSideloadUpdates } from '../../lib/platform-capabilities';
+import { UPDATE_REPO } from '../../api/updates';
 
 const APP_VERSION = Constants.expoConfig?.version ?? '0.0.0';
 const GIT_COMMIT = (Constants.expoConfig?.extra as { commit?: string } | undefined)?.commit ?? 'dev';
-const APP_STORE_URL = 'https://github.com/kynjalsoft/native/releases';
+const APP_STORE_URL = `https://github.com/${UPDATE_REPO}/releases`;
 const SOURCE_REF = /^[0-9a-f]{7,40}$/i.test(GIT_COMMIT) ? GIT_COMMIT : 'main';
-const SOURCE_URL = `https://github.com/kynjalsoft/native/tree/${SOURCE_REF}`;
-const LICENSE_URL = `https://github.com/kynjalsoft/native/blob/${SOURCE_REF}/LICENSE`;
+const SOURCE_URL = `https://github.com/${UPDATE_REPO}/tree/${SOURCE_REF}`;
+const LICENSE_URL = `https://github.com/${UPDATE_REPO}/blob/${SOURCE_REF}/LICENSE`;
 
 export function AboutDataSettings() {
   const c = useColors();

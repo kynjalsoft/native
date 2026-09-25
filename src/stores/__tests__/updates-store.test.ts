@@ -40,7 +40,7 @@ describe('update source migration', () => {
       cachedLatest: {
         tag: '99.0.0',
         name: 'Company release',
-        htmlUrl: 'https://github.com/kynjalsoft/native/releases/tag/99.0.0',
+        htmlUrl: 'https://github.com/kynjalsoft/zyndmail/releases/tag/99.0.0',
         apkAsset: { name: 'company.apk', browser_download_url: 'https://example.com/company.apk', size: 1 },
       },
       dismissedTag: null,

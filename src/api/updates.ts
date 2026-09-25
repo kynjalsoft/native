@@ -1,4 +1,4 @@
-export const UPDATE_REPO = 'kynjalsoft/native';
+export const UPDATE_REPO = 'kynjalsoft/zyndmail';
 
 export interface ReleaseAsset {
   name: string;
