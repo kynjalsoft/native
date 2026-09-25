@@ -77,6 +77,7 @@ import {
   resolveCompanyPush,
   revokeCompanyPush,
 } from './src/lib/company-push';
+import { openCompanyPushIntent } from './src/lib/company-push-intent';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<MainTabsParamList>();
@@ -298,6 +299,7 @@ function AppContent() {
     setUnlockError(null);
   }, [lockEnabled]);
   const [routeName, setRouteName] = React.useState<string | null>(null);
+  const [navigationReady, setNavigationReady] = React.useState(false);
   const [mailListBusy, setMailListBusy] = React.useState(true);
   const lastForegroundCheck = React.useRef(0);
   const lastReloadAttempt = React.useRef(0);
@@ -318,6 +320,27 @@ function AppContent() {
   // cached mail list instead of the "Restoring session" spinner; the real
   // JMAP session comes up in the background.
   const hasPersistedAccount = useAccountStore((state) => state.activeAccountId != null);
+  const accounts = useAccountStore((state) => state.accounts);
+  const [accountRegistryHydrated, setAccountRegistryHydrated] = React.useState(
+    () => useAccountStore.persist.hasHydrated(),
+  );
+  const appLockedRef = React.useRef(appLocked);
+  appLockedRef.current = appLocked;
+  const pendingCompanyPushResponses = React.useRef<Notifications.NotificationResponse[]>([]);
+  const handledCompanyPushResponses = React.useRef(new Set<string>());
+  const processingCompanyPush = React.useRef(false);
+  const companyPushRetryCount = React.useRef(0);
+  const [pendingCompanyPushRevision, setPendingCompanyPushRevision] = React.useState(0);
+  React.useEffect(() => {
+    if (useAccountStore.persist.hasHydrated()) {
+      setAccountRegistryHydrated(true);
+      return;
+    }
+    return useAccountStore.persist.onFinishHydration(() => setAccountRegistryHydrated(true));
+  }, []);
+  React.useEffect(() => {
+    if (!isAuthenticated) setNavigationReady(false);
+  }, [isAuthenticated]);
 
   const unlockMailbox = React.useCallback(async () => {
     if (!useSettingsStore.getState().appLockEnabled || unlockInFlight.current || updateReloadInFlight.current || AppState.currentState !== 'active') return;
@@ -640,7 +663,7 @@ function AppContent() {
     // The relay's PUT is idempotent for an unchanged mode and renews its lease.
     refresh(true);
     const stateSubscription = AppState.addEventListener('change', (state) => {
-      if (state === 'active') refresh();
+      if (state === 'active') refresh(true);
     });
     const tokenSubscription = Notifications.addPushTokenListener(() => refresh(true));
     const nativeTokenSubscription = addTokenRefreshListener(() => refresh(true));
@@ -651,52 +674,107 @@ function AppContent() {
     };
   }, [client, isAuthenticated, activeAccountId, emailNotificationsEnabled]);
 
-  // Keep the response pending through sign-in/Face ID. Resolve the opaque
-  // reference with current access before opening its exact mail account/message.
+  // Capture notification taps independently of auth and the optional app
+  // lock. Expo retains the cold-start response until it is explicitly cleared,
+  // while this queue covers taps received before session restoration ends.
   React.useEffect(() => {
-    if (!isAuthenticated || appLocked) return;
-    let cancelled = false;
-    let opening = false;
-    const openCompanyPush = async (response: Notifications.NotificationResponse | null) => {
-      if (opening || !response || !isCompanyPushPresentation(response.notification.request.content)) return;
-      opening = true;
-      try {
-        const accounts = useAccountStore.getState().accounts;
-        const companyAccount = accounts.find((account) => isCompanyMailServer(account.serverUrl));
-        if (!companyAccount) return;
-        if (useAuthStore.getState().activeAccountId !== companyAccount.id) {
-          await useAuthStore.getState().switchAccount(companyAccount.id);
-        }
-        if (cancelled || useAuthStore.getState().activeAccountId !== companyAccount.id) return;
-        const destination = await resolveCompanyPush(companyAccount.id, response.notification.request.content.data);
-        if (!cancelled && destination) {
-          // The auth gate can flip before NavigationContainer has mounted.
-          for (let attempt = 0; attempt < 20 && !cancelled && !navigationRef.isReady(); attempt++) {
-            await new Promise((resolve) => setTimeout(resolve, 100));
-          }
-          if (!cancelled && navigationRef.isReady() &&
-              useAuthStore.getState().isAuthenticated &&
-              useAuthStore.getState().activeAccountId === companyAccount.id) {
-            if (destination.target === 'EMAIL') {
-              navigationRef.navigate('EmailThread', {
-                emailId: destination.emailId, threadId: destination.threadId,
-                jmapAccountId: destination.accountId, emailIds: [destination.emailId],
-              });
-            } else {
-              navigationRef.navigate('UnifiedInbox');
-            }
-            await Notifications.clearLastNotificationResponseAsync();
-          }
-        }
-      } finally { opening = false; }
+    const capture = (response: Notifications.NotificationResponse | null) => {
+      if (!response || !isCompanyPushPresentation(response.notification.request.content)) return;
+      const identifier = response.notification.request.identifier;
+      if (handledCompanyPushResponses.current.has(identifier)) return;
+      const pending = pendingCompanyPushResponses.current;
+      if (!pending.some((item) => item.notification.request.identifier === identifier)) {
+        pending.push(response);
+        if (pending.length > 10) pending.shift();
+      }
+      // A user can tap again after a transient resolve failure. Keep the tap
+      // actionable even when Expo re-delivers the same response identifier.
+      companyPushRetryCount.current = 0;
+      setPendingCompanyPushRevision((revision) => revision + 1);
     };
-    void Notifications.getLastNotificationResponseAsync()
-      .then((response) => openCompanyPush(response)).catch(() => undefined);
-    const listener = Notifications.addNotificationResponseReceivedListener((response) => {
-      void openCompanyPush(response).catch(() => undefined);
+    void Notifications.getLastNotificationResponseAsync().then(capture).catch(() => undefined);
+    const listener = Notifications.addNotificationResponseReceivedListener(capture);
+    return () => listener.remove();
+  }, []);
+
+  // Resolve only after account storage, auth, unlock, and navigation are ready.
+  // Relay failures retain the tap and retry, instead of clearing Expo's saved
+  // response or leaving the user on an unrelated screen.
+  React.useEffect(() => {
+    const response = pendingCompanyPushResponses.current[0];
+    if (!response || !isAuthenticated || appLocked || !accountRegistryHydrated ||
+        !navigationReady || !navigationRef.isReady() || processingCompanyPush.current) return;
+
+    processingCompanyPush.current = true;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    const identifier = response.notification.request.identifier;
+    void openCompanyPushIntent({
+      response,
+      readReadiness: () => ({
+        authenticated: useAuthStore.getState().isAuthenticated,
+        locked: appLockedRef.current,
+        accountRegistryHydrated: useAccountStore.persist.hasHydrated(),
+        navigationReady: navigationRef.isReady(),
+        activeAccountId: useAuthStore.getState().activeAccountId,
+        accounts: useAccountStore.getState().accounts,
+      }),
+      isCompanyMailServer,
+      isCompanyPushPresentation: (content) =>
+        isCompanyPushPresentation(content as Notifications.NotificationContent),
+      switchAccount: (accountId) => useAuthStore.getState().switchAccount(accountId),
+      resolveDestination: resolveCompanyPush,
+      navigateToEmail: (destination) => navigationRef.navigate('EmailThread', {
+        emailId: destination.emailId,
+        threadId: destination.threadId,
+        jmapAccountId: destination.accountId,
+        emailIds: [destination.emailId],
+      }),
+      navigateToInbox: () => navigationRef.navigate('UnifiedInbox'),
+      showInboxFallback: () => Alert.alert(
+        useLocaleStore.getState().t('error'),
+        useLocaleStore.getState().t(
+          'notification_link_unavailable',
+          'This notification cannot open a single email. Search your inbox to find the message.',
+        ),
+      ),
+      clearLastNotificationResponse: Notifications.clearLastNotificationResponseAsync,
+    }).then((result) => {
+      if (result === 'opened' || result === 'ignored') {
+        handledCompanyPushResponses.current.add(identifier);
+        if (handledCompanyPushResponses.current.size > 30) {
+          const oldest = handledCompanyPushResponses.current.values().next().value;
+          if (oldest) handledCompanyPushResponses.current.delete(oldest);
+        }
+        pendingCompanyPushResponses.current = pendingCompanyPushResponses.current
+          .filter((item) => item.notification.request.identifier !== identifier);
+        companyPushRetryCount.current = 0;
+        setPendingCompanyPushRevision((revision) => revision + 1);
+      } else if (result === 'retry') {
+        const attempts = ++companyPushRetryCount.current;
+        if (attempts <= 4) {
+          retryTimer = setTimeout(() => {
+            setPendingCompanyPushRevision((revision) => revision + 1);
+          }, [1_000, 3_000, 10_000, 30_000][attempts - 1]);
+        } else {
+          companyPushRetryCount.current = 0;
+          Alert.alert(
+            useLocaleStore.getState().t('error'),
+            useLocaleStore.getState().t(
+              'notification_open_retry',
+              'ZyndMail could not verify this email link. Check your connection, then tap the notification again.',
+            ),
+          );
+        }
+      }
+    }).finally(() => {
+      processingCompanyPush.current = false;
     });
-    return () => { cancelled = true; listener.remove(); };
-  }, [isAuthenticated, appLocked]);
+
+    return () => {
+      if (retryTimer) clearTimeout(retryTimer);
+    };
+  }, [pendingCompanyPushRevision, isAuthenticated, appLocked, accountRegistryHydrated,
+    navigationReady, accounts, activeAccountId, appIsActive]);
 
   // Live updates (SSE with polling fallback), re-armed on every account
   // switch and every re-established session — the singleton `client` object
@@ -852,7 +930,10 @@ function AppContent() {
     <View style={{ flex: 1 }}>
     <NavigationContainer
       ref={navigationRef}
-      onReady={() => setRouteName(navigationRef.getCurrentRoute()?.name ?? null)}
+      onReady={() => {
+        setNavigationReady(true);
+        setRouteName(navigationRef.getCurrentRoute()?.name ?? null);
+      }}
       onStateChange={() => setRouteName(navigationRef.getCurrentRoute()?.name ?? null)}
     >
       <StatusBar style={statusBarStyle} />
