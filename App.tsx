@@ -634,7 +634,11 @@ function AppContent() {
       return;
     }
     const refresh = (force = false) => { void registerCompanyPush(activeAccountId, false, force); };
-    refresh();
+    // Reconcile the server on every cold start. A local cache can say that
+    // previews are enabled while Stalwart still has an older generic
+    // subscription (for example after an OTA or a relay-side migration).
+    // The relay's PUT is idempotent for an unchanged mode and renews its lease.
+    refresh(true);
     const stateSubscription = AppState.addEventListener('change', (state) => {
       if (state === 'active') refresh();
     });

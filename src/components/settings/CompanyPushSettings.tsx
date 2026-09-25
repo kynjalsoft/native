@@ -23,8 +23,14 @@ export function CompanyPushSettings(): React.ReactElement {
     const refresh = () => {
       if (!accountId) return;
       const request = ++statusRequest.current;
-      void companyPushStatus(accountId)
-        .then((next) => { if (current && request === statusRequest.current) setStatus(next); })
+      void (async () => {
+        let next = await companyPushStatus(accountId);
+        // Opening Notifications is an explicit opportunity to repair a stale
+        // local registration. Do not show ACTIVE until the relay has accepted
+        // the current preview preference for this device.
+        if (next.status === 'ACTIVE') next = await registerCompanyPush(accountId, false, true);
+        if (current && request === statusRequest.current) setStatus(next);
+      })()
         .catch(() => { if (current && request === statusRequest.current) setStatus({ status: 'ERROR', reason: 'Mail notification status could not be read.' }); });
     };
     refresh();

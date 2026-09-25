@@ -92,6 +92,26 @@ describe('company Expo push boundary', () => {
     expect(fetchMock.mock.calls.at(-1)?.[1].method).toBe('DELETE');
   });
 
+  it('force-renews a fresh local registration so a stale server subscription is upgraded', async () => {
+    records.set('zyndmail.production.push.preference.v1', 'staff-subject');
+    records.set('zyndmail.production.push.registration.v1', JSON.stringify({
+      subject: 'staff-subject', registrationId: 'registration-1', renewedAt: Date.now(),
+      routingVersion: 3, previews: true,
+    }));
+    const fetchMock = vi.fn(async (url: string, init: RequestInit) => ({
+      ok: true, status: 200,
+      json: async () => url.includes('/v1/push-health?')
+        ? { status: 'ok' } : { registrationId: 'registration-1' },
+      request: init.body ? JSON.parse(init.body as string) : null,
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    expect(await registerCompanyPush(accountId, false, true)).toEqual({ status: 'ACTIVE' });
+    const registration = fetchMock.mock.calls.find(([, request]) => request.method === 'PUT');
+    expect(registration).toBeDefined();
+    expect(JSON.parse(registration![1].body as string).previews).toBe(true);
+  });
+
   it('does not invite or request notification permission when the production relay redirects to webmail', async () => {
     const fetchMock = vi.fn(async () => { throw new TypeError('FetchRedirectException: Redirect is not allowed'); });
     vi.stubGlobal('fetch', fetchMock);
