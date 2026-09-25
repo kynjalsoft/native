@@ -19,7 +19,6 @@ import { useColors, useResolvedTheme } from '../theme/colors';
 import { MoveSheet } from '../components/MoveSheet';
 import { MessageContent } from '../components/email/MessageContent';
 import { ThreadMessageCard } from '../components/email/ThreadMessageCard';
-import { QuickReplyBox } from '../components/email/QuickReplyBox';
 import { AddressActionSheet } from '../components/email/AddressActionSheet';
 import { useEmailStore } from '../stores/email-store';
 import {
@@ -451,7 +450,7 @@ export default function EmailThreadScreen({ route, navigation }: Props) {
   };
 
   // Reply / forward the given message (a thread card's own, or the active one).
-  const navigateCompose = React.useCallback((mode: 'reply' | 'replyAll' | 'forward', target?: Email, draft?: string) => {
+  const navigateCompose = React.useCallback((mode: 'reply' | 'replyAll' | 'forward', target?: Email) => {
     const source = target ?? email;
     if (!source) return;
     const from = source.from?.[0];
@@ -466,7 +465,6 @@ export default function EmailThreadScreen({ route, navigation }: Props) {
     const body = !quoteHtml || picked.text ? plainTextBody(source) : undefined;
     navigation.navigate('Compose', {
       mode,
-      prefillBody: draft,
       replyTo: {
         from: from ?? { email: '' },
         to: source.to,
@@ -847,7 +845,7 @@ interface EmailPaneProps {
   onToggleStar: (email: Email) => void;
   onAddressPress: (address: EmailAddress) => void;
   onEmailPatched: (email: Email) => void;
-  onReply: (mode: 'reply' | 'replyAll' | 'forward', email: Email, draft?: string) => void;
+  onReply: (mode: 'reply' | 'replyAll' | 'forward', email: Email) => void;
   onSwipe: (direction: 'prev' | 'next') => void;
   onZoomChange: (zoom: { pinching: boolean; zoomed: boolean }) => void;
 }
@@ -939,7 +937,6 @@ function EmailPane({
   }
 
   const subject = email.subject || t('email_viewer.no_subject', '(No Subject)');
-  const newest = conversation ? conversation[conversation.length - 1] : email;
   // Raw JMAP mailbox ids may collide across shared accounts. Interpret each
   // message only against the folders of the account that owns this pane.
   const accountMailboxes = mailboxes.filter((mailbox) =>
@@ -1030,13 +1027,6 @@ function EmailPane({
         )}
 
       </ScrollView>
-      {/* Keep the editor mounted outside the message scroller as the keyboard resizes it. */}
-      <QuickReplyBox
-        email={newest}
-        jmapAccountId={jmapAccountId}
-        onMoreOptions={(draft) => onReply('reply', newest, draft)}
-        onSent={onEmailPatched}
-      />
     </View>
   );
 }

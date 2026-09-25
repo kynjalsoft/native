@@ -544,8 +544,7 @@ export default function ComposeScreen({ route, navigation }: Props) {
           ? `<div>${escapeHtml(prefillBody).replace(/\r?\n/g, '<br>')}</div><p><br></p>`
           : '<p><br></p>';
       }
-      // Quick reply "More options" hands the typed text over as prefillBody;
-      // it goes above the quote.
+      // Place any supplied text above the quoted message.
       const typed = prefillBody
         ? `<div>${escapeHtml(prefillBody).replace(/\r?\n/g, '<br>')}</div>`
         : '';
