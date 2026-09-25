@@ -9,6 +9,7 @@ import { CAPABILITIES } from './types';
 import { generateAccountId } from '../lib/account-utils';
 import { secureFetch } from '../lib/client-cert';
 import {
+  HandoffError,
   refreshOAuthAccessToken,
   TransientRefreshError,
   type OAuthTokens,
@@ -39,6 +40,10 @@ const TRANSIENT_RETRY_DELAY_MS = 1000;
 
 const LEGACY_CREDENTIALS_KEY = 'jmap_credentials';
 const CREDENTIALS_PREFIX = 'jmap_credentials__';
+// Foreground, detached-inbox and push consumers in this JS runtime share one
+// rotation per account. Deduping only the HTTP request by token does not
+// protect the later SecureStore read/write.
+const credentialRenewals = new Map<string, Promise<StoredCredentials | null>>();
 
 // SecureStore keys: letters, digits, ".", "-", "_" only - no "@" or "/".
 function credentialsKey(accountId: string): string {
@@ -404,8 +409,14 @@ export class JMAPClient {
     if (tokens.expiresAt == null) return;
     if (tokens.expiresAt - Date.now() > TOKEN_REFRESH_LEEWAY_MS) return;
     try {
-      const next = await refreshOAuthAccessToken(tokens);
-      await this.persistRefreshedTokens(next, original!);
+      const accountId = original?.username
+        ? generateAccountId(original.username, original.serverUrl) : null;
+      if (accountId && await this.getStoredCredentials(accountId)) {
+        await this.refreshStoredOAuthCredentials(accountId, original!, false);
+      } else {
+        const next = await refreshOAuthAccessToken(tokens);
+        await this.persistRefreshedTokens(next, original!);
+      }
     } catch {
       // Surface as AuthenticationError on the next 401; refresh may be
       // temporarily failing (network) and the reactive retry path catches it.
@@ -422,6 +433,11 @@ export class JMAPClient {
     const tokens = this.currentOAuthTokens();
     if (!tokens) return false;
     try {
+      const accountId = original?.username
+        ? generateAccountId(original.username, original.serverUrl) : null;
+      if (accountId && await this.getStoredCredentials(accountId)) {
+        return !!(await this.refreshStoredOAuthCredentials(accountId, original!, true));
+      }
       const next = await refreshOAuthAccessToken(tokens);
       await this.persistRefreshedTokens(next, original!);
       return true;
@@ -663,6 +679,7 @@ export class JMAPClient {
     });
 
     let response: Response;
+    let attemptedAuth = this.authHeader;
     try {
       response = await this.timedFetch(url, withAuth(), timeoutMs);
     } catch (error) {
@@ -673,6 +690,7 @@ export class JMAPClient {
       // Transient proxy/connection blip: one retry after a short pause.
       await new Promise((r) => setTimeout(r, TRANSIENT_RETRY_DELAY_MS));
       try {
+        attemptedAuth = this.authHeader;
         response = await this.timedFetch(url, withAuth(), timeoutMs);
       } catch (retryError) {
         if (retryError instanceof RequestTimeoutError) throw retryError;
@@ -680,7 +698,10 @@ export class JMAPClient {
       }
     }
 
-    if (response.status === 401 && (await this.forceRefreshToken())) {
+    // A background task may rotate the bearer while this request is in
+    // flight. Retry with that already-issued token before consuming another
+    // single-use refresh token or reporting a false session expiry.
+    if (response.status === 401 && (this.authHeader !== attemptedAuth || await this.forceRefreshToken())) {
       try {
         response = await this.timedFetch(url, withAuth(), timeoutMs);
       } catch (error) {
@@ -765,9 +786,23 @@ export class JMAPClient {
     // Stalwart answers 200 with an empty session (no accounts) for missing or
     // invalid credentials rather than a 401. Surface that as an auth failure
     // so the user sees "Invalid credentials" instead of "No account found".
-    const hasAccount =
+    let hasAccount =
       Object.keys(session.primaryAccounts ?? {}).length > 0 ||
       Object.keys(session.accounts ?? {}).length > 0;
+    if (!hasAccount && this.currentOAuthTokens() && await this.forceRefreshToken()) {
+      // Some JMAP servers answer 200 with an empty account list rather than
+      // 401 for an expired bearer. One renewed discovery is required before
+      // declaring the user's saved session invalid.
+      response = await fetchSessionDoc();
+      if (response.status === 401) throw new AuthenticationError('Invalid credentials');
+      if (!response.ok) throw new Error(`Session discovery failed: ${response.status} ${response.statusText}`);
+      session = (await response.json()) as JMAPSession;
+      if (!fetchSessionDescribes(session)) {
+        throw new Error('Session discovery failed: response is not a JMAP session');
+      }
+      hasAccount = Object.keys(session.primaryAccounts ?? {}).length > 0 ||
+        Object.keys(session.accounts ?? {}).length > 0;
+    }
     if (!hasAccount) {
       throw new AuthenticationError('Invalid credentials');
     }
@@ -1030,6 +1065,88 @@ export class JMAPClient {
     if (this.credentials && generateAccountId(this.credentials.username, this.credentials.serverUrl) === accountId) {
       this.credentials = creds;
     }
+  }
+
+  /** Renew against the latest stored token, serializing rotation and persistence. */
+  async refreshStoredOAuthCredentials(
+    accountId: string,
+    observed?: StoredCredentials,
+    force = false,
+  ): Promise<StoredCredentials | null> {
+    let renewal = credentialRenewals.get(accountId);
+    const joinedExistingRenewal = !!renewal;
+    if (!renewal) {
+      renewal = (async () => {
+        const current = await this.getStoredCredentials(accountId);
+        if (!current) return null;
+        const changed = (value: StoredCredentials) => observed && (
+          value.accessToken !== observed.accessToken || value.refreshToken !== observed.refreshToken
+        );
+        if (changed(current)) return current;
+        if (!current.accessToken || !current.refreshToken || !current.tokenEndpoint || !current.clientId) return null;
+        if (!force && current.expiresAt != null && current.expiresAt - Date.now() > TOKEN_REFRESH_LEEWAY_MS) {
+          return current;
+        }
+        try {
+          const next = await refreshOAuthAccessToken({
+            accessToken: current.accessToken,
+            refreshToken: current.refreshToken,
+            expiresAt: current.expiresAt,
+            tokenEndpoint: current.tokenEndpoint,
+            clientId: current.clientId,
+            source: current.tokenSource,
+            companyIdentity: current.companyIdentity,
+          });
+          const latest = await this.getStoredCredentials(accountId);
+          if (!latest) return null; // signed out while the endpoint was responding
+          if (latest.accessToken !== current.accessToken || latest.refreshToken !== current.refreshToken) {
+            return latest; // another sign-in or runtime already changed the token
+          }
+          const updated: StoredCredentials = {
+            ...latest,
+            accessToken: next.accessToken,
+            refreshToken: next.refreshToken ?? latest.refreshToken,
+            expiresAt: next.expiresAt,
+            tokenEndpoint: next.tokenEndpoint,
+            clientId: next.clientId,
+            companyIdentity: next.companyIdentity,
+          };
+          await this.setStoredCredentials(accountId, updated);
+          return updated;
+        } catch (error) {
+          // A headless task may use another JS runtime. If its refresh won,
+          // an invalid_grant for our now-spent token can arrive just before
+          // that runtime writes the replacement to SecureStore.
+          const collision = error instanceof HandoffError && /^Token refresh failed: (400|401|403)$/.test(error.message);
+          for (const delay of collision ? [0, 250, 500] : [0]) {
+            if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+            const latest = await this.getStoredCredentials(accountId);
+            if (latest && (latest.accessToken !== current.accessToken || latest.refreshToken !== current.refreshToken)) {
+              return latest;
+            }
+          }
+          throw error;
+        }
+      })();
+      credentialRenewals.set(accountId, renewal);
+      void renewal.finally(() => {
+        if (credentialRenewals.get(accountId) === renewal) credentialRenewals.delete(accountId);
+      }).catch(() => undefined);
+    }
+    const updated = await renewal;
+    if (updated && this.credentials &&
+        generateAccountId(this.credentials.username, this.credentials.serverUrl) === accountId &&
+        (!observed || this.credentials.refreshToken === observed.refreshToken)) {
+      this.credentials = updated;
+    }
+    if (force && joinedExistingRenewal && updated && observed &&
+        updated.accessToken === observed.accessToken && updated.refreshToken === observed.refreshToken) {
+      // A concurrent proactive check may have decided the token was still
+      // fresh, while this caller just received a 401. It must now force a
+      // real renewal rather than replaying the rejected bearer.
+      return this.refreshStoredOAuthCredentials(accountId, updated, true);
+    }
+    return updated;
   }
 
   // ── Blob Download ─────────────────────────────────────

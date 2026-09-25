@@ -4,7 +4,6 @@ import { jmapClient, type StoredCredentials } from '../api/jmap-client';
 import { CAPABILITIES } from '../api/types';
 import type { Email, JMAPMethodCall, JMAPSession, Mailbox } from '../api/types';
 import { secureFetch } from './client-cert';
-import { refreshOAuthAccessToken, type OAuthTokens } from './oauth';
 import {
   generateEmailAvatarColor,
   getEmailInitials,
@@ -245,29 +244,7 @@ async function ensureFreshCredentials(
   }
   if (creds.expiresAt - Date.now() > TOKEN_REFRESH_LEEWAY_MS) return creds;
   try {
-    const tokens: OAuthTokens = {
-      accessToken: creds.accessToken,
-      refreshToken: creds.refreshToken,
-      expiresAt: creds.expiresAt,
-      tokenEndpoint: creds.tokenEndpoint,
-      clientId: creds.clientId,
-      companyIdentity: creds.companyIdentity,
-    };
-    const next = await refreshOAuthAccessToken(tokens);
-    const updated: StoredCredentials = {
-      ...creds,
-      accessToken: next.accessToken,
-      refreshToken: next.refreshToken ?? creds.refreshToken,
-      expiresAt: next.expiresAt,
-      tokenEndpoint: next.tokenEndpoint,
-      clientId: next.clientId,
-    };
-    const current = await jmapClient.getStoredCredentials(accountId);
-    if (!current || current.accessToken !== updated.accessToken ||
-        current.refreshToken !== updated.refreshToken || current.expiresAt !== updated.expiresAt) {
-      await jmapClient.setStoredCredentials(accountId, updated);
-    }
-    return updated;
+    return await jmapClient.refreshStoredOAuthCredentials(accountId, creds) ?? creds;
   } catch {
     return creds;
   }

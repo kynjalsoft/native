@@ -351,3 +351,122 @@ it('persists a rotated refresh token even when the access token is unchanged', a
   expect((await client.getStoredOAuthTokens(accountId))?.refreshToken).toBe('rotated-refresh');
   refresh.mockRestore();
 });
+
+it('serializes foreground and background renewal of one rotating token', async () => {
+  const oauth = await import('../../lib/oauth');
+  const store = new Map<string, string>();
+  vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => { store.set(key, value); });
+  vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => store.get(key) ?? null);
+  global.fetch = mockFetch([{ status: 200, json: MOCK_SESSION }]) as any;
+  const client = new JMAPClient();
+  const tokens = { accessToken: 'old-access', refreshToken: 'old-refresh', expiresAt: Date.now() - 1000,
+    tokenEndpoint: 'https://auth.example.com/token', clientId: 'mobile' };
+  const { accountId } = await client.connectWithOAuth('https://mail.example.com', tokens);
+  const observed = (await client.getStoredCredentials(accountId))!;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const refresh = vi.spyOn(oauth, 'refreshOAuthAccessToken').mockImplementation(async () => {
+    await gate;
+    return { ...tokens, accessToken: 'new-access', refreshToken: 'new-refresh', expiresAt: Date.now() + 3600000 };
+  });
+
+  const foreground = client.ensureFreshToken();
+  const background = client.refreshStoredOAuthCredentials(accountId, observed, true);
+  release();
+  await Promise.all([foreground, background]);
+
+  expect(refresh).toHaveBeenCalledTimes(1);
+  expect(client.authHeader).toBe('Bearer new-access');
+  expect((await client.getStoredOAuthTokens(accountId))?.refreshToken).toBe('new-refresh');
+  expect((await client.refreshStoredOAuthCredentials(accountId, observed, true))?.refreshToken).toBe('new-refresh');
+  expect(refresh).toHaveBeenCalledTimes(1);
+  refresh.mockRestore();
+});
+
+it('retries an in-flight 401 with a token rotated by a background task', async () => {
+  const oauth = await import('../../lib/oauth');
+  const store = new Map<string, string>();
+  vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => { store.set(key, value); });
+  vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => store.get(key) ?? null);
+  global.fetch = mockFetch([{ status: 200, json: MOCK_SESSION }]) as any;
+  const client = new JMAPClient();
+  const { accountId } = await client.connectWithOAuth('https://mail.example.com', {
+    accessToken: 'old-access', refreshToken: 'old-refresh', expiresAt: Date.now() + 3600000,
+    tokenEndpoint: 'https://auth.example.com/token', clientId: 'mobile',
+  });
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let started!: () => void;
+  const firstRequest = new Promise<void>((resolve) => { started = resolve; });
+  const calls: string[] = [];
+  global.fetch = vi.fn(async (_url, init) => {
+    const auth = (init as RequestInit).headers as Record<string, string>;
+    calls.push(auth.Authorization);
+    if (auth.Authorization === 'Bearer old-access') {
+      started();
+      await gate;
+      return { status: 401, ok: false, headers: { get: () => null } } as unknown as Response;
+    }
+    return { status: 200, ok: true, headers: { get: () => null } } as unknown as Response;
+  }) as any;
+  const refresh = vi.spyOn(oauth, 'refreshOAuthAccessToken');
+  const request = client.authenticatedFetch('https://mail.example.com/jmap/');
+  await firstRequest;
+  const original = (await client.getStoredCredentials(accountId))!;
+  await client.setStoredCredentials(accountId, { ...original, accessToken: 'new-access', refreshToken: 'new-refresh' });
+  release();
+  expect((await request).status).toBe(200);
+  expect(calls).toEqual(['Bearer old-access', 'Bearer new-access']);
+  expect(refresh).not.toHaveBeenCalled();
+  refresh.mockRestore();
+});
+
+it('renews an OAuth session when discovery returns a successful but empty document', async () => {
+  const oauth = await import('../../lib/oauth');
+  const store = new Map<string, string>();
+  vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => { store.set(key, value); });
+  vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => store.get(key) ?? null);
+  const oldTokens = { accessToken: 'old-access', refreshToken: 'old-refresh', expiresAt: Date.now() + 3600000,
+    tokenEndpoint: 'https://auth.example.com/token', clientId: 'mobile' };
+  global.fetch = mockFetch([{ status: 200, json: MOCK_SESSION }]) as any;
+  const client = new JMAPClient();
+  const { accountId } = await client.connectWithOAuth('https://mail.example.com', oldTokens);
+  global.fetch = mockFetch([
+    { status: 200, json: { ...MOCK_SESSION, accounts: {}, primaryAccounts: {} } },
+    { status: 200, json: MOCK_SESSION },
+  ]) as any;
+  const refresh = vi.spyOn(oauth, 'refreshOAuthAccessToken').mockResolvedValue({
+    ...oldTokens, accessToken: 'new-access', refreshToken: 'new-refresh',
+  });
+  expect(await client.loadAccount(accountId)).toBe(true);
+  expect(client.authHeader).toBe('Bearer new-access');
+  expect(refresh).toHaveBeenCalledTimes(1);
+  refresh.mockRestore();
+});
+
+it('keeps the rotated credential when another runtime saves it just after invalid_grant', async () => {
+  const oauth = await import('../../lib/oauth');
+  const store = new Map<string, string>();
+  vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => { store.set(key, value); });
+  vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => store.get(key) ?? null);
+  global.fetch = mockFetch([{ status: 200, json: MOCK_SESSION }]) as any;
+  const client = new JMAPClient();
+  const { accountId } = await client.connectWithOAuth('https://mail.example.com', {
+    accessToken: 'old-access', refreshToken: 'old-refresh', expiresAt: Date.now() - 1000,
+    tokenEndpoint: 'https://auth.example.com/token', clientId: 'mobile',
+  });
+  const observed = (await client.getStoredCredentials(accountId))!;
+  const refresh = vi.spyOn(oauth, 'refreshOAuthAccessToken').mockRejectedValue(new oauth.HandoffError('Token refresh failed: 400'));
+  const otherRuntime = new Promise<void>((resolve) => setTimeout(() => {
+    void client.setStoredCredentials(accountId, {
+      ...observed, accessToken: 'new-access', refreshToken: 'new-refresh', expiresAt: Date.now() + 3600000,
+    }).then(resolve);
+  }, 30));
+
+  const recovered = await client.refreshStoredOAuthCredentials(accountId, observed, true);
+  await otherRuntime;
+  expect(recovered?.refreshToken).toBe('new-refresh');
+  expect(client.authHeader).toBe('Bearer new-access');
+  expect(refresh).toHaveBeenCalledTimes(1);
+  refresh.mockRestore();
+});

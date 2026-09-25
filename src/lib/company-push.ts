@@ -6,7 +6,6 @@ import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 import { jmapClient } from '../api/jmap-client';
 import { generateAccountId } from './account-utils';
-import { refreshOAuthAccessToken } from './oauth';
 import { isCompanyMailServer, validateCompanyAccessToken, ZYNDMAIL_COMPANY } from './zyndmail-company';
 
 const INSTALLATION_KEY = 'zyndmail.production.push.installation.v1';
@@ -154,11 +153,10 @@ async function storedCompanySession(accountId: string): Promise<{ subject: strin
   if (!tokens?.companyIdentity || tokens.clientId !== ZYNDMAIL_COMPANY.clientId) return null;
   const expectedSubject = tokens.companyIdentity.subject;
   if (tokens.expiresAt && tokens.expiresAt < Date.now() + 60_000) {
-    tokens = await refreshOAuthAccessToken(tokens);
-    await jmapClient.setStoredCredentials(accountId, {
-      ...credentials, accessToken: tokens.accessToken, refreshToken: tokens.refreshToken,
-      expiresAt: tokens.expiresAt,
-    });
+    const updated = await jmapClient.refreshStoredOAuthCredentials(accountId, credentials);
+    if (!updated) return null;
+    tokens = await jmapClient.getStoredOAuthTokens(accountId);
+    if (!tokens) return null;
   }
   const identity = validateCompanyAccessToken(tokens.accessToken, expectedSubject);
   return { subject: identity.subject, bearer: tokens.accessToken };
