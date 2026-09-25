@@ -10,6 +10,7 @@ import { useSheetDrag } from '../lib/use-sheet-drag';
 import type { Identity } from '../api/types';
 import { useLocaleStore } from '../stores/locale-store';
 import { haptic } from '../lib/haptics';
+import { identityPickerDisplayName } from '../lib/outbound-sender';
 
 interface IdentitySheetProps {
   visible: boolean;
@@ -69,9 +70,13 @@ export function IdentitySheet({
         <ScrollView style={styles.scrollList}>
           {identities.map((identity) => {
             const isSelected = identity.id === selectedIdentityId;
+            const displayName = identityPickerDisplayName(identity);
             return (
               <Pressable
                 key={identity.id}
+                accessibilityRole="button"
+                accessibilityState={{ selected: isSelected }}
+                accessibilityLabel={`${displayName || identity.email}, ${identity.email}`}
                 onPress={() => {
                   if (!isSelected) haptic('selection');
                   onPick(identity);
@@ -86,12 +91,12 @@ export function IdentitySheet({
                   <Mail size={16} color={isSelected ? c.primary : c.textSecondary} />
                 </View>
                 <View style={styles.identityDetails}>
-                  {!!identity.name && (
+                  {!!displayName && (
                     <Text style={styles.identityName} numberOfLines={1}>
-                      {identity.name}
+                      {displayName}
                     </Text>
                   )}
-                  <Text style={[styles.identityEmail, !identity.name && styles.identityEmailOnly]} numberOfLines={1}>
+                  <Text style={[styles.identityEmail, !displayName && styles.identityEmailOnly]} numberOfLines={1}>
                     {identity.email}
                   </Text>
                 </View>

@@ -2,6 +2,7 @@
 // webmail's lib/reply-identity.ts.
 
 import type { Identity } from '../api/types';
+import { identityPickerDisplayName } from './outbound-sender';
 
 interface ReplyRecipient {
   email?: string | null;
@@ -128,6 +129,15 @@ export function findDraftIdentityId(
   if (nameAndEmail) {
     return nameAndEmail.id;
   }
+
+  // Governed From names are saved in drafts. Only use the visible name to
+  // restore an identity when that name uniquely identifies one candidate;
+  // shared role labels may intentionally be identical across delegates.
+  const brandedMatches = identities.filter(
+    (i) => normalizeEmailAddress(i.email) === wantEmail
+      && identityPickerDisplayName(i) === wantName,
+  );
+  if (brandedMatches.length === 1) return brandedMatches[0].id;
 
   const exact = identities.find((i) => normalizeEmailAddress(i.email) === wantEmail);
   if (exact) {

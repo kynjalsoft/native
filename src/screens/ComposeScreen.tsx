@@ -68,7 +68,7 @@ import {
 import {
   generateSubAddress, extractDomain, suggestTagsForDomain, getTagValidationError, MAX_TAG_LENGTH,
 } from '../lib/sub-addressing';
-import { sanitizeDisplayName } from '../lib/rfc5322-mailbox';
+import { resolveOutboundSender } from '../lib/outbound-sender';
 import type { EmailAddress, Identity } from '../api/types';
 import type { RootStackParamList } from '../navigation/types';
 
@@ -1118,19 +1118,7 @@ export default function ComposeScreen({ route, navigation }: Props) {
   // ── Outgoing message assembly ─────────────────────────────────────────
 
   const senderAddress = React.useCallback((identity: Identity): { from: EmailAddress; envelopeMailFrom?: string } => {
-    const name = sanitizeDisplayName(identity.name);
-    let from: EmailAddress;
-    if (fromOverride?.email.trim()) {
-      const overrideName = sanitizeDisplayName(fromOverride.name);
-      from = overrideName ? { name: overrideName, email: fromOverride.email.trim() } : { email: fromOverride.email.trim() };
-    } else {
-      const email = subAddressTag ? generateSubAddress(identity.email, subAddressTag, subAddressDelimiter) : identity.email;
-      from = name ? { name, email } : { email };
-    }
-    // A From that isn't the identity's own address still goes out through
-    // the identity's envelope sender.
-    const envelopeMailFrom = from.email.toLowerCase() !== identity.email.toLowerCase() ? identity.email : undefined;
-    return { from, envelopeMailFrom };
+    return resolveOutboundSender(identity, { fromOverride, subAddressTag, subAddressDelimiter });
   }, [fromOverride, subAddressTag, subAddressDelimiter]);
 
   const buildOutgoing = React.useCallback((identity: Identity, liveHtml: string, opts: { forDraft: boolean }): OutgoingEmail => {

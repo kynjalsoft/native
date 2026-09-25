@@ -35,6 +35,14 @@ describe('findDraftIdentityId', () => {
     expect(findDraftIdentityId(identities, { email: 'me@example.com', name: 'Alias' })).toBe('alias');
     expect(findDraftIdentityId(identities, { email: 'me@example.com', name: 'Someone' })).toBe('main');
   });
+
+  it('restores a uniquely branded HQ personal identity from a saved draft', () => {
+    const company = [
+      { id: 'main', name: 'Alex Doe', email: 'alex@zyndpay.io' },
+      { id: 'alias', name: 'Alex Legal', email: 'alex@zyndpay.io' },
+    ] as Identity[];
+    expect(findDraftIdentityId(company, { email: 'alex@zyndpay.io', name: 'Alex Legal | ZyndPay' })).toBe('alias');
+  });
 });
 
 describe('resolveReplyFrom', () => {
