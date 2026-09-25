@@ -33,6 +33,7 @@ vi.mock('expo-notifications', () => ({
 vi.mock('../../api/jmap-client', () => ({ jmapClient: session }));
 
 import { isCompanyPushPresentation, parseCompanyPushDestination, companyPushRelayOrigin, companyPushStatus, parseCompanyPushPayload, registerCompanyPush, revokeCompanyPush } from '../company-push';
+import { useSettingsStore } from '../../stores/settings-store';
 import { ZYNDMAIL_COMPANY } from '../zyndmail-company';
 
 const accountId = 'staff@zyndpay.io@mail.zyndpay.io';
@@ -43,6 +44,7 @@ const jwt = (subject: string) => {
 
 beforeEach(() => {
   records.clear();
+  useSettingsStore.setState({ notificationPreviewsEnabled: true });
   vi.clearAllMocks();
   process.env.EXPO_PUBLIC_MAIL_PUSH_RELAY_ORIGIN = 'https://mail.zyndpay.io';
   const accessToken = jwt('staff-subject');
@@ -78,9 +80,14 @@ describe('company Expo push boundary', () => {
     expect(url).toBe('https://mail.zyndpay.io/v1/device-registrations/current');
     expect(JSON.parse(init.body as string)).toMatchObject({
       appId: 'io.zyndpay.mail', projectId: 'e9054c93-18de-4d6a-bc34-38c020130b82',
-      platform: 'android', environment: 'production',
+      platform: 'android', environment: 'production', previews: true,
     });
     expect(JSON.stringify(JSON.parse(init.body as string))).not.toMatch(/staff-subject|mailbox|subject/);
+    expect(registerChannel).toHaveBeenCalledWith('mail-messages-v2', expect.objectContaining({ importance: 4, lockscreenVisibility: 1, sound: 'default' }));
+    useSettingsStore.setState({ notificationPreviewsEnabled: false });
+    expect(await registerCompanyPush(accountId, false)).toEqual({ status: 'ACTIVE' });
+    const lastPut = fetchMock.mock.calls.filter(([, request]) => request.method === 'PUT').at(-1)!;
+    expect(JSON.parse(lastPut[1].body as string).previews).toBe(false);
     expect(await revokeCompanyPush(accountId)).toBe(true);
     expect(fetchMock.mock.calls.at(-1)?.[1].method).toBe('DELETE');
   });
