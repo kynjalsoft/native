@@ -73,6 +73,7 @@ export function LayoutSettings() {
   const bottomQuickActionsRaw = useSettingsStore((s) => s.bottomQuickActions);
   const update = useSettingsStore((s) => s.updateSetting);
   const hydrated = useSettingsStore((s) => s.hydrated);
+  const hapticsEnabled = useSettingsStore((s) => s.hapticsEnabled);
   const hydrate = useSettingsStore((s) => s.hydrate);
   const t = useLocaleStore((s) => s.t);
   const SWIPE_OPTIONS = React.useMemo(() => swipeOptions(t).filter((item) => !companyNoDelete || item.value !== 'delete'), [t, companyNoDelete]);
@@ -135,6 +136,12 @@ export function LayoutSettings() {
 
   return (
     <SettingsSection title={t('settings.tabs.layout', 'Layout')} description={t('settings.layout.description', 'Tune the email list interactions for mobile.')}>
+      <SettingItem
+        label={t('settings.layout.haptics', 'Haptic feedback')}
+        description={t('settings.layout.haptics_description', 'Subtle touch feedback for selections and actions on this device.')}
+      >
+        <ToggleSwitch checked={hapticsEnabled} onChange={(value) => update('hapticsEnabled', value)} />
+      </SettingItem>
       <View style={{ gap: spacing.sm }}>
         <View style={styles.row}>
           <ArrowDownWideNarrow size={14} color={c.mutedForeground} />

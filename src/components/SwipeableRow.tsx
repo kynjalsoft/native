@@ -9,6 +9,7 @@ import {
 import { typography, type ThemePalette } from '../theme/tokens';
 import { useColors } from '../theme/colors';
 import { useLocaleStore } from '../stores/locale-store';
+import { haptic } from '../lib/haptics';
 import type { SwipeAction, SwipeMode } from '../stores/settings-store';
 import {
   shouldClaimGesture, dragOffset, resolveRelease, exitsRow,
@@ -115,12 +116,14 @@ export function SwipeableRow({
   };
 
   const openTo = (side: 'left' | 'right') => {
+    if (openSideRef.current !== side) haptic('light');
     springTo(side === 'right' ? REVEAL_WIDTH : -REVEAL_WIDTH);
     openSideRef.current = side;
     setOpenSide(side);
   };
 
   const fly = (toValue: number, action: SwipeAction) => {
+    haptic(action === 'delete' || action === 'spam' ? 'medium' : 'light');
     // For destructive/move actions: race the row off-screen and fire the
     // action - the parent will remove the row from the list. For toggle
     // actions: fire immediately and snap back so the same row can update in
@@ -145,6 +148,7 @@ export function SwipeableRow({
   const fireFromBandTap = (action: SwipeAction) => {
     close();
     if (action === 'none') return;
+    haptic(action === 'delete' || action === 'spam' ? 'medium' : 'light');
     if (exitsRow(action)) {
       // Let the row collapse a frame, then fire so the parent's list update
       // has a clean starting point. Deferred, so read the callback on arrival

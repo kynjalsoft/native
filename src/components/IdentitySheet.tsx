@@ -9,6 +9,7 @@ import { useColors } from '../theme/colors';
 import { useSheetDrag } from '../lib/use-sheet-drag';
 import type { Identity } from '../api/types';
 import { useLocaleStore } from '../stores/locale-store';
+import { haptic } from '../lib/haptics';
 
 interface IdentitySheetProps {
   visible: boolean;
@@ -72,6 +73,7 @@ export function IdentitySheet({
               <Pressable
                 key={identity.id}
                 onPress={() => {
+                  if (!isSelected) haptic('selection');
                   onPick(identity);
                   onClose();
                 }}

@@ -1,3 +1,4 @@
+import { haptic } from '../lib/haptics';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -328,6 +329,7 @@ export default function FilesScreen() {
   // own account and would fail (or worse, mismatch) on namespaced ids.
   const toggleSelect = useCallback((row: FileRow) => {
     if (row.isShared) return;
+    haptic('selection');
     setSelection((prev) => {
       const next = new Set(prev);
       if (next.has(row.id)) next.delete(row.id);

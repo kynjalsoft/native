@@ -50,6 +50,7 @@ import { useContactsStore } from './src/stores/contacts-store';
 import { useEmailStore } from './src/stores/email-store';
 import { useHasCalendar, useHasContacts, useHasFiles } from './src/lib/capabilities';
 import { useSettingsStore } from './src/stores/settings-store';
+import { haptic, setHapticsEnabled } from './src/lib/haptics';
 import { useLocaleStore } from './src/stores/locale-store';
 import { useNetworkStore } from './src/stores/network-store';
 import { useUpdatesStore } from './src/stores/updates-store';
@@ -154,6 +155,14 @@ function MainTabsNavigator({ navigation, onMailListBusyChange }: NativeStackScre
       <OfflineCacheBanner />
       <ToastHost />
     <Tab.Navigator
+      screenListeners={({ navigation: tabNavigation, route }) => ({
+        tabPress: () => {
+          const available = route.name !== 'Calendar' || hasCalendar;
+          const contactsAvailable = route.name !== 'Contacts' || hasContacts;
+          const filesAvailable = route.name !== 'Files' || hasFiles;
+          if (available && contactsAvailable && filesAvailable && !tabNavigation.isFocused()) haptic('selection');
+        },
+      })}
       screenOptions={{
         headerShown: false,
         tabBarActiveTintColor: c.text,
@@ -288,6 +297,8 @@ function AppContent() {
   // system status bar. The rest of the app's colors are still hard-coded dark
   // until the StyleSheet migration to a theme-aware `useColors` hook lands.
   const themePref = useSettingsStore((state) => state.theme);
+  const hapticsEnabled = useSettingsStore((state) => state.hapticsEnabled);
+  React.useEffect(() => { setHapticsEnabled(hapticsEnabled); }, [hapticsEnabled]);
   const systemScheme = useColorScheme();
   const resolvedScheme: 'light' | 'dark' =
     themePref === 'system' ? (systemScheme === 'light' ? 'light' : 'dark') : themePref;

@@ -1,3 +1,4 @@
+import { haptic } from '../lib/haptics';
 import React from 'react';
 import {
   View,
@@ -150,6 +151,7 @@ export default function ContactsScreen() {
   const onManualRefresh = React.useCallback(async () => {
     if (manualRefreshInFlight.current) return;
     manualRefreshInFlight.current = true;
+    haptic('light');
     setManualRefreshing(true);
     try {
       // The server may provision the default book on AddressBook/get.
@@ -201,6 +203,7 @@ export default function ContactsScreen() {
 
   const selectionMode = selection.size > 0;
   const toggleSelect = (id: string) => {
+    haptic('selection');
     setSelection((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);

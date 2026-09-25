@@ -1,3 +1,4 @@
+import { haptic } from '../lib/haptics';
 import React from 'react';
 import {
   View, Text, StyleSheet, Pressable, ScrollView, Modal, TextInput, Alert,
@@ -400,6 +401,7 @@ export default function SidebarDrawer({ visible, onClose }: SidebarDrawerProps) 
   }, []);
 
   const toggleExpand = React.useCallback((id: string) => {
+    haptic('selection');
     setExpandedFolders((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id); else next.add(id);
@@ -409,6 +411,7 @@ export default function SidebarDrawer({ visible, onClose }: SidebarDrawerProps) 
   }, [persistExpanded]);
 
   const toggleSection = (key: keyof typeof STORAGE_KEYS, setter: React.Dispatch<React.SetStateAction<boolean>>) => {
+    haptic('selection');
     setter((prev) => {
       const next = !prev;
       void AsyncStorage.setItem(STORAGE_KEYS[key], String(next)).catch(() => {});
@@ -417,6 +420,7 @@ export default function SidebarDrawer({ visible, onClose }: SidebarDrawerProps) 
   };
 
   const handleSelect = React.useCallback((id: string) => {
+    haptic('selection');
     // A tag view was open: leave it so the folder shows its own mail.
     if (filters.keyword) clearSearchAndFilters();
     void selectMailbox(id);
@@ -425,12 +429,14 @@ export default function SidebarDrawer({ visible, onClose }: SidebarDrawerProps) 
 
   // Tap the unread count → the folder filtered to unread (webmail sidebar).
   const handleSelectUnread = React.useCallback((id: string) => {
+    haptic('selection');
     void selectMailbox(id).then(() => setFilters({ isUnread: true }));
     onClose();
   }, [selectMailbox, setFilters, onClose]);
 
   // Tag view (#175): every folder, messages carrying the tag.
   const selectTag = React.useCallback((id: string) => {
+    haptic('selection');
     setFilters({ keyword: keywordToken(id) });
     onClose();
   }, [setFilters, onClose]);

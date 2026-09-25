@@ -1,3 +1,4 @@
+import { haptic } from '../lib/haptics';
 import React from 'react';
 import {
   Alert,
@@ -381,6 +382,7 @@ export default function CalendarScreen() {
 
   const handleSelectDate = React.useCallback(
     (date: Date) => {
+      haptic('selection');
       setSelectedDate(date);
       if (viewMode === 'week') setCurrentDate(date);
     },

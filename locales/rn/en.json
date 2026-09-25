@@ -502,6 +502,8 @@
     },
     "layout": {
       "description": "Tune the email list interactions for mobile.",
+      "haptics": "Haptic feedback",
+      "haptics_description": "Subtle touch feedback for selections and actions on this device.",
       "quick_actions": {
         "description": "The three buttons shown between Prev/Next at the bottom of an open email. Defaults to Reply, Reply All and Forward.",
         "label": "Reader quick actions",

@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, Pressable, StyleSheet, ViewStyle } from 'react-native';
 import { spacing, radius, typography, type ThemePalette } from '../theme/tokens';
 import { useColors } from '../theme/colors';
+import { haptic } from '../lib/haptics';
 
 interface RadioOption {
   label: string;
@@ -33,7 +34,7 @@ export default function RadioGroup({ options, value, onChange, style }: RadioGro
           <Pressable
             key={opt.value}
             style={[styles.option, selected ? styles.optionSelected : styles.optionUnselected]}
-            onPress={() => onChange(opt.value)}
+            onPress={() => { if (!selected) { haptic('selection'); onChange(opt.value); } }}
             accessibilityRole="radio"
             accessibilityState={{ selected, checked: selected }}
             accessibilityLabel={opt.label}

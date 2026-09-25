@@ -1,3 +1,4 @@
+import { haptic } from '../lib/haptics';
 import React from 'react';
 import { View, Text, StyleSheet, FlatList, Pressable, TextInput, Image, ActivityIndicator, Modal, Platform, ScrollView, TouchableWithoutFeedback, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -493,6 +494,7 @@ export default function EmailListScreen({ onEmailPress, onComposePress, onIntera
   const onManualRefresh = React.useCallback(async () => {
     if (manualRefreshInFlight.current) return;
     manualRefreshInFlight.current = true;
+    haptic('light');
     setManualRefreshing(true);
     try {
       await refreshEmails();
@@ -516,6 +518,7 @@ export default function EmailListScreen({ onEmailPress, onComposePress, onIntera
   React.useEffect(() => { emailsRef.current = emails; }, [emails]);
 
   const toggleSelect = React.useCallback((id: string) => {
+    haptic('selection');
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -687,6 +690,7 @@ export default function EmailListScreen({ onEmailPress, onComposePress, onIntera
   }, []);
 
   const toggleSelectAllVisible = React.useCallback(() => {
+    if (visibleEmails.length) haptic('selection');
     setSelectedIds((prev) => {
       const allCurrent = visibleEmails.length > 0 && visibleEmails.every((e) => prev.has(e.id));
       if (allCurrent) return new Set();

@@ -1,3 +1,4 @@
+import { haptic } from '../lib/haptics';
 import React from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator,
@@ -342,6 +343,7 @@ export default function EmailThreadScreen({ route, navigation }: Props) {
 
   const onToggleKeyword = (token: string) => {
     if (!email) return;
+    haptic('selection');
     const next = { ...email.keywords };
     if (next[token]) delete next[token];
     else next[token] = true;
@@ -352,6 +354,7 @@ export default function EmailThreadScreen({ route, navigation }: Props) {
   // Toggle the star on a specific message — used both by the toolbar (current
   // message) and by each pane's own subject star / card header.
   const toggleStarFor = React.useCallback((target: Email) => {
+    haptic('selection');
     const next = { ...target.keywords };
     if (next.$flagged) delete next.$flagged;
     else next.$flagged = true;
@@ -363,6 +366,7 @@ export default function EmailThreadScreen({ route, navigation }: Props) {
 
   const onToggleUnread = () => {
     if (!email) return;
+    haptic('selection');
     if (unread) {
       void markRead(email.id, ownerAccountId);
       updateLocalKeywords(email.id, { ...email.keywords, $seen: true });
@@ -381,6 +385,7 @@ export default function EmailThreadScreen({ route, navigation }: Props) {
 
   const performDelete = () => {
     if (!email || !currentMailboxId || !trashMailbox) return;
+    haptic('medium');
     void deleteEmail(email.id, trashMailbox.id, currentMailboxId);
     navigation.goBack();
   };
@@ -416,6 +421,7 @@ export default function EmailThreadScreen({ route, navigation }: Props) {
   const onArchive = () => {
     if (!email || !currentMailboxId || !archiveMailbox) return;
     if (currentMailboxId === archiveMailbox.id) return;
+    haptic('light');
     void archiveEmailAction(email.id);
     navigation.goBack();
   };
@@ -436,6 +442,7 @@ export default function EmailThreadScreen({ route, navigation }: Props) {
 
   const onMoveToMailbox = (toId: string) => {
     if (!email || !currentMailboxId || toId === currentMailboxId) return;
+    haptic('light');
     setMoveMenuOpen(false);
     setMoreMenuOpen(false);
     void moveToMailbox(email.id, currentMailboxId, toId);

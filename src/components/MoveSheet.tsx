@@ -1,3 +1,4 @@
+import { haptic } from '../lib/haptics';
 import React from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Pressable, Modal, Animated, Easing,
@@ -111,7 +112,7 @@ export function MoveSheet({
             return (
               <Pressable
                 key={node.id}
-                onPress={canTarget ? () => onPick(node.id) : undefined}
+                onPress={canTarget ? () => { haptic('selection'); onPick(node.id); } : undefined}
                 disabled={!canTarget}
                 style={({ pressed }) => [
                   styles.moveRow,

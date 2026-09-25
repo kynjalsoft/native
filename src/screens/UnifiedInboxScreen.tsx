@@ -1,3 +1,4 @@
+import { haptic } from '../lib/haptics';
 import React from 'react';
 import {
   View, Text, StyleSheet, FlatList, ActivityIndicator, Pressable, TextInput, Alert,
@@ -123,6 +124,7 @@ export default function UnifiedInboxScreen({ navigation, route }: Props) {
   const onManualRefresh = React.useCallback(async () => {
     if (manualRefreshInFlight.current) return;
     manualRefreshInFlight.current = true;
+    haptic('light');
     setManualRefreshing(true);
     try {
       await load(true);
@@ -295,6 +297,7 @@ export default function UnifiedInboxScreen({ navigation, route }: Props) {
   const selectedIncludesCompanyMail = selectedEmails.some((email) =>
     hasCompanyNoDeletePolicy(accountById.get(email.sourceAccountId)));
   const toggleSelect = (email: UnifiedEmail) => {
+    haptic('selection');
     setSelected((prev) => {
       const next = new Set(prev);
       const key = rowKey(email);

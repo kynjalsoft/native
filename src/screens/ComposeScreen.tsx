@@ -1,3 +1,4 @@
+import { haptic } from '../lib/haptics';
 import React from 'react';
 import {
   View, Text, StyleSheet, TextInput, Pressable, ScrollView,
@@ -1990,6 +1991,7 @@ export default function ComposeScreen({ route, navigation }: Props) {
         holdForSeconds,
         { draftsMailboxId: draftsMailbox?.id, draftId: draftIdRef.current ?? undefined },
       );
+      haptic(result.filingWarning ? 'warning' : 'success');
       draftIdRef.current = null;
       lastSavedRef.current = null;
       if (result.filingWarning) {
@@ -2048,6 +2050,7 @@ export default function ComposeScreen({ route, navigation }: Props) {
       if (e instanceof RequestTimeoutError || e instanceof NetworkError || e instanceof SubmissionOutcomeUnknownError) {
         // A lost or malformed reply may follow a successful submission. Hold
         // this composer rather than allow a second tap to duplicate the mail.
+        haptic('warning');
         setSendOutcomeUnknown(true);
         Alert.alert(
           t('email_composer.send_unknown_title', 'Send needs review'),
@@ -2058,6 +2061,7 @@ export default function ComposeScreen({ route, navigation }: Props) {
         );
         return;
       }
+      haptic('error');
       Alert.alert(
         t('email_composer.send_failed', 'Send failed'),
         e instanceof Error ? e.message : 'Failed to send email',

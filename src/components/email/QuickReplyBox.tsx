@@ -1,3 +1,4 @@
+import { haptic } from '../../lib/haptics';
 import React from 'react';
 import { View, Text, StyleSheet, TextInput, Pressable, ActivityIndicator, Alert } from 'react-native';
 import { Send, Maximize2 } from 'lucide-react-native';
@@ -78,7 +79,7 @@ export function QuickReplyBox({ email, jmapAccountId, onMoreOptions, onSent, onF
       const quoted = original.split('\n').map((l) => `> ${l}`).join('\n');
       const header = `${formatFullDateTime(emailDisplayDate(email), timeFormat, locale)}, ${from.name ? `${from.name} <${from.email}>` : from.email}:`;
       const threading = computeReplyThreadingHeaders(email);
-      await sendEmail(
+      const result = await sendEmail(
         {
           from: [{ name: identity.name, email: identity.email }],
           to: recipients.to.filter((r) => !!r.email).map((r) => ({ email: r.email!, name: r.name })),
@@ -93,12 +94,14 @@ export function QuickReplyBox({ email, jmapAccountId, onMoreOptions, onSent, onF
         sendDelaySeconds > 0 ? sendDelaySeconds : undefined,
         { draftsMailboxId: drafts ? (drafts.originalId ?? drafts.id) : undefined, accountId: jmapAccountId },
       );
+      haptic(result.filingWarning ? 'warning' : 'success');
       try {
         await patchKeywordsForEmails([email.id], { $answered: true }, jmapAccountId);
       } catch { /* the reply is out; the flag is cosmetic */ }
       onSent?.({ ...email, keywords: { ...email.keywords, $answered: true } });
       setText('');
     } catch (err) {
+      haptic('error');
       Alert.alert(t('email_composer.send_failed', 'Failed to send'), err instanceof Error ? err.message : String(err));
     } finally {
       setSending(false);

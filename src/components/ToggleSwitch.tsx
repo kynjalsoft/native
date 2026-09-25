@@ -2,6 +2,7 @@ import React from 'react';
 import { Pressable, View, StyleSheet } from 'react-native';
 import { radius, componentSizes, type ThemePalette } from '../theme/tokens';
 import { useColors } from '../theme/colors';
+import { haptic } from '../lib/haptics';
 
 interface ToggleSwitchProps {
   value: boolean;
@@ -26,7 +27,8 @@ export default function ToggleSwitch({ value, onValueChange, disabled = false }:
         value ? styles.trackOn : styles.trackOff,
         disabled && styles.disabled,
       ]}
-      onPress={() => !disabled && onValueChange(!value)}
+      disabled={disabled}
+      onPress={() => { if (!disabled) { haptic('selection'); onValueChange(!value); } }}
       accessibilityRole="switch"
       accessibilityState={{ checked: value, disabled }}
     >

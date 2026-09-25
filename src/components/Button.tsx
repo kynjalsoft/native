@@ -2,6 +2,7 @@ import React from 'react';
 import { Pressable, Text, StyleSheet, ViewStyle, ActivityIndicator } from 'react-native';
 import { spacing, radius, typography, componentSizes, type ThemePalette } from '../theme/tokens';
 import { useColors } from '../theme/colors';
+import { haptic, type HapticKind } from '../lib/haptics';
 
 type ButtonVariant = 'default' | 'ghost' | 'outline' | 'destructive';
 type ButtonSize = 'sm' | 'md' | 'lg' | 'icon';
@@ -15,6 +16,8 @@ interface ButtonProps {
   loading?: boolean;
   icon?: React.ReactNode;
   style?: ViewStyle;
+  /** Set false when the handler gives feedback after an async result. */
+  feedback?: HapticKind | false;
 }
 
 export default function Button({
@@ -26,6 +29,7 @@ export default function Button({
   loading = false,
   icon,
   style,
+  feedback,
 }: ButtonProps) {
   const c = useColors();
   const styles = React.useMemo(() => makeStyles(c), [c]);
@@ -41,7 +45,12 @@ export default function Button({
         isDisabled && styles.disabled,
         style,
       ]}
-      onPress={onPress}
+      onPress={() => {
+        if (isDisabled || !onPress) return;
+        const kind = feedback ?? (variant === 'destructive' ? 'medium' : variant === 'default' ? 'light' : false);
+        if (kind) haptic(kind);
+        onPress();
+      }}
       disabled={isDisabled}
     >
       {loading ? (

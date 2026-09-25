@@ -6,6 +6,7 @@ import { spacing, radius, typography, type ThemePalette } from '../../theme/toke
 import { useColors } from '../../theme/colors';
 import { useLocaleStore } from '../../stores/locale-store';
 import { useSheetDrag } from '../../lib/use-sheet-drag';
+import { haptic, type HapticKind } from '../../lib/haptics';
 
 export interface ActionSheetItem {
   key: string;
@@ -14,6 +15,7 @@ export interface ActionSheetItem {
   trailing?: React.ReactNode;
   destructive?: boolean;
   disabled?: boolean;
+  feedback?: HapticKind | false;
   onPress: () => void;
 }
 
@@ -83,7 +85,13 @@ export function ActionSheet({ visible, title, subtitle, items, onClose, children
         {items.map((item) => (
           <Pressable
             key={item.key}
-            onPress={item.disabled ? undefined : item.onPress}
+            disabled={item.disabled}
+            onPress={() => {
+              if (item.disabled) return;
+              const kind = item.feedback ?? (item.destructive ? 'medium' : 'selection');
+              if (kind) haptic(kind);
+              item.onPress();
+            }}
             style={({ pressed }) => [styles.item, pressed && styles.itemPressed, item.disabled && styles.itemDisabled]}
             accessibilityRole="button"
             accessibilityLabel={item.label}

@@ -1,3 +1,4 @@
+import { haptic } from '../lib/haptics';
 import React from 'react';
 import {
   View, Text, StyleSheet, FlatList, ActivityIndicator, Pressable, Alert, Modal, Platform,
@@ -78,6 +79,7 @@ export default function ScheduledScreen({ navigation }: Props) {
   const onManualRefresh = React.useCallback(async () => {
     if (manualRefreshInFlight.current) return;
     manualRefreshInFlight.current = true;
+    haptic('light');
     setManualRefreshing(true);
     try {
       await load();
