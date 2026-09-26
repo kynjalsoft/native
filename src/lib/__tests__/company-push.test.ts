@@ -502,7 +502,8 @@ describe('company Expo push boundary', () => {
 
     await revokeEvictedCompanyPush(accountId);
     expect(JSON.parse(records.get('zyndmail.production.push.registration.v1')!).revocationPending).toBe(true);
-    expect(JSON.parse(records.get('zyndmail.production.push.preference.v1')!).subjects).toEqual(['other-subject']);
+    expect(JSON.parse(records.get('zyndmail.production.push.preference.v1')!).subjects)
+      .toEqual(['staff-subject', 'other-subject']);
     expect(fetchMock).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
       method: 'DELETE', headers: expect.not.objectContaining({ Authorization: expect.any(String) }),
     }));
@@ -512,7 +513,8 @@ describe('company Expo push boundary', () => {
     relayAvailable = true;
     expect(await reconcilePendingCompanyPushRevocation()).toBe(false);
     expect(records.has('zyndmail.production.push.registration.v1')).toBe(false);
-    expect(JSON.parse(records.get('zyndmail.production.push.preference.v1')!).subjects).toEqual(['other-subject']);
+    expect(JSON.parse(records.get('zyndmail.production.push.preference.v1')!).subjects)
+      .toEqual(['staff-subject', 'other-subject']);
   });
 
   it('retires a logged-out staff registration before enrolling a different staff account', async () => {

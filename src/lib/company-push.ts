@@ -557,7 +557,7 @@ export async function revokeEvictedCompanyPush(accountId: string): Promise<void>
         }
       }
     }
-    await revokeSavedRegistration(registration, provenOwner);
+    await revokeSavedRegistration(registration);
   });
 }
 
@@ -572,9 +572,8 @@ async function reconcilePendingCompanyPushRevocationInner(): Promise<boolean> {
   return hasPendingCompanyPushRevocation();
 }
 
-async function revokeSavedRegistration(registration: Registration, clearPreference: boolean): Promise<void> {
+async function revokeSavedRegistration(registration: Registration): Promise<void> {
   await SecureStore.setItemAsync(REGISTRATION_KEY, JSON.stringify({ ...registration, revocationPending: true }), storageOptions);
-  if (clearPreference) await setPushPreference(registration.subject, false);
   await dismissCompanyPushNotifications();
   await deleteRegistration(registration, null);
 }
@@ -584,7 +583,7 @@ export async function reconcileDisabledCompanyPush(): Promise<boolean> {
   return withRegistrationLock(async () => {
     if (useSettingsStore.getState().emailNotificationsEnabled) return hasPendingCompanyPushRevocation();
     const registration = await readRegistration();
-    if (registration) await revokeSavedRegistration(registration, false);
+    if (registration) await revokeSavedRegistration(registration);
     return hasPendingCompanyPushRevocation();
   });
 }

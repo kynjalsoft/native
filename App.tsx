@@ -81,6 +81,7 @@ import {
   resolveCompanyPush,
 } from './src/lib/company-push';
 import { openCompanyPushIntent } from './src/lib/company-push-intent';
+import { openFetchedPersonalNotification } from './src/lib/personal-notification-tap';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<MainTabsParamList>();
@@ -95,6 +96,10 @@ async function navigateToNotificationTap(
   if (!payload.accountId) return 'ignored';
   const target = useAccountStore.getState().getAccountById(payload.accountId);
   if (!target || isCompanyMailServer(target.serverUrl)) return 'ignored';
+  const currentOwner = () => {
+    if (useAuthStore.getState().activeAccountId !== payload.accountId) return false;
+    try { return jmapClient.accountId === payload.accountId; } catch { return false; }
+  };
 
   // The notification carries the account it was generated for. If the user
   // has since switched to a different account (or had a different one active
@@ -103,10 +108,11 @@ async function navigateToNotificationTap(
   const auth = useAuthStore.getState();
   if (payload.accountId && payload.accountId !== auth.activeAccountId) {
     try { await auth.switchAccount(payload.accountId); } catch { return 'retry'; }
-    if (useAuthStore.getState().activeAccountId !== payload.accountId) return 'retry';
+    if (!currentOwner()) return 'retry';
   }
 
   if (!navigationRef.isReady() || !stillReady()) return 'retry';
+  if (!currentOwner()) return 'retry';
   try {
     if (payload.emailId && payload.threadId) {
       if (!payload.jmapAccountId) {
@@ -120,31 +126,38 @@ async function navigateToNotificationTap(
         );
         return 'opened';
       }
-      let email;
-      try {
-        [email] = await getEmails([payload.emailId], payload.jmapAccountId);
-      } catch {
-        return 'retry';
-      }
-      if (!navigationRef.isReady() || !stillReady()) return 'retry';
-      if (!email) {
-        navigationRef.navigate('UnifiedInbox');
-        Alert.alert(
-          useLocaleStore.getState().t('error'),
-          useLocaleStore.getState().t(
-            'notification_link_unavailable',
-            'This notification cannot open a single email. Search your inbox to find the message.',
-          ),
-        );
-        return 'opened';
-      }
-      navigationRef.navigate('EmailThread', {
-        emailId: email.id,
-        threadId: email.threadId,
-        subject: email.subject ?? payload.subject,
-        jmapAccountId: payload.jmapAccountId,
-        emailIds: [email.id],
-      });
+      const emailId = payload.emailId;
+      const jmapAccountId = payload.jmapAccountId;
+      return openFetchedPersonalNotification(
+        payload.accountId,
+        async () => (await getEmails([emailId], jmapAccountId))[0],
+        () => {
+          let sessionAccountId: string | null = null;
+          try { sessionAccountId = jmapClient.accountId; } catch {}
+          return { activeAccountId: useAuthStore.getState().activeAccountId, sessionAccountId };
+        },
+        () => navigationRef.isReady() && stillReady(),
+        (email) => {
+          if (!email) {
+            navigationRef.navigate('UnifiedInbox');
+            Alert.alert(
+              useLocaleStore.getState().t('error'),
+              useLocaleStore.getState().t(
+                'notification_link_unavailable',
+                'This notification cannot open a single email. Search your inbox to find the message.',
+              ),
+            );
+            return;
+          }
+          navigationRef.navigate('EmailThread', {
+            emailId: email.id,
+            threadId: email.threadId,
+            subject: email.subject ?? payload.subject,
+            jmapAccountId,
+            emailIds: [email.id],
+          });
+        },
+      );
     } else if (!payload.emailId && !payload.threadId) {
       navigationRef.navigate('UnifiedInbox');
     } else {
