@@ -213,6 +213,49 @@ describe('company Expo push boundary', () => {
     expect(methods).toEqual(['PUT', 'DELETE', 'PUT', 'DELETE', 'PUT', 'DELETE', 'PUT']);
   });
 
+  it('preserves the returning staff account opt-in while settings reconciles a failed switch', async () => {
+    const otherId = 'other@zyndpay.io@mail.zyndpay.io';
+    useAccountStore.setState({ accounts: [
+      { id: accountId, serverUrl: 'https://mail.zyndpay.io' } as never,
+      { id: otherId, serverUrl: 'https://mail.zyndpay.io' } as never,
+    ] });
+    session.getStoredOAuthTokens.mockImplementation(async (id?: string) => {
+      const subject = id === otherId ? 'other-subject' : 'staff-subject';
+      return {
+        accessToken: jwt(subject), clientId: ZYNDMAIL_COMPANY.clientId,
+        companyIdentity: { issuer: ZYNDMAIL_COMPANY.issuer, audience: 'stalwart', subject },
+      };
+    });
+    let relayAvailable = true;
+    const fetchMock = vi.fn(async (url: string, init: RequestInit) => {
+      if (url.includes('/v1/push-health?')) return { ok: true, status: 200,
+        json: async () => ({ status: 'ok', previewMode: 'sender-subject-snippet-v1' }) };
+      if (init.method === 'DELETE') return { ok: relayAvailable, status: relayAvailable ? 200 : 503 };
+      return { ok: true, status: 200, json: async () => ({ registrationId: 'registration-1' }) };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    expect(await registerCompanyPush(accountId, true)).toEqual({ status: 'ACTIVE' });
+    records.set('zyndmail.production.push.preference.v1', JSON.stringify({
+      version: 2, subjects: ['staff-subject', 'other-subject'],
+    }));
+    relayAvailable = false;
+    session.username = 'other@zyndpay.io';
+    expect(await registerCompanyPush(otherId, false, true)).toMatchObject({ status: 'ERROR' });
+    expect(JSON.parse(records.get('zyndmail.production.push.registration.v1')!).revocationPending).toBe(true);
+
+    session.username = 'staff@zyndpay.io';
+    expect(await companyPushStatus(accountId)).toMatchObject({ status: 'REVOKE_PENDING' });
+    expect(await reconcileCompanyPush(accountId)).toMatchObject({ status: 'REVOKE_PENDING' });
+    expect(JSON.parse(records.get('zyndmail.production.push.preference.v1')!).subjects).toContain('staff-subject');
+
+    relayAvailable = true;
+    expect(await reconcileCompanyPush(accountId)).toEqual({ status: 'ACTIVE' });
+    expect(await companyPushStatus(accountId)).toEqual({ status: 'ACTIVE' });
+    expect(JSON.parse(records.get('zyndmail.production.push.preference.v1')!).subjects).toContain('staff-subject');
+    expect(JSON.parse(records.get('zyndmail.production.push.registration.v1')!).subject).toBe('staff-subject');
+  });
+
   it('force-renews a fresh local registration so a stale server subscription is upgraded', async () => {
     records.set('zyndmail.production.push.preference.v1', 'staff-subject');
     records.set('zyndmail.production.push.registration.v1', JSON.stringify({

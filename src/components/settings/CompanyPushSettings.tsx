@@ -4,7 +4,7 @@ import { useSettingsStore } from '../../stores/settings-store';
 import { useAuthStore } from '../../stores/auth-store';
 import { useLocaleStore } from '../../stores/locale-store';
 import { useColors } from '../../theme/colors';
-import { companyPushPreviewAvailable, companyPushPreviewOptOutPending, companyPushPreviewPending, companyPushRevocationPendingStatus, companyPushStatus, dismissCompanyPushNotifications, registerCompanyPush, revokeCompanyPush, type CompanyPushStatus } from '../../lib/company-push';
+import { companyPushPreviewAvailable, companyPushPreviewOptOutPending, companyPushPreviewPending, companyPushRevocationPendingStatus, companyPushStatus, dismissCompanyPushNotifications, reconcileCompanyPush, registerCompanyPush, revokeCompanyPush, type CompanyPushStatus } from '../../lib/company-push';
 import { useNetworkStore } from '../../stores/network-store';
 import { SettingItem, SettingsSection, ToggleSwitch } from './settings-section';
 
@@ -36,8 +36,7 @@ export function CompanyPushSettings(): React.ReactElement {
           const renewed = await registerCompanyPush(accountId, false, true);
           next = next.status === 'PENDING' && renewed.status !== 'ACTIVE' ? next : renewed;
         } else if (next.status === 'REVOKE_PENDING') {
-          await revokeCompanyPush(accountId).catch(() => false);
-          next = await companyPushStatus(accountId);
+          next = await reconcileCompanyPush(accountId);
         }
         if (current && request === statusRequest.current) {
           setPreviewAvailable(supportsPreviews);
