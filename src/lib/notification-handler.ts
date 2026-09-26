@@ -24,23 +24,25 @@ Notifications.setNotificationHandler({
     const auth = useAuthStore.getState();
     const accountId = auth.isAuthenticated && !auth.isLoading ? auth.activeAccountId : null;
     const mailCandidate = companyAccountPresent && isCompanyPushPresentation(content);
-    const eligible = settings.emailNotificationsEnabled && mailCandidate && !!accountId && !!payload &&
-      await (payload.registrationId
-        ? companyPushRegistrationIdActive(accountId, payload.registrationId, !generic)
-        : companyPushModeActive(accountId));
-    const currentAuth = useAuthStore.getState();
-    const currentSettings = useSettingsStore.getState();
-    const mail = eligible && currentSettings.emailNotificationsEnabled &&
-      currentAuth.isAuthenticated && !currentAuth.isLoading && currentAuth.activeAccountId === accountId &&
-      generateAccountId(jmapClient.username ?? '', jmapClient.serverUrl ?? '') === accountId &&
-      (generic || !payload?.registrationId || currentSettings.notificationPreviewsEnabled);
-    if (mail && !generic && !payload?.registrationId) {
+    const active = settings.emailNotificationsEnabled && mailCandidate && !!accountId && !!payload &&
+      await companyPushModeActive(accountId);
+    const current = () => {
+      const currentAuth = useAuthStore.getState();
+      const currentSettings = useSettingsStore.getState();
+      return active && currentSettings.emailNotificationsEnabled &&
+        currentAuth.isAuthenticated && !currentAuth.isLoading && currentAuth.activeAccountId === accountId &&
+        generateAccountId(jmapClient.username ?? '', jmapClient.serverUrl ?? '') === accountId;
+    };
+    const rich = current() && !generic && !!accountId && !!payload?.registrationId &&
+      useSettingsStore.getState().notificationPreviewsEnabled &&
+      await companyPushRegistrationIdActive(accountId, payload.registrationId, true) && current();
+    if (current() && !generic && !rich) {
       await Notifications.scheduleNotificationAsync({
         content: { title: 'ZyndMail', body: 'New ZyndPay Mail activity', data: content.data },
         trigger: null,
       }).catch(() => undefined);
     }
-    const visible = !!calendar || (mail && (generic || !!payload?.registrationId));
+    const visible = !!calendar || (current() && (generic || rich));
     return {
       shouldShowBanner: visible,
       shouldShowList: visible,

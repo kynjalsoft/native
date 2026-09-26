@@ -31,6 +31,7 @@ interface Registration {
   revocationKey?: string;
   renewedAt: number;
   routingVersion?: number;
+  relayRoutingVersion?: 2;
   previews?: boolean;
   revocationPending?: boolean;
   revocationReason?: 'global-email-off' | 'required';
@@ -111,11 +112,11 @@ async function relayFetch(path: string, bearer: string | null, init: RequestInit
 
 /** Probe the relay before asking for OS permission or an Expo token. Never follow
  * a redirect from the mail host to webmail with a staff bearer token. */
-interface RelayHealth { ready: boolean; previewMode: boolean }
+interface RelayHealth { ready: boolean; previewMode: boolean; routingVersion: 2 | null }
 
 async function relayHealth(): Promise<RelayHealth> {
   const origin = companyPushRelayOrigin();
-  if (!origin) return { ready: false, previewMode: false };
+  if (!origin) return { ready: false, previewMode: false, routingVersion: null };
   const abort = new AbortController();
   const timeout = setTimeout(() => abort.abort(), 5_000);
   try {
@@ -125,16 +126,17 @@ async function relayHealth(): Promise<RelayHealth> {
       method: 'GET', redirect: 'error', signal: abort.signal,
       headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' },
     });
-    if (!response.ok) return { ready: false, previewMode: false };
+    if (!response.ok) return { ready: false, previewMode: false, routingVersion: null };
     const body = await response.json() as Record<string, unknown>;
     return {
       ready: body.status === 'ok',
+      routingVersion: body.routingVersion === 2 ? 2 : null,
       // Visible sender/subject text crosses Expo/APNs/FCM. The mail relay
       // must explicitly advertise that it implements this newer contract.
       previewMode: body.previewMode === 'sender-subject-snippet-v1',
     };
   } catch {
-    return { ready: false, previewMode: false };
+    return { ready: false, previewMode: false, routingVersion: null };
   } finally {
     clearTimeout(timeout);
   }
@@ -209,6 +211,7 @@ async function readRegistration(): Promise<Registration | null> {
           registrationId: value.registrationId,
           revocationKey: typeof value.revocationKey === 'string' && REVOCATION_KEY.test(value.revocationKey) ? value.revocationKey : undefined,
           renewedAt: value.renewedAt ?? 0, routingVersion: value.routingVersion, previews: value.previews,
+          relayRoutingVersion: value.relayRoutingVersion === 2 ? 2 : undefined,
           revocationPending: value.revocationPending === true,
           revocationReason: value.revocationReason === 'global-email-off' ? 'global-email-off'
             : value.revocationPending ? 'required' : undefined }
@@ -654,7 +657,9 @@ async function registerCompanyPushInner(accountId: string, requestPermission: bo
   if (desiredPreviews && !health.previewMode) return { status: 'UNAVAILABLE', reason: RELAY_UNAVAILABLE };
   const previews = health.previewMode && desiredPreviews;
   const routingVersion = health.previewMode ? 3 : 2;
-  if (previous?.previews === previews && previous?.routingVersion === routingVersion && !force && !requestPermission && Date.now() - previous.renewedAt < RENEW_AFTER_MS) return companyPushStatus(accountId);
+  if (previous?.previews === previews && previous?.routingVersion === routingVersion &&
+      previous?.relayRoutingVersion === (health.routingVersion ?? undefined) &&
+      !force && !requestPermission && Date.now() - previous.renewedAt < RENEW_AFTER_MS) return companyPushStatus(accountId);
   if (Platform.OS === 'android') {
     await Notifications.setNotificationChannelAsync('mail-activity', {
       name: 'Mail activity',
@@ -689,6 +694,7 @@ async function registerCompanyPushInner(accountId: string, requestPermission: bo
         appId: appId(),
         platform: Platform.OS,
         environment: 'production',
+        ...(health.routingVersion === 2 ? { routingVersion: 2 } : {}),
         ...(health.previewMode ? { previews } : {}),
       }),
     });
@@ -704,7 +710,7 @@ async function registerCompanyPushInner(accountId: string, requestPermission: bo
         : previous?.registrationId === body.registrationId && previous.revocationKey
           ? { revocationKey: previous.revocationKey }
           : {}),
-      renewedAt: Date.now(), routingVersion, previews,
+      renewedAt: Date.now(), routingVersion, relayRoutingVersion: health.routingVersion ?? undefined, previews,
     };
     if (generateAccountId(jmapClient.username ?? '', jmapClient.serverUrl ?? '') !== accountId) {
       await markRegistrationPending(registration, 'required');

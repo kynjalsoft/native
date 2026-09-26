@@ -110,11 +110,16 @@ describe('foreground notification presentation', () => {
     expect((await display(preview)).shouldShowList).toBe(false);
   });
 
-  it('suppresses rich mail when the registration belongs to another account', async () => {
+  it('shows only generic mail when the registration belongs to another account', async () => {
     current.settings.notificationPreviewsEnabled = true;
     current.previewModeActive = true;
-    expect((await display({ ...preview, data: { ...preview.data, registrationId: 'other-registration' } })).shouldShowList).toBe(false);
-    expect(scheduled).not.toHaveBeenCalled();
+    const mismatched = { ...preview, data: { ...preview.data, registrationId: 'other-registration' } };
+    expect((await display(mismatched)).shouldShowList).toBe(false);
+    expect(scheduled).toHaveBeenCalledWith({
+      content: { title: 'ZyndMail', body: 'New ZyndPay Mail activity', data: mismatched.data },
+      trigger: null,
+    });
+    expect((await display({ title: 'ZyndMail', body: 'New ZyndPay Mail activity', data: mismatched.data })).shouldShowList).toBe(true);
   });
 
   it('suppresses rich mail when the account switches during the local registration check', async () => {

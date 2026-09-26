@@ -117,6 +117,27 @@ describe('company Expo push boundary', () => {
     expect(fetchMock.mock.calls.at(-1)?.[1].method).toBe('DELETE');
   });
 
+  it('requests routing version two only after relay health advertises it', async () => {
+    let upgraded = false;
+    const requests: Record<string, unknown>[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
+      if (url.includes('/v1/push-health?')) return { ok: true, status: 200, json: async () => ({
+        status: 'ok', previewMode: 'sender-subject-snippet-v1', ...(upgraded ? { routingVersion: 2 } : {}),
+      }) };
+      if (init.method === 'PUT') requests.push(JSON.parse(init.body as string) as Record<string, unknown>);
+      return { ok: true, status: 200, json: async () => ({ registrationId: 'registration-1' }) };
+    }));
+    expect(await registerCompanyPush(accountId, true)).toEqual({ status: 'ACTIVE' });
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).not.toHaveProperty('routingVersion');
+    expect(requests[0].previews).toBe(true);
+    upgraded = true;
+    expect(await registerCompanyPush(accountId, false)).toEqual({ status: 'ACTIVE' });
+    expect(requests).toHaveLength(2);
+    expect(requests[1]).toMatchObject({ routingVersion: 2, previews: true });
+    expect(JSON.parse(records.get('zyndmail.production.push.registration.v1')!).relayRoutingVersion).toBe(2);
+  });
+
   it('rejects generic relay enrollment while previews are enabled', async () => {
     const fetchMock = vi.fn(async (url: string, init: RequestInit) => ({
       ok: true, status: 200,
