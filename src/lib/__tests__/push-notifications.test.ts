@@ -18,6 +18,7 @@ vi.mock('react-native', () => {
         deleteToken: vi.fn(async () => undefined),
         dismissMailNotifications: vi.fn(async () => undefined),
         disableMailAccount: vi.fn(async () => undefined),
+        disableMailAccounts: vi.fn(async () => undefined),
         activateMailAccount: vi.fn(async () => undefined),
       },
     },
@@ -54,6 +55,8 @@ vi.mock('../../api/push', () => ({
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   setupPushNotifications,
+  disableAllRegisteredAndroidMailAccounts,
+  disableAndroidMailAccount,
   deviceClientIdKey,
   isValidRelayUrl,
   readPushJmapAccountIds,
@@ -134,6 +137,50 @@ describe('setupPushNotifications leftover reaping', () => {
       useSettingsStore.setState({ emailNotificationsEnabled: false });
       listMock.mockResolvedValue([sub('new-server-id', OUR_DCID)]);
       expect((await setupPushNotifications({ relayBaseUrl: RELAY })).verified).toBe(true);
+      expect(native.activateMailAccount).not.toHaveBeenCalled();
+    } finally {
+      useAccountStore.setState({ accounts: [], activeAccountId: null });
+      useSettingsStore.setState({ hydrated: false, emailNotificationsEnabled: true });
+    }
+  });
+
+  it('closes gates for active and inactive registered accounts on global email opt-out', async () => {
+    const inactiveId = generateAccountId('other@example.com', 'https://mail.example.com');
+    await AsyncStorage.setItem('push:accountIds:v1', JSON.stringify([ACCOUNT_ID, inactiveId]));
+    const native = (NativeModules as { BulwarkFcm: {
+      disableMailAccounts: ReturnType<typeof vi.fn>;
+      dismissMailNotifications: ReturnType<typeof vi.fn>;
+    } }).BulwarkFcm;
+    useSettingsStore.setState({ hydrated: true, emailNotificationsEnabled: false });
+    try {
+      await disableAllRegisteredAndroidMailAccounts();
+      expect(native.disableMailAccounts).toHaveBeenCalledTimes(1);
+      expect(native.disableMailAccounts).toHaveBeenCalledWith([ACCOUNT_ID, inactiveId]);
+      expect(native.dismissMailNotifications).not.toHaveBeenCalled();
+    } finally {
+      useSettingsStore.setState({ hydrated: false, emailNotificationsEnabled: true });
+    }
+  });
+
+  it('does not reactivate a gate when setup finishes after logout starts', async () => {
+    useAccountStore.setState({ accounts: [{ id: ACCOUNT_ID, serverUrl: 'https://mail.example.com' } as never] });
+    useSettingsStore.setState({ hydrated: true, emailNotificationsEnabled: true });
+    installFetch({});
+    let release!: () => void;
+    createMock.mockImplementationOnce(() => new Promise<string>((resolve) => {
+      release = () => resolve('new-server-id');
+    }));
+    const native = (NativeModules as { BulwarkFcm: {
+      activateMailAccount: ReturnType<typeof vi.fn>;
+      disableMailAccount: ReturnType<typeof vi.fn>;
+    } }).BulwarkFcm;
+    try {
+      const setup = setupPushNotifications({ relayBaseUrl: RELAY });
+      await vi.waitFor(() => expect(createMock).toHaveBeenCalled());
+      await disableAndroidMailAccount(ACCOUNT_ID);
+      release();
+      await setup;
+      expect(native.disableMailAccount).toHaveBeenCalledWith(ACCOUNT_ID);
       expect(native.activateMailAccount).not.toHaveBeenCalled();
     } finally {
       useAccountStore.setState({ accounts: [], activeAccountId: null });

@@ -543,6 +543,26 @@ async function pollVerificationCode(
 // of them ever verifies (the symptom is a perpetual "Timed out waiting for
 // PushVerification"). Callers share the first in-flight run instead.
 const inFlightSetups = new Map<string, Promise<PushSetupResult>>();
+const accountGateGenerations = new Map<string, number>();
+const accountGateOperations = new Map<string, Promise<void>>();
+
+function gateGeneration(accountId: string): number {
+  return accountGateGenerations.get(accountId) ?? 0;
+}
+
+function invalidateAccountGate(accountId: string): void {
+  accountGateGenerations.set(accountId, gateGeneration(accountId) + 1);
+}
+
+function queueAccountGateOperation(accountId: string, action: () => Promise<void>): Promise<void> {
+  const previous = accountGateOperations.get(accountId) ?? Promise.resolve();
+  const current = previous.catch(() => undefined).then(action);
+  accountGateOperations.set(accountId, current);
+  void current.finally(() => {
+    if (accountGateOperations.get(accountId) === current) accountGateOperations.delete(accountId);
+  }).catch(() => undefined);
+  return current;
+}
 
 /**
  * Full setup flow: ask permission, fetch the device's FCM token, register
@@ -556,7 +576,10 @@ export function setupPushNotifications(
   const key = `${jmapClient.username ?? ''}@${jmapClient.serverUrl ?? ''}`;
   const existing = inFlightSetups.get(key);
   if (existing) return existing;
-  const run = setupPushNotificationsInner(params).finally(() => {
+  const accountId = jmapClient.username && jmapClient.serverUrl
+    ? generateAccountId(jmapClient.username, jmapClient.serverUrl) : null;
+  const generation = accountId ? gateGeneration(accountId) : 0;
+  const run = setupPushNotificationsInner(params, generation).finally(() => {
     inFlightSetups.delete(key);
   });
   inFlightSetups.set(key, run);
@@ -569,6 +592,7 @@ function logPhase(phase: string, detail?: string): void {
 
 async function setupPushNotificationsInner(
   params: PushSetupParams,
+  generation: number,
 ): Promise<PushSetupResult> {
   const native = getNative();
   if (!native) {
@@ -638,7 +662,7 @@ async function setupPushNotificationsInner(
         if (refreshed) {
           await addPushAccountId(accountId);
           await writePushJmapAccountId(accountId, jmapAccountId);
-          await activateSetupAccount(accountId);
+          await activateSetupAccount(accountId, generation);
           logPhase('done', 'reused existing subscription');
           return { subscriptionId: storedServerId, verified: true };
         }
@@ -702,7 +726,7 @@ async function setupPushNotificationsInner(
   await AsyncStorage.setItem(subKey, serverAssignedId);
   await addPushAccountId(accountId);
   await writePushJmapAccountId(accountId, jmapAccountId);
-  await activateSetupAccount(accountId);
+  await activateSetupAccount(accountId, generation);
   logPhase('done', 'subscription verified');
 
   return { subscriptionId: serverAssignedId, verified: true };
@@ -715,16 +739,24 @@ async function addPushAccountId(accountId: string): Promise<void> {
   }
 }
 
-async function activateSetupAccount(accountId: string): Promise<void> {
+async function activateSetupAccount(accountId: string, generation: number): Promise<void> {
   const [{ useAccountStore }, { useSettingsStore }] = await Promise.all([
     import('../stores/account-store'), import('../stores/settings-store'),
   ]);
-  const settings = useSettingsStore.getState();
-  if (settings.hydrated && settings.emailNotificationsEnabled &&
-      useAccountStore.getState().getAccountById(accountId) &&
-      generateAccountId(jmapClient.username ?? '', jmapClient.serverUrl ?? '') === accountId) {
-    await activateAndroidMailAccount(accountId);
-  }
+  if (gateGeneration(accountId) !== generation) return;
+  if (!(await readPushAccountIds()).includes(accountId)) return;
+  const canActivate = () => {
+    const settings = useSettingsStore.getState();
+    return gateGeneration(accountId) === generation &&
+      settings.hydrated && settings.emailNotificationsEnabled &&
+      !!useAccountStore.getState().getAccountById(accountId) &&
+      !!jmapClient.currentSession &&
+      generateAccountId(jmapClient.username ?? '', jmapClient.serverUrl ?? '') === accountId;
+  };
+  if (!canActivate()) return;
+  await queueAccountGateOperation(accountId, async () => {
+    if (canActivate()) await activateAndroidMailAccount(accountId);
+  });
 }
 
 // Push the subscription's expires forward when it's getting close to the
@@ -846,6 +878,7 @@ export async function teardownPushNotifications(): Promise<void> {
   await migrateLegacyPushKeys();
 
   const accountIds = await readPushAccountIds();
+  await disableRegisteredAndroidMailAccounts(accountIds);
   await AsyncStorage.removeItem(PUSH_ACCOUNT_IDS_KEY);
   await dismissAndroidMailNotifications();
   const relayBaseUrl = await getStoredRelayBaseUrl();
@@ -987,12 +1020,34 @@ export async function setAndroidMailPreviewEnabled(enabled: boolean): Promise<vo
 }
 
 export async function disableAndroidMailAccount(accountId: string): Promise<void> {
+  invalidateAccountGate(accountId);
+  return queueAccountGateOperation(accountId, () => disableAndroidMailAccountNative(accountId));
+}
+
+async function disableAndroidMailAccountNative(accountId: string): Promise<void> {
   if (Platform.OS !== 'android') return;
   const native = (NativeModules as Record<string, unknown>).BulwarkFcm as
     | { disableMailAccount?: (id: string) => Promise<void> }
     | undefined;
   if (!native?.disableMailAccount) throw new Error('Native mail account protection is unavailable.');
   await native.disableMailAccount(accountId);
+}
+
+async function disableRegisteredAndroidMailAccounts(accountIds: string[]): Promise<void> {
+  if (accountIds.length === 0) return;
+  for (const accountId of accountIds) invalidateAccountGate(accountId);
+  await Promise.all(accountIds.map((id) => accountGateOperations.get(id)?.catch(() => undefined)));
+  if (Platform.OS !== 'android') return;
+  const native = (NativeModules as Record<string, unknown>).BulwarkFcm as
+    | { disableMailAccounts?: (ids: string[]) => Promise<void> }
+    | undefined;
+  if (!native?.disableMailAccounts) throw new Error('Native mail account protection is unavailable.');
+  await native.disableMailAccounts(accountIds);
+}
+
+export async function disableAllRegisteredAndroidMailAccounts(): Promise<void> {
+  await migrateLegacyPushKeys();
+  await disableRegisteredAndroidMailAccounts(await readPushAccountIds());
 }
 
 export async function activateAndroidMailAccount(accountId: string): Promise<void> {

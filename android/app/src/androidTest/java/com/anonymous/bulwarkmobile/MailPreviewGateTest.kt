@@ -176,4 +176,28 @@ class MailPreviewGateTest {
         assertTrue(restarted.postIfCurrent(restarted.snapshot("removed"), false, { false },
             { disabled["removed"] ?: true }) { posted = true })
     }
+
+    @Test
+    fun globalOptOutDisablesEveryRegisteredAccountBeforeCancellation() {
+        val gate = MailPreviewGate()
+        val disabled = mutableMapOf<String, Boolean>()
+        val activeTicket = gate.snapshot("active")
+        val inactiveTicket = gate.snapshot("inactive")
+        var canceledAfterDisable = false
+        gate.disableAccounts(listOf("active", "inactive"), {
+            disabled["active"] = true
+            disabled["inactive"] = true
+            true
+        }) {
+            canceledAfterDisable = disabled["active"] == true && disabled["inactive"] == true
+        }
+        assertTrue(canceledAfterDisable)
+        assertFalse(gate.postIfCurrent(activeTicket, false, { false }, { disabled["active"] ?: true }) {})
+        assertFalse(gate.postIfCurrent(inactiveTicket, false, { false }, { disabled["inactive"] ?: true }) {})
+        assertFalse(gate.postIfCurrent(gate.snapshot("inactive"), false, { false },
+            { disabled["inactive"] ?: true }) {})
+        gate.activate("inactive") { disabled["inactive"] = false; true }
+        assertTrue(gate.postIfCurrent(gate.snapshot("inactive"), false, { false },
+            { disabled["inactive"] ?: true }) {})
+    }
 }

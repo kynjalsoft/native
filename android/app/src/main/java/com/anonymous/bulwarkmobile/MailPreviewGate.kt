@@ -48,6 +48,21 @@ internal class MailPreviewGate {
         }
     }
 
+    fun disableAccounts(accountIds: List<String>, persist: () -> Boolean, cancel: () -> Unit) {
+        synchronized(lock) {
+            for (accountId in accountIds) {
+                disabledAccounts.add(accountId)
+                accountGenerations[accountId] = (accountGenerations[accountId] ?: 0L) + 1
+            }
+            val saved = try {
+                persist()
+            } finally {
+                cancel()
+            }
+            if (!saved) throw IllegalStateException("Mail account disablement could not be saved")
+        }
+    }
+
     fun activate(accountId: String, persist: () -> Boolean) {
         synchronized(lock) {
             if (!persist()) throw IllegalStateException("Mail account activation could not be saved")

@@ -25,6 +25,7 @@ import {
   getInitialNotificationTap,
   getStoredRelayBaseUrl,
   setupPushNotifications,
+  disableAllRegisteredAndroidMailAccounts,
   setAndroidMailPreviewEnabled,
   teardownPushNotificationsForAccount,
   type NotificationTapPayload,
@@ -717,19 +718,22 @@ function AppContent() {
     (s) => s.emailNotificationsEnabled,
   );
   React.useEffect(() => {
+    if (!settingsHydrated || emailNotificationsEnabled) return;
+    const close = async () => {
+      await disableAllRegisteredAndroidMailAccounts();
+      if (isAuthenticated && activeAccountId && client && !isCompanyMailServer(client.serverUrl ?? '')) {
+        await teardownPushNotificationsForAccount(activeAccountId);
+      }
+    };
+    void close().catch((error) => console.warn('[push] email opt-out failed:', error));
+  }, [settingsHydrated, emailNotificationsEnabled, isAuthenticated, activeAccountId, client]);
+  React.useEffect(() => {
     if (!isAuthenticated || !client) return;
     if (isCompanyMailServer(client.serverUrl ?? '')) return;
 
     let cancelled = false;
     const doSetup = async () => {
-      if (!emailNotificationsEnabled) {
-        if (activeAccountId) {
-          await teardownPushNotificationsForAccount(activeAccountId).catch(
-            () => undefined,
-          );
-        }
-        return;
-      }
+      if (!emailNotificationsEnabled) return;
       const relayBaseUrl = await getStoredRelayBaseUrl();
       if (!relayBaseUrl) return;
       try {

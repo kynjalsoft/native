@@ -15,6 +15,7 @@ import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
+import com.facebook.react.bridge.ReadableArray
 import com.facebook.react.bridge.ReadableMap
 import com.facebook.react.bridge.WritableMap
 import com.facebook.react.modules.core.DeviceEventManagerModule.RCTDeviceEventEmitter
@@ -154,6 +155,25 @@ class BulwarkFcmModule(reactContext: ReactApplicationContext)
                 reactApplicationContext.getSharedPreferences(MAIL_ACCOUNT_PREFERENCES, Context.MODE_PRIVATE)
                     .edit().putBoolean("disabled:$accountId", true).commit()
             }) { cancelMailNotifications(accountId) }
+            promise.resolve(null)
+        } catch (error: Exception) {
+            promise.reject("mail_account_disable_failed", error)
+        }
+    }
+
+    @ReactMethod
+    fun disableMailAccounts(accountIds: ReadableArray, promise: Promise) {
+        val ids = (0 until accountIds.size()).mapNotNull { accountIds.getString(it) }
+        if (ids.size != accountIds.size() || ids.any { it.isBlank() }) {
+            promise.reject("bad_args", "accountIds must contain account IDs")
+            return
+        }
+        try {
+            mailPreviewGate.disableAccounts(ids, {
+                val editor = reactApplicationContext.getSharedPreferences(MAIL_ACCOUNT_PREFERENCES, Context.MODE_PRIVATE).edit()
+                ids.forEach { editor.putBoolean("disabled:$it", true) }
+                editor.commit()
+            }) { ids.forEach { cancelMailNotifications(it) } }
             promise.resolve(null)
         } catch (error: Exception) {
             promise.reject("mail_account_disable_failed", error)
