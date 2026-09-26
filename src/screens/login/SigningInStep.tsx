@@ -4,6 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { spacing, radius, typography, componentSizes, type ThemePalette } from '../../theme/tokens';
 import { useColors } from '../../theme/colors';
 import { useLocaleStore } from '../../stores/locale-store';
+import AuthDoodleBackground from './AuthDoodleBackground';
 
 const LOGO = require('../../../assets/icon.png');
 
@@ -49,6 +50,7 @@ export default function SigningInStep({ phase, serverUrl, email }: SigningInStep
 
   return (
     <SafeAreaView style={styles.container}>
+      <AuthDoodleBackground />
       <View style={styles.content}>
         {email ? (
           <View style={styles.avatar}>

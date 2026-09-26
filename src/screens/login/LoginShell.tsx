@@ -12,6 +12,7 @@ import { ArrowLeft, X } from 'lucide-react-native';
 import { spacing, componentSizes, type ThemePalette } from '../../theme/tokens';
 import { useColors } from '../../theme/colors';
 import { useLocaleStore } from '../../stores/locale-store';
+import AuthDoodleBackground from './AuthDoodleBackground';
 
 interface LoginShellProps {
   children: React.ReactNode;
@@ -37,6 +38,7 @@ export default function LoginShell({
 
   return (
     <SafeAreaView style={styles.container}>
+      <AuthDoodleBackground />
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.flex}
