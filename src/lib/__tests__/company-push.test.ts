@@ -12,7 +12,7 @@ const session = vi.hoisted(() => ({
   serverUrl: 'https://mail.zyndpay.io',
   currentSession: { apiUrl: 'https://mail.zyndpay.io/jmap/' },
   ensureFreshToken: vi.fn(async () => undefined),
-  getStoredOAuthTokens: vi.fn(async () => null as unknown),
+  getStoredOAuthTokens: vi.fn(async (_accountId?: string) => null as unknown),
   getStoredCredentials: vi.fn(async () => null as unknown),
 }));
 

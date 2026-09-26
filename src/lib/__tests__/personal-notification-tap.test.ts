@@ -52,7 +52,7 @@ describe('personal notification tap', () => {
       sessionServerUrl: 'https://mail.example.com', switching: false };
     const navigate = vi.fn();
     const opening = openFetchedPersonalNotification('alice@mail.example.com',
-      () => new Promise((resolve) => { finish = resolve; }), () => owner, () => true, navigate);
+      () => new Promise<{ id: string }>((resolve) => { finish = resolve; }), () => owner, () => true, navigate);
     owner.switching = true;
     finish({ id: 'message-a' });
     await expect(opening).resolves.toBe('retry');

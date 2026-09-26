@@ -129,7 +129,7 @@ describe('Android headless mail presentation', () => {
     ] } }));
     fetchEmail = async (id) => ({ id, threadId: 'thread-1', mailboxIds: { inbox: true },
       keywords: {}, receivedAt: '2026-09-26T10:00:00Z', from: [{ name: 'Ada', email: 'ada@example.com' }],
-      subject: 'Project update', preview: 'A safe snippet' } as Email);
+      subject: 'Project update', preview: 'A safe snippet', size: 0, hasAttachment: false });
     vi.mocked(secureFetch).mockImplementation(async (url, init) => {
       if (String(url).includes('/.well-known/jmap')) return { ok: true, json: async () => ({
         apiUrl: 'https://mail.example.com/jmap', primaryAccounts: { [CAPABILITIES.MAIL]: 'u1' },
@@ -156,7 +156,8 @@ describe('Android headless mail presentation', () => {
     }));
     fetchEmail = async (id) => ({ id, threadId: 'thread-1', mailboxIds: { inbox: true },
       keywords: {}, receivedAt: '2026-09-26T10:00:00Z', from: [{ name: 'Ada', email: 'ada@example.com' }],
-      subject: 'Project <b>update</b>', preview: 'Line one\u202e<script>bad</script> line two' } as Email);
+      subject: 'Project <b>update</b>', preview: 'Line one\u202e<script>bad</script> line two',
+      size: 0, hasAttachment: false });
     await pushBackgroundTask({ accountId: 'u1', emailIds: JSON.stringify(['m2']) });
     expect(native.showNotification).toHaveBeenLastCalledWith(expect.objectContaining({
       title: 'Ada', body: 'Project update\nLine one bad line two', previews: true,
@@ -173,7 +174,7 @@ describe('Android headless mail presentation', () => {
     await entered;
     await AsyncStorage.removeItem('push:accountIds:v1');
     finish({ id: 'm1', threadId: 'thread-1', mailboxIds: { inbox: true }, keywords: {},
-      receivedAt: '2026-09-26T10:00:00Z', subject: 'Private' } as Email);
+      receivedAt: '2026-09-26T10:00:00Z', subject: 'Private', size: 0, hasAttachment: false });
     await processing;
     expect(native.showNotification).not.toHaveBeenCalled();
   });

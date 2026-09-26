@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const handler = vi.hoisted(() => ({ current: null as null | ((notification: unknown) => Promise<unknown>) }));
-const scheduled = vi.hoisted(() => vi.fn(async (_request: unknown) => 'generic-fallback'));
+const scheduled = vi.hoisted(() => vi.fn(async (_request: {
+  content: { title: string; body: string; data: Record<string, string> }; trigger: null;
+}) => 'generic-fallback'));
 const current = vi.hoisted(() => ({
   settings: { emailNotificationsEnabled: true, calendarNotificationsEnabled: true, notificationPreviewsEnabled: false },
   accounts: [{ serverUrl: 'https://mail.zyndpay.io' }] as { serverUrl: string }[],
