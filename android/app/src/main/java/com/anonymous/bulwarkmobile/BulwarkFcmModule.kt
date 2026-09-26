@@ -72,6 +72,10 @@ class BulwarkFcmModule(reactContext: ReactApplicationContext)
         val emailId = options.getString("emailId")
         val threadId = options.getString("threadId")
         val accountId = options.takeIf { it.hasKey("accountId") }?.getString("accountId")
+        if (accountId.isNullOrBlank()) {
+            promise.reject("bad_args", "accountId is required")
+            return
+        }
         val jmapAccountId = options.takeIf { it.hasKey("jmapAccountId") }?.getString("jmapAccountId")
         val groupKey = options.takeIf { it.hasKey("groupKey") }?.getString("groupKey")
             ?: accountId?.let { "bulwark-mail:$it" }
@@ -88,6 +92,9 @@ class BulwarkFcmModule(reactContext: ReactApplicationContext)
                 val posted = mailPreviewGate.postIfCurrent(generation, previews, {
                     reactApplicationContext.getSharedPreferences(MAIL_PREVIEW_PREFERENCES, Context.MODE_PRIVATE)
                         .getBoolean("enabled", false)
+                }, {
+                    reactApplicationContext.getSharedPreferences(MAIL_ACCOUNT_PREFERENCES, Context.MODE_PRIVATE)
+                        .getBoolean("disabled:$accountId", true)
                 }) {
                     postNotification(
                         notificationId, title, body, largeIcon, bgColorHex,
@@ -133,6 +140,40 @@ class BulwarkFcmModule(reactContext: ReactApplicationContext)
             promise.resolve(null)
         } catch (error: Exception) {
             promise.reject("dismiss_mail_failed", error)
+        }
+    }
+
+    @ReactMethod
+    fun disableMailAccount(accountId: String, promise: Promise) {
+        if (accountId.isBlank()) {
+            promise.reject("bad_args", "accountId is required")
+            return
+        }
+        try {
+            mailPreviewGate.dismiss(accountId, true, {
+                reactApplicationContext.getSharedPreferences(MAIL_ACCOUNT_PREFERENCES, Context.MODE_PRIVATE)
+                    .edit().putBoolean("disabled:$accountId", true).commit()
+            }) { cancelMailNotifications(accountId) }
+            promise.resolve(null)
+        } catch (error: Exception) {
+            promise.reject("mail_account_disable_failed", error)
+        }
+    }
+
+    @ReactMethod
+    fun activateMailAccount(accountId: String, promise: Promise) {
+        if (accountId.isBlank()) {
+            promise.reject("bad_args", "accountId is required")
+            return
+        }
+        try {
+            mailPreviewGate.activate(accountId) {
+                reactApplicationContext.getSharedPreferences(MAIL_ACCOUNT_PREFERENCES, Context.MODE_PRIVATE)
+                    .edit().putBoolean("disabled:$accountId", false).commit()
+            }
+            promise.resolve(null)
+        } catch (error: Exception) {
+            promise.reject("mail_account_activation_failed", error)
         }
     }
 
@@ -326,6 +367,7 @@ class BulwarkFcmModule(reactContext: ReactApplicationContext)
         // 1 MiB is plenty for a favicon; anything bigger is a sign of trouble.
         private const val MAX_FAVICON_BYTES = 1 * 1024 * 1024
         private const val MAIL_PREVIEW_PREFERENCES = "bulwark-mail-preview"
+        private const val MAIL_ACCOUNT_PREFERENCES = "bulwark-mail-accounts"
         private val mailPreviewGate = MailPreviewGate()
 
         @Volatile private var currentInstance: BulwarkFcmModule? = null

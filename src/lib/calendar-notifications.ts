@@ -27,6 +27,21 @@ let queued = false;
 let syncStarted = false;
 let lastScheduledKeys: string[] = [];
 let scheduleGeneration = 0;
+let suspended = false;
+
+export function suspendCalendarNotifications(): void {
+  suspended = true;
+  scheduleGeneration += 1;
+  queued = false;
+  if (rescheduleTimer) clearTimeout(rescheduleTimer);
+  rescheduleTimer = null;
+}
+
+export function resumeCalendarNotifications(): void {
+  if (!suspended) return;
+  suspended = false;
+  scheduleSoon();
+}
 
 async function ensurePermission(): Promise<boolean> {
   if (permissionGranted !== null) return permissionGranted;
@@ -116,6 +131,7 @@ async function scheduleOne(alert: ScheduledAlert): Promise<string> {
  * removed, task completed) and add the new ones. Concurrent calls coalesce.
  */
 export async function rescheduleCalendarNotifications(): Promise<void> {
+  if (suspended) return;
   if (rescheduling) {
     queued = true;
     return rescheduling;
@@ -130,7 +146,7 @@ export async function rescheduleCalendarNotifications(): Promise<void> {
       }
       if (!(await ensurePermission())) return;
       await ensureChannel();
-      if (generation !== scheduleGeneration) return;
+      if (suspended || generation !== scheduleGeneration) return;
 
       const { events, tasks, calendars } = useCalendarStore.getState();
       const wanted = getUpcomingAlerts(events, tasks, calendars, {
@@ -141,10 +157,10 @@ export async function rescheduleCalendarNotifications(): Promise<void> {
       const wantedByKey = new Map(wanted.map((a) => [a.key, a]));
 
       const pending = await Notifications.getAllScheduledNotificationsAsync();
-      if (generation !== scheduleGeneration) return;
+      if (suspended || generation !== scheduleGeneration) return;
       const present = new Set<string>();
       for (const request of pending) {
-        if (generation !== scheduleGeneration) return;
+        if (suspended || generation !== scheduleGeneration) return;
         const key = alertKeyOf(request);
         if (key === null) continue;
         if (wantedByKey.has(key)) {
@@ -154,11 +170,11 @@ export async function rescheduleCalendarNotifications(): Promise<void> {
         }
       }
       for (const alert of wanted) {
-        if (generation !== scheduleGeneration) return;
+        if (suspended || generation !== scheduleGeneration) return;
         if (present.has(alert.key)) continue;
         try {
           const identifier = await scheduleOne(alert);
-          if (generation !== scheduleGeneration) {
+          if (suspended || generation !== scheduleGeneration) {
             await Notifications.cancelScheduledNotificationAsync(identifier);
             return;
           }
@@ -166,12 +182,12 @@ export async function rescheduleCalendarNotifications(): Promise<void> {
           // A single bad trigger must not block the rest.
         }
       }
-      if (generation === scheduleGeneration) lastScheduledKeys = [...wantedByKey.keys()];
+      if (!suspended && generation === scheduleGeneration) lastScheduledKeys = [...wantedByKey.keys()];
     } catch {
       // Notifications are best-effort.
     } finally {
       rescheduling = null;
-      if (queued) {
+      if (queued && !suspended) {
         queued = false;
         void rescheduleCalendarNotifications();
       }
@@ -181,6 +197,7 @@ export async function rescheduleCalendarNotifications(): Promise<void> {
 }
 
 function scheduleSoon(): void {
+  if (suspended) return;
   if (rescheduleTimer) clearTimeout(rescheduleTimer);
   // Debounce: a refresh sets events and tasks in two steps.
   rescheduleTimer = setTimeout(() => {

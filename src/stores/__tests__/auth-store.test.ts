@@ -31,6 +31,8 @@ vi.mock('../../api/jmap-client', () => ({
 }));
 
 vi.mock('../../lib/push-notifications', () => ({
+  activateAndroidMailAccount: vi.fn(async () => undefined),
+  disableAndroidMailAccount: vi.fn(async () => undefined),
   teardownPushNotifications: vi.fn(async () => undefined),
   teardownPushNotificationsForAccount: vi.fn(async () => undefined),
 }));
@@ -40,8 +42,16 @@ vi.mock('../../lib/company-push', () => ({
   revokeEvictedCompanyPush: vi.fn(async () => undefined),
 }));
 
+vi.mock('../../lib/calendar-notifications', () => ({
+  suspendCalendarNotifications: vi.fn(),
+  resumeCalendarNotifications: vi.fn(),
+  clearCalendarNotifications: vi.fn(async () => undefined),
+}));
+
 import { jmapClient } from '../../api/jmap-client';
 import { revokeEvictedCompanyPush } from '../../lib/company-push';
+import { suspendCalendarNotifications, resumeCalendarNotifications, clearCalendarNotifications } from '../../lib/calendar-notifications';
+import { disableAndroidMailAccount, teardownPushNotificationsForAccount } from '../../lib/push-notifications';
 import { useAuthStore } from '../auth-store';
 import { useAccountStore } from '../account-store';
 
@@ -127,6 +137,28 @@ describe('auth-store', () => {
       expect(state.isAuthenticated).toBe(false);
       expect(state.serverUrl).toBeNull();
       expect(state.username).toBeNull();
+    });
+
+    it('holds calendar scheduling until account removal has finished', async () => {
+      let releaseTeardown!: () => void;
+      const teardown = new Promise<void>((resolve) => { releaseTeardown = resolve; });
+      vi.mocked(teardownPushNotificationsForAccount).mockReturnValueOnce(teardown);
+      useAccountStore.setState({ accounts: [{
+        id: 'acc-1', username: 'user', serverUrl: 'https://mail.example.com',
+      } as never] });
+      useAuthStore.setState({ isAuthenticated: true, activeAccountId: 'acc-1' });
+
+      const loggingOut = useAuthStore.getState().logout();
+      await vi.waitFor(() => expect(teardownPushNotificationsForAccount).toHaveBeenCalledWith('acc-1'));
+      expect(suspendCalendarNotifications).toHaveBeenCalledOnce();
+      expect(disableAndroidMailAccount).toHaveBeenCalledWith('acc-1');
+      expect(clearCalendarNotifications).toHaveBeenCalledOnce();
+      expect(resumeCalendarNotifications).not.toHaveBeenCalled();
+      releaseTeardown();
+      await loggingOut;
+      expect(useAccountStore.getState().accounts).toEqual([]);
+      expect(clearCalendarNotifications).toHaveBeenCalledTimes(2);
+      expect(resumeCalendarNotifications).not.toHaveBeenCalled();
     });
   });
 

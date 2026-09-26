@@ -19,11 +19,13 @@ import {
   validateCompanyTokenEndpoint,
 } from '../lib/zyndmail-company';
 import {
+  activateAndroidMailAccount,
+  disableAndroidMailAccount,
   teardownPushNotifications,
   teardownPushNotificationsForAccount,
 } from '../lib/push-notifications';
 import { revokeCompanyPush, revokeEvictedCompanyPush } from '../lib/company-push';
-import { clearCalendarNotifications } from '../lib/calendar-notifications';
+import { clearCalendarNotifications, resumeCalendarNotifications, suspendCalendarNotifications } from '../lib/calendar-notifications';
 
 // Persist middleware hydrates asynchronously on cold start. Without this
 // guard, restoreSession() can read the account-store before AsyncStorage has
@@ -260,6 +262,8 @@ function applyConnectedState(
     activeAccountId: accountId,
     client: jmapClient,
   });
+  void activateAndroidMailAccount(accountId).catch(() => undefined);
+  resumeCalendarNotifications();
 }
 
 export const useAuthStore = create<AuthState>((set, get) => ({
@@ -490,6 +494,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   logout: async () => {
     const accountStore = useAccountStore.getState();
     const currentId = get().activeAccountId;
+    suspendCalendarNotifications();
+    if (currentId) await disableAndroidMailAccount(currentId).catch(() => undefined);
     await clearCalendarNotifications();
 
     // Best-effort: revoke this account's JMAP PushSubscription and drop its
@@ -547,8 +553,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   logoutAll: async () => {
     const accountStore = useAccountStore.getState();
-    await clearCalendarNotifications();
     const ids = accountStore.accounts.map((a) => a.id);
+    suspendCalendarNotifications();
+    await Promise.all(ids.map((id) => disableAndroidMailAccount(id).catch(() => undefined)));
+    await clearCalendarNotifications();
     for (const account of accountStore.accounts) {
       if (isCompanyMailServer(account.serverUrl)) {
         await revokeCompanyPush(account.id, false, true).catch(() => undefined);
@@ -617,6 +625,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       if (!ok) {
         // Credentials missing - evict stale entry and surface error
         if (isCompanyMailServer(target.serverUrl)) await revokeEvictedCompanyPush(accountId).catch(() => undefined);
+        await disableAndroidMailAccount(accountId).catch(() => undefined);
         accountStore.removeAccount(accountId);
         useEmailStore.getState().removeAccount(accountId);
         restorePrevious();
@@ -626,6 +635,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     } catch (err) {
       if (err instanceof AuthenticationError) {
         if (isCompanyMailServer(target.serverUrl)) await revokeEvictedCompanyPush(accountId).catch(() => undefined);
+        await disableAndroidMailAccount(accountId).catch(() => undefined);
         await jmapClient.clearAccountCredentials(accountId).catch(() => undefined);
         accountStore.removeAccount(accountId);
         useEmailStore.getState().removeAccount(accountId);
@@ -675,6 +685,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     const accountStore = useAccountStore.getState();
     const account = accountStore.getAccountById(accountId);
     if (!account) return;
+    await disableAndroidMailAccount(accountId).catch(() => undefined);
     if (isCompanyMailServer(account.serverUrl)) {
       await revokeCompanyPush(accountId, false, true).catch(() => undefined);
     } else {
@@ -739,6 +750,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         if (!ok) {
           // No stored credentials (or corrupt) — genuine logout.
           if (isCompanyMailServer(target.serverUrl)) await revokeEvictedCompanyPush(target.id).catch(() => undefined);
+          await disableAndroidMailAccount(target.id).catch(() => undefined);
           accountStore.removeAccount(target.id);
           useEmailStore.getState().removeAccount(target.id);
           set({ isLoading: false, hasRestoredSession: true });
@@ -773,6 +785,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         if (err instanceof AuthenticationError) {
           // Server reachable but credentials rejected — drop them.
           if (isCompanyMailServer(target.serverUrl)) await revokeEvictedCompanyPush(target.id).catch(() => undefined);
+          await disableAndroidMailAccount(target.id).catch(() => undefined);
           await jmapClient.clearAccountCredentials(target.id).catch(() => undefined);
           accountStore.removeAccount(target.id);
           useEmailStore.getState().removeAccount(target.id);
@@ -830,6 +843,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       if (err instanceof AuthenticationError) {
         // Now we know the credentials are bad — fall back to logout flow.
         if (isCompanyMailServer(target.serverUrl)) await revokeEvictedCompanyPush(activeAccountId).catch(() => undefined);
+        await disableAndroidMailAccount(activeAccountId).catch(() => undefined);
         await jmapClient.clearAccountCredentials(activeAccountId).catch(() => undefined);
         accountStore.removeAccount(activeAccountId);
         set({

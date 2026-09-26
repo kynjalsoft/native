@@ -971,6 +971,24 @@ export async function setAndroidMailPreviewEnabled(enabled: boolean): Promise<vo
   await native.setMailPreviewEnabled(enabled);
 }
 
+export async function disableAndroidMailAccount(accountId: string): Promise<void> {
+  if (Platform.OS !== 'android') return;
+  const native = (NativeModules as Record<string, unknown>).BulwarkFcm as
+    | { disableMailAccount?: (id: string) => Promise<void> }
+    | undefined;
+  if (!native?.disableMailAccount) throw new Error('Native mail account protection is unavailable.');
+  await native.disableMailAccount(accountId);
+}
+
+export async function activateAndroidMailAccount(accountId: string): Promise<void> {
+  if (Platform.OS !== 'android') return;
+  const native = (NativeModules as Record<string, unknown>).BulwarkFcm as
+    | { activateMailAccount?: (id: string) => Promise<void> }
+    | undefined;
+  if (!native?.activateMailAccount) throw new Error('Native mail account activation is unavailable.');
+  await native.activateMailAccount(accountId);
+}
+
 /** Remove delivered non-company mail cards from the Android tray when the
  * account is disabled or removed. Older installed binaries lack this bridge. */
 export async function dismissAndroidMailNotifications(accountId?: string): Promise<void> {

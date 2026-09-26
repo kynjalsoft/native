@@ -152,4 +152,28 @@ class MailPreviewGateTest {
         assertFalse(logout.isAlive)
         assertTrue(dismissed.get())
     }
+
+    @Test
+    fun accountDisabledBeforeNativeCallCannotPostUntilActivated() {
+        val disabled = mutableMapOf<String, Boolean>()
+        val gate = MailPreviewGate()
+        gate.dismiss("removed", true, { disabled["removed"] = true; true }) {}
+        val late = gate.snapshot("removed")
+        var posted = false
+        assertFalse(gate.postIfCurrent(late, false, { false }, { disabled["removed"] ?: true }) {
+            posted = true
+        })
+        assertFalse(posted)
+
+        val restarted = MailPreviewGate()
+        assertFalse(restarted.postIfCurrent(restarted.snapshot("removed"), false, { false },
+            { disabled["removed"] ?: true }) { posted = true })
+        restarted.activate("survivor") { disabled["survivor"] = false; true }
+        assertTrue(restarted.postIfCurrent(restarted.snapshot("survivor"), false, { false },
+            { disabled["survivor"] ?: true }) { posted = true })
+
+        restarted.activate("removed") { disabled["removed"] = false; true }
+        assertTrue(restarted.postIfCurrent(restarted.snapshot("removed"), false, { false },
+            { disabled["removed"] ?: true }) { posted = true })
+    }
 }
