@@ -554,6 +554,28 @@ const accountGateGenerations = new Map<string, number>();
 const accountGateOperations = new Map<string, Promise<void>>();
 const revokingAccounts = new Map<string, number>();
 const locallyDisabledAccounts = new Set<string>();
+const suspendedSetupAccounts = new Set<string>();
+let globalPushTransition: Promise<void> = Promise.resolve();
+
+function queueGlobalPushTransition<T>(action: () => Promise<T>): Promise<T> {
+  const run = globalPushTransition.then(action);
+  globalPushTransition = run.then(() => undefined, () => undefined);
+  return run;
+}
+
+async function drainAccountSetup(accountId: string): Promise<void> {
+  const setups = [...inFlightSetups.values()]
+    .filter(({ identity }) => identity.accountId === accountId)
+    .map(({ promise }) => promise.catch(() => undefined));
+  await Promise.all(setups);
+}
+
+export async function suspendPersonalPushSetupForAccount(accountId: string): Promise<() => void> {
+  suspendedSetupAccounts.add(accountId);
+  invalidateAccountGate(accountId);
+  await drainAccountSetup(accountId);
+  return () => suspendedSetupAccounts.delete(accountId);
+}
 
 interface PersonalSetupIdentity {
   accountId: string;
@@ -575,6 +597,7 @@ function capturePersonalSetupIdentity(): PersonalSetupIdentity {
   const settings = useSettingsStore.getState();
   if (!account || isCompanyMailServer(account.serverUrl) ||
       registry.activeAccountId !== accountId ||
+      suspendedSetupAccounts.has(accountId) || revokingAccounts.has(accountId) ||
       !settings.hydrated || !settings.emailNotificationsEnabled) {
     throw new PushSetupError('account', 'Personal mail alerts are not enabled for this account.');
   }
@@ -589,6 +612,7 @@ function isPersonalSetupCurrent(identity: PersonalSetupIdentity): boolean {
   if (gateGeneration(identity.accountId) !== identity.generation ||
       !settings.hydrated || !settings.emailNotificationsEnabled ||
       !account || isCompanyMailServer(account.serverUrl) ||
+      suspendedSetupAccounts.has(identity.accountId) || revokingAccounts.has(identity.accountId) ||
       registry.activeAccountId !== identity.accountId ||
       !jmapClient.currentSession ||
       jmapClient.username !== identity.username ||
@@ -634,6 +658,21 @@ function queueAccountGateOperation(accountId: string, action: () => Promise<void
 export function setupPushNotifications(
   params: PushSetupParams,
 ): Promise<PushSetupResult> {
+  const requestedAccountId = jmapClient.username && jmapClient.serverUrl
+    ? generateAccountId(jmapClient.username, jmapClient.serverUrl) : null;
+  if (!requestedAccountId || !useSettingsStore.getState().emailNotificationsEnabled) {
+    return Promise.reject(new PushSetupError('account', 'Personal mail alerts are not enabled for this account.'));
+  }
+  return globalPushTransition.then(() => {
+    if (!jmapClient.username || !jmapClient.serverUrl ||
+        generateAccountId(jmapClient.username, jmapClient.serverUrl) !== requestedAccountId) {
+      throw new PushSetupError('account', 'Personal mail push setup was interrupted.');
+    }
+    return startPushNotifications(params);
+  });
+}
+
+function startPushNotifications(params: PushSetupParams): Promise<PushSetupResult> {
   const key = `${jmapClient.username ?? ''}@${jmapClient.serverUrl ?? ''}`;
   let identity: PersonalSetupIdentity;
   try {
@@ -955,6 +994,7 @@ export async function teardownPushNotificationsForAccount(
   revokingAccounts.set(accountId, (revokingAccounts.get(accountId) ?? 0) + 1);
   try {
     await disableAndroidMailAccount(accountId);
+    await drainAccountSetup(accountId);
     await migrateLegacyPushKeys();
     const remaining = (await readPushAccountIds()).filter((id) => id !== accountId);
     await writePushAccountIds(remaining);
@@ -999,6 +1039,8 @@ export async function teardownPushNotificationsForAccount(
  * FCM token is always deleted so no push gets through regardless.
  */
 export async function teardownPushNotifications(): Promise<void> {
+  for (const { identity } of inFlightSetups.values()) invalidateAccountGate(identity.accountId);
+  await Promise.all([...inFlightSetups.values()].map(({ promise }) => promise.catch(() => undefined)));
   await migrateLegacyPushKeys();
 
   const accountIds = await readPushAccountIds();
@@ -1174,19 +1216,32 @@ async function disableRegisteredAndroidMailAccounts(accountIds: string[]): Promi
   await native.disableMailAccounts(accountIds);
 }
 
-let globalDisableInFlight: Promise<void> = Promise.resolve();
-
 export function disableAllRegisteredAndroidMailAccounts(): Promise<void> {
-  const run = (async () => {
+  return queueGlobalPushTransition(async () => {
     await migrateLegacyPushKeys();
     await disableRegisteredAndroidMailAccounts(await readPushAccountIds());
-  })();
-  globalDisableInFlight = run.catch(() => undefined);
-  return run;
+  });
 }
 
-export async function restoreRegisteredAndroidMailAccounts(): Promise<void> {
-  await globalDisableInFlight;
+export function disableGlobalEmailNotifications(activeAccountId?: string): Promise<void> {
+  return queueGlobalPushTransition(async () => {
+    if (useSettingsStore.getState().emailNotificationsEnabled) return;
+    await migrateLegacyPushKeys();
+    await disableRegisteredAndroidMailAccounts(await readPushAccountIds());
+    if (activeAccountId && useAccountStore.getState().activeAccountId === activeAccountId) {
+      const account = useAccountStore.getState().getAccountById(activeAccountId);
+      if (account && !isCompanyMailServer(account.serverUrl)) {
+        await teardownPushNotificationsForAccount(activeAccountId);
+      }
+    }
+  });
+}
+
+export function restoreRegisteredAndroidMailAccounts(): Promise<void> {
+  return queueGlobalPushTransition(restoreRegisteredAndroidMailAccountsInner);
+}
+
+async function restoreRegisteredAndroidMailAccountsInner(): Promise<void> {
   await migrateLegacyPushKeys();
   const accountIds = await readPushAccountIds();
   for (const accountId of accountIds) {

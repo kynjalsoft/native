@@ -34,6 +34,7 @@ vi.mock('../../api/jmap-client', () => ({
 vi.mock('../../lib/push-notifications', () => ({
   activateAndroidMailAccount: vi.fn(async () => undefined),
   disableAndroidMailAccount: vi.fn(async () => undefined),
+  suspendPersonalPushSetupForAccount: vi.fn(async () => () => undefined),
   teardownPushNotifications: vi.fn(async () => undefined),
   teardownPushNotificationsForAccount: vi.fn(async () => undefined),
 }));
@@ -62,7 +63,7 @@ import { reconcileCompanyPush, revokeEvictedCompanyPush } from '../../lib/compan
 import { loginWithPkce } from '../../lib/oauth-native';
 import { ZYNDMAIL_COMPANY } from '../../lib/zyndmail-company';
 import { suspendCalendarNotifications, resumeCalendarNotifications, clearCalendarNotifications } from '../../lib/calendar-notifications';
-import { disableAndroidMailAccount, teardownPushNotificationsForAccount } from '../../lib/push-notifications';
+import { disableAndroidMailAccount, suspendPersonalPushSetupForAccount, teardownPushNotificationsForAccount } from '../../lib/push-notifications';
 import { useAuthStore } from '../auth-store';
 import { useAccountStore } from '../account-store';
 
@@ -255,6 +256,28 @@ describe('auth-store', () => {
   });
 
   describe('switchAccount', () => {
+    it('waits for the previous push setup before replacing the JMAP session', async () => {
+      const nextId = 'other@mail.example.com';
+      useAccountStore.setState({ accounts: [
+        { id: 'acc-1', serverUrl: 'https://mail.example.com', username: 'user' } as never,
+        { id: nextId, serverUrl: 'https://mail.example.com', username: 'other' } as never,
+      ], activeAccountId: 'acc-1', defaultAccountId: 'acc-1' });
+      useAuthStore.setState({ activeAccountId: 'acc-1', isAuthenticated: true });
+      let release!: () => void;
+      const resume = vi.fn();
+      (suspendPersonalPushSetupForAccount as ReturnType<typeof vi.fn>).mockImplementationOnce(
+        () => new Promise<() => void>((resolve) => { release = () => resolve(resume); }),
+      );
+      mockLoadAccount.mockResolvedValueOnce(true);
+      const switching = useAuthStore.getState().switchAccount(nextId);
+      expect(suspendPersonalPushSetupForAccount).toHaveBeenCalledWith('acc-1');
+      expect(mockLoadAccount).not.toHaveBeenCalled();
+      release();
+      await switching;
+      expect(mockLoadAccount).toHaveBeenCalledWith(nextId);
+      expect(resume).toHaveBeenCalledOnce();
+    });
+
     it('retires only the invalid staff account before evicting it', async () => {
       const id = 'staff@zyndpay.io@mail.zyndpay.io';
       useAccountStore.setState({ accounts: [

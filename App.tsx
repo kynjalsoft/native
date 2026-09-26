@@ -25,10 +25,9 @@ import {
   getInitialNotificationTap,
   getStoredRelayBaseUrl,
   setupPushNotifications,
-  disableAllRegisteredAndroidMailAccounts,
+  disableGlobalEmailNotifications,
   restoreRegisteredAndroidMailAccounts,
   setAndroidMailPreviewEnabled,
-  teardownPushNotificationsForAccount,
   type NotificationTapPayload,
 } from './src/lib/push-notifications';
 import type { MainTabsParamList, RootStackParamList } from './src/navigation/types';
@@ -721,11 +720,7 @@ function AppContent() {
   React.useEffect(() => {
     if (!settingsHydrated || emailNotificationsEnabled) return;
     const close = async () => {
-      await disableAllRegisteredAndroidMailAccounts();
-      if (!useSettingsStore.getState().emailNotificationsEnabled &&
-          isAuthenticated && activeAccountId && client && !isCompanyMailServer(client.serverUrl ?? '')) {
-        await teardownPushNotificationsForAccount(activeAccountId);
-      }
+      await disableGlobalEmailNotifications(isAuthenticated && client ? activeAccountId ?? undefined : undefined);
     };
     void close().catch((error) => console.warn('[push] email opt-out failed:', error));
   }, [settingsHydrated, emailNotificationsEnabled, isAuthenticated, activeAccountId, client]);

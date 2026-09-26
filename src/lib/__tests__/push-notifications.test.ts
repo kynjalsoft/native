@@ -57,7 +57,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   setupPushNotifications,
   disableAllRegisteredAndroidMailAccounts,
+  disableGlobalEmailNotifications,
   disableAndroidMailAccount,
+  suspendPersonalPushSetupForAccount,
   restoreRegisteredAndroidMailAccounts,
   deviceClientIdKey,
   isValidRelayUrl,
@@ -210,8 +212,9 @@ describe('setupPushNotifications leftover reaping', () => {
     }));
     const setup = setupPushNotifications({ relayBaseUrl: RELAY });
     await vi.waitFor(() => expect(createMock).toHaveBeenCalled());
-    await teardownPushNotificationsForAccount(ACCOUNT_ID);
+    const teardown = teardownPushNotificationsForAccount(ACCOUNT_ID);
     release();
+    await teardown;
     await expect(setup).rejects.toMatchObject({ phase: 'account' });
     expect(destroyMock).toHaveBeenCalledWith('late-server-id');
     expect(await AsyncStorage.getItem(SUB_KEY)).toBeNull();
@@ -240,6 +243,92 @@ describe('setupPushNotifications leftover reaping', () => {
     await expect(setup).rejects.toMatchObject({ phase: 'account' });
     expect(global.fetch).not.toHaveBeenCalled();
     expect(createMock).not.toHaveBeenCalled();
+  });
+
+  it('drains created subscriptions before replacing the initiating account session', async () => {
+    installFetch({});
+    let release!: () => void;
+    createMock.mockImplementationOnce(() => new Promise<string>((resolve) => {
+      release = () => resolve('switch-created-id');
+    }));
+    const setup = setupPushNotifications({ relayBaseUrl: RELAY });
+    await vi.waitFor(() => expect(createMock).toHaveBeenCalled());
+    let suspended = false;
+    const switchBoundary = suspendPersonalPushSetupForAccount(ACCOUNT_ID).then((resume) => {
+      suspended = true;
+      Object.assign(jmapClient, {
+        username: 'staff@zyndpay.io',
+        serverUrl: 'https://mail.zyndpay.io',
+        accountId: 'company-jmap',
+      });
+      resume();
+    });
+    expect(suspended).toBe(false);
+    release();
+    await switchBoundary;
+    await expect(setup).rejects.toMatchObject({ phase: 'account' });
+    expect(destroyMock).toHaveBeenCalledWith('switch-created-id');
+    expect(await AsyncStorage.getItem(SUB_KEY)).toBeNull();
+  });
+
+  it('drains every overlapping global disable before restoring gates', async () => {
+    await AsyncStorage.setItem('push:accountIds:v1', JSON.stringify([ACCOUNT_ID]));
+    await AsyncStorage.setItem(SUB_KEY, 'retained-sub');
+    const native = (NativeModules as { BulwarkFcm: {
+      disableMailAccounts: ReturnType<typeof vi.fn>;
+      activateMailAccount: ReturnType<typeof vi.fn>;
+    } }).BulwarkFcm;
+    const events: string[] = [];
+    let releaseFirst!: () => void;
+    let releaseSecond!: () => void;
+    native.disableMailAccounts.mockImplementationOnce(() => new Promise<void>((resolve) => {
+      events.push('disable-1');
+      releaseFirst = resolve;
+    })).mockImplementationOnce(() => new Promise<void>((resolve) => {
+      events.push('disable-2');
+      releaseSecond = resolve;
+    }));
+    native.activateMailAccount.mockImplementationOnce(async () => { events.push('activate'); });
+    const first = disableAllRegisteredAndroidMailAccounts();
+    const second = disableAllRegisteredAndroidMailAccounts();
+    const restore = restoreRegisteredAndroidMailAccounts();
+    await vi.waitFor(() => expect(events).toContain('disable-1'));
+    expect(events).toEqual(['disable-1']);
+    releaseFirst();
+    await vi.waitFor(() => expect(events).toContain('disable-2'));
+    expect(events).toEqual(['disable-1', 'disable-2']);
+    releaseSecond();
+    await Promise.all([first, second, restore]);
+    expect(events).toEqual(['disable-1', 'disable-2', 'activate']);
+  });
+
+  it('finishes active opt-out teardown before quick re-enable setup', async () => {
+    installFetch({});
+    await AsyncStorage.setItem('push:accountIds:v1', JSON.stringify([ACCOUNT_ID]));
+    await AsyncStorage.setItem(SUB_KEY, 'old-sub');
+    await AsyncStorage.setItem('push:relayBaseUrl:v1', RELAY);
+    let releaseDestroy!: () => void;
+    destroyMock.mockImplementationOnce(() => new Promise<void>((resolve) => {
+      releaseDestroy = resolve;
+    }));
+    const native = (NativeModules as { BulwarkFcm: {
+      disableMailAccount: ReturnType<typeof vi.fn>;
+      activateMailAccount: ReturnType<typeof vi.fn>;
+    } }).BulwarkFcm;
+    useSettingsStore.setState({ emailNotificationsEnabled: false });
+    const disable = disableGlobalEmailNotifications(ACCOUNT_ID);
+    await vi.waitFor(() => expect(destroyMock).toHaveBeenCalledWith('old-sub'));
+    useSettingsStore.setState({ emailNotificationsEnabled: true });
+    const restore = restoreRegisteredAndroidMailAccounts();
+    const setup = setupPushNotifications({ relayBaseUrl: RELAY });
+    expect(createMock).not.toHaveBeenCalled();
+    expect(native.activateMailAccount).not.toHaveBeenCalled();
+    releaseDestroy();
+    await Promise.all([disable, restore, setup]);
+    expect(createMock).toHaveBeenCalledTimes(1);
+    expect(native.disableMailAccount).toHaveBeenCalledWith(ACCOUNT_ID);
+    expect(native.activateMailAccount).toHaveBeenCalledWith(ACCOUNT_ID);
+    expect(await AsyncStorage.getItem(SUB_KEY)).toBe('new-server-id');
   });
 
   it('restores only retained personal account gates after global re-enable', async () => {

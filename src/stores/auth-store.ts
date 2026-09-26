@@ -20,6 +20,7 @@ import {
 } from '../lib/zyndmail-company';
 import {
   disableAndroidMailAccount,
+  suspendPersonalPushSetupForAccount,
   teardownPushNotifications,
   teardownPushNotificationsForAccount,
 } from '../lib/push-notifications';
@@ -622,6 +623,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       jmapClient.restoreSnapshot(previousClient);
       if (previousActive) useEmailStore.getState().setActiveAccount(previousActive);
     };
+    const resumePersonalPushSetup = previousActive && !isCompanyMailServer(jmapClient.serverUrl ?? '')
+      ? await suspendPersonalPushSetupForAccount(previousActive) : () => undefined;
     try {
       const ok = await jmapClient.loadAccount(accountId);
       if (!ok) {
@@ -657,6 +660,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         error: err instanceof Error ? err.message : 'Failed to switch account',
       });
       return;
+    } finally {
+      resumePersonalPushSetup();
     }
 
     accountStore.setActiveAccount(accountId);
