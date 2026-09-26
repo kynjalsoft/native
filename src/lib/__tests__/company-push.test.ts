@@ -1188,7 +1188,7 @@ describe('company notification destination', () => {
     expect(parseCompanyPushDestination({ target: 'ACCOUNT', accountId: 'shared' })).toBeNull();
     expect(parseCompanyPushDestination({ target: 'MESSAGE', accountId: 'shared', emailId: 'message' })).toEqual({ target: 'MESSAGE', accountId: 'shared', emailId: 'message' });
     expect(parseCompanyPushDestination({ target: 'EMAIL', accountId: 'shared', emailId: 'message', threadId: 'untrusted' })).toBeNull();
-    expect(parseCompanyPushDestination({ target: 'INBOX' })).toEqual({ target: 'INBOX' });
+    expect(parseCompanyPushDestination({ target: 'INBOX' })).toBeNull();
   });
   it('rejects malformed targets and injected URLs', () => {
     expect(parseCompanyPushDestination({ target: 'EMAIL', accountId: '', emailId: 'id', threadId: 't' })).toBeNull();

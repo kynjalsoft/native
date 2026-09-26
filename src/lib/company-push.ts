@@ -772,7 +772,7 @@ export type CompanyPushDestination = {
   target: 'EMAIL'; accountId: string; emailId: string; threadId: string;
 };
 
-export type CompanyPushReferenceTarget = { target: 'INBOX' } | {
+export type CompanyPushReferenceTarget = {
   target: 'MESSAGE'; accountId: string; emailId: string;
 };
 
@@ -784,7 +784,6 @@ function validIdentifier(value: unknown): value is string {
 export function parseCompanyPushDestination(value: unknown): CompanyPushReferenceTarget | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const result = value as Record<string, unknown>;
-  if (result.target === 'INBOX' && Object.keys(result).length === 1) return { target: 'INBOX' };
   if (result.target === 'MESSAGE' && Object.keys(result).length === 3 &&
       validIdentifier(result.accountId) && validIdentifier(result.emailId)) {
     return { target: 'MESSAGE', accountId: result.accountId, emailId: result.emailId };
@@ -809,7 +808,6 @@ export async function resolveCompanyPush(accountId: string, value: unknown): Pro
     const result = await response.json() as Record<string, unknown>;
     const target = parseCompanyPushDestination(result);
     if (!target) return null;
-    if (target.target !== 'MESSAGE') return null;
     const [email] = await getEmails([target.emailId], target.accountId);
     if (!email) return null;
     return {

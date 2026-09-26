@@ -14,7 +14,7 @@
 
 ## Changes made in the client
 
-- Staff push resolve accepts `INBOX` and `MESSAGE` response shapes. JMAP supplies the current thread. Only an authenticated `MESSAGE` target with a current JMAP email can open a notification; unresolved references do not navigate.
+- Staff push resolve accepts only a `MESSAGE` response with a current JMAP email. JMAP supplies the current thread; unresolved references do not navigate.
 - Defaulted staff message previews to on for new installations, matching the requested experience. Preview registration and ACTIVE status require `previewMode: "sender-subject-snippet-v1"` from live relay health. Generic registration is permitted only with previews off. Successful registration also gates foreground preview display in this process.
 - Set the generic Android channel to default importance, private lock-screen visibility and no badge. A preview-capable relay uses the separate `mail-messages-v2` channel. Android retains user choices and much of a channel's original behavior once created, so upgrade devices require explicit observation.
 - Synchronized the global email switch and company push UI; hid irrelevant calendar controls on company accounts; cleared already visible company alerts on revoke and preview opt-out.
