@@ -141,9 +141,10 @@ export async function companyPushPreviewAvailable(): Promise<boolean> {
   return health.ready && health.previewMode;
 }
 
-export async function companyPushPreviewModeActive(accountId: string): Promise<boolean> {
+async function companyPushRegistrationActive(accountId: string, requirePreviews: boolean): Promise<boolean> {
   const settings = useSettingsStore.getState();
-  if (!settings.hydrated || !settings.emailNotificationsEnabled || !settings.notificationPreviewsEnabled ||
+  if (!settings.hydrated || !settings.emailNotificationsEnabled ||
+      (requirePreviews && !settings.notificationPreviewsEnabled) ||
       revoking.has(accountId) ||
       generateAccountId(jmapClient.username ?? '', jmapClient.serverUrl ?? '') !== accountId ||
       !isCompanyMailServer(jmapClient.serverUrl ?? '')) return false;
@@ -152,17 +153,26 @@ export async function companyPushPreviewModeActive(accountId: string): Promise<b
       readRegistration(), preferenceSubject(), jmapClient.getStoredOAuthTokens(accountId),
     ]);
     const current = useSettingsStore.getState();
-    return current.hydrated && current.emailNotificationsEnabled && current.notificationPreviewsEnabled &&
+    return current.hydrated && current.emailNotificationsEnabled &&
+      (!requirePreviews || current.notificationPreviewsEnabled) &&
       !revoking.has(accountId) &&
       generateAccountId(jmapClient.username ?? '', jmapClient.serverUrl ?? '') === accountId &&
-      !!registration?.registrationId && registration.routingVersion === 3 &&
-      registration.previews === true && registration.revocationPending !== true &&
+      !!registration?.registrationId && registration.revocationPending !== true &&
+      (!requirePreviews || (registration.routingVersion === 3 && registration.previews === true)) &&
       registration.subject === preferredSubject &&
       tokens?.clientId === ZYNDMAIL_COMPANY.clientId &&
       tokens.companyIdentity?.subject === registration.subject;
   } catch {
     return false;
   }
+}
+
+export function companyPushModeActive(accountId: string): Promise<boolean> {
+  return companyPushRegistrationActive(accountId, false);
+}
+
+export function companyPushPreviewModeActive(accountId: string): Promise<boolean> {
+  return companyPushRegistrationActive(accountId, true);
 }
 
 async function installationId(): Promise<string> {

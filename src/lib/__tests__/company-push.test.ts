@@ -38,7 +38,7 @@ vi.mock('expo-notifications', () => ({
 vi.mock('../../api/jmap-client', () => ({ jmapClient: session }));
 vi.mock('../../api/email', () => ({ getEmails }));
 
-import { isCompanyPushPresentation, isGenericCompanyPushPresentation, parseCompanyPushDestination, companyPushPreviewAvailable, companyPushPreviewModeActive, companyPushPreviewOptOutPending, companyPushRevocationPending, companyPushRelayOrigin, companyPushStatus, parseCompanyPushPayload, reconcileCompanyPush, reconcilePendingCompanyPushRevocation, registerCompanyPush, revokeCompanyPush, resolveCompanyPush } from '../company-push';
+import { isCompanyPushPresentation, isGenericCompanyPushPresentation, parseCompanyPushDestination, companyPushModeActive, companyPushPreviewAvailable, companyPushPreviewModeActive, companyPushPreviewOptOutPending, companyPushRevocationPending, companyPushRelayOrigin, companyPushStatus, parseCompanyPushPayload, reconcileCompanyPush, reconcilePendingCompanyPushRevocation, registerCompanyPush, revokeCompanyPush, resolveCompanyPush } from '../company-push';
 import { useSettingsStore } from '../../stores/settings-store';
 import { useAccountStore } from '../../stores/account-store';
 import { ZYNDMAIL_COMPANY } from '../zyndmail-company';
@@ -122,6 +122,25 @@ describe('company Expo push boundary', () => {
       importance: 3, lockscreenVisibility: 0, showBadge: false,
     }));
     expect(registerChannel).not.toHaveBeenCalledWith('mail-messages-v2', expect.anything());
+  });
+
+  it('stops generic foreground presentation after push opt-out and while revocation is pending', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
+      if (url.includes('/v1/push-health?')) return { ok: true, status: 200,
+        json: async () => ({ status: 'ok' }) };
+      if (init.method === 'DELETE') return { ok: false, status: 503 };
+      return { ok: true, status: 200, json: async () => ({ registrationId: 'registration-1' }) };
+    }));
+
+    expect(await registerCompanyPush(accountId, true)).toEqual({ status: 'ACTIVE' });
+    useSettingsStore.setState({ notificationPreviewsEnabled: false });
+    expect(await companyPushModeActive(accountId)).toBe(true);
+    records.delete('zyndmail.production.push.preference.v1');
+    expect(await companyPushModeActive(accountId)).toBe(false);
+    records.set('zyndmail.production.push.preference.v1', 'staff-subject');
+    expect(await revokeCompanyPush(accountId)).toBe(false);
+    expect(await companyPushModeActive(accountId)).toBe(false);
+    expect(JSON.parse(records.get('zyndmail.production.push.registration.v1')!).revocationPending).toBe(true);
   });
 
   it('honors the global email notification switch before asking for permission or a token', async () => {

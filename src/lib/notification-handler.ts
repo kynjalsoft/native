@@ -1,6 +1,6 @@
 import * as Notifications from 'expo-notifications';
 import { CALENDAR_NOTIFICATION_TAG } from './calendar-notifications';
-import { companyPushPreviewModeActive, isCompanyPushPresentation, isGenericCompanyPushPresentation } from './company-push';
+import { companyPushModeActive, companyPushPreviewModeActive, isCompanyPushPresentation, isGenericCompanyPushPresentation } from './company-push';
 import { isCompanyMailServer } from './zyndmail-company';
 import { jmapClient } from '../api/jmap-client';
 import { useAccountStore } from '../stores/account-store';
@@ -21,14 +21,14 @@ Notifications.setNotificationHandler({
     const generic = isGenericCompanyPushPresentation(content);
     const auth = useAuthStore.getState();
     const accountId = auth.isAuthenticated && !auth.isLoading ? auth.activeAccountId : null;
-    const rich = settings.emailNotificationsEnabled && settings.notificationPreviewsEnabled &&
-      companyAccountPresent && !generic && isCompanyPushPresentation(content) && !!accountId &&
-      await companyPushPreviewModeActive(accountId);
+    const mailCandidate = companyAccountPresent && isCompanyPushPresentation(content);
+    const eligible = settings.emailNotificationsEnabled && mailCandidate && !!accountId &&
+      await (generic ? companyPushModeActive(accountId) : companyPushPreviewModeActive(accountId));
     const currentAuth = useAuthStore.getState();
-    const mail = useSettingsStore.getState().emailNotificationsEnabled && companyAccountPresent &&
-      isCompanyPushPresentation(content) &&
-      (generic || (rich && currentAuth.isAuthenticated && !currentAuth.isLoading &&
-        currentAuth.activeAccountId === accountId && useSettingsStore.getState().notificationPreviewsEnabled));
+    const currentSettings = useSettingsStore.getState();
+    const mail = eligible && currentSettings.emailNotificationsEnabled &&
+      currentAuth.isAuthenticated && !currentAuth.isLoading && currentAuth.activeAccountId === accountId &&
+      (generic || currentSettings.notificationPreviewsEnabled);
     const visible = !!calendar || mail;
     return {
       shouldShowBanner: visible,

@@ -5,6 +5,8 @@ const current = vi.hoisted(() => ({
   settings: { emailNotificationsEnabled: true, calendarNotificationsEnabled: true, notificationPreviewsEnabled: false },
   accounts: [{ serverUrl: 'https://mail.zyndpay.io' }] as { serverUrl: string }[],
   serverUrl: 'https://mail.zyndpay.io' as string | null,
+  pushModeActive: true,
+  revocationPending: false,
   previewModeActive: false,
   auth: { isAuthenticated: true, isLoading: false, activeAccountId: 'staff-account' as string | null },
 }));
@@ -17,6 +19,8 @@ vi.mock('expo-notifications', () => ({
 vi.mock('../calendar-notifications', () => ({ CALENDAR_NOTIFICATION_TAG: 'calendar-alert' }));
 vi.mock('../zyndmail-company', () => ({ isCompanyMailServer: (url: string) => url === 'https://mail.zyndpay.io' }));
 vi.mock('../company-push', () => ({
+  companyPushModeActive: async (accountId: string) =>
+    accountId === 'staff-account' && current.pushModeActive && !current.revocationPending,
   companyPushPreviewModeActive: async (accountId: string) => accountId === 'staff-account' && current.previewModeActive,
   isCompanyPushPresentation: (content: { data?: { notificationRef?: string } }) => !!content.data?.notificationRef,
   isGenericCompanyPushPresentation: (content: { title: string; body: string }) =>
@@ -42,6 +46,8 @@ beforeEach(() => {
   current.settings.notificationPreviewsEnabled = false;
   current.accounts = [{ serverUrl: 'https://mail.zyndpay.io' }];
   current.serverUrl = 'https://mail.zyndpay.io';
+  current.pushModeActive = true;
+  current.revocationPending = false;
   current.previewModeActive = false;
   current.auth.isAuthenticated = true;
   current.auth.isLoading = false;
@@ -64,6 +70,19 @@ describe('foreground notification presentation', () => {
     current.settings.emailNotificationsEnabled = true;
     current.accounts = [];
     expect((await display(generic)).shouldShowList).toBe(false);
+  });
+
+  it('hides generic company alerts after local opt-out or pending revocation', async () => {
+    expect((await display(generic)).shouldShowList).toBe(true);
+    current.pushModeActive = false;
+    expect((await display(generic)).shouldShowList).toBe(false);
+    current.pushModeActive = true;
+    current.revocationPending = true;
+    expect((await display(generic)).shouldShowList).toBe(false);
+
+    current.serverUrl = 'https://personal.example.test';
+    const reminder = { title: 'Meeting', body: 'Starts soon', data: { tag: 'calendar-alert' } };
+    expect((await display(reminder, { type: 'date' })).shouldShowList).toBe(true);
   });
 
   it('shows verified rich mail during renewal and hides it during an account switch', async () => {
