@@ -4,6 +4,7 @@ import { companyPushPreviewModeActive, isCompanyPushPresentation, isGenericCompa
 import { isCompanyMailServer } from './zyndmail-company';
 import { jmapClient } from '../api/jmap-client';
 import { useAccountStore } from '../stores/account-store';
+import { useAuthStore } from '../stores/auth-store';
 import { useSettingsStore } from '../stores/settings-store';
 
 /** Registered on startup so only known local reminders or private mail alerts display in-app. */
@@ -17,10 +18,17 @@ Notifications.setNotificationHandler({
       content.data?.tag === CALENDAR_NOTIFICATION_TAG;
     const companyAccountPresent = useAccountStore.getState().accounts.some((account) =>
       isCompanyMailServer(account.serverUrl));
-    const mail = settings.emailNotificationsEnabled && companyAccountPresent &&
+    const generic = isGenericCompanyPushPresentation(content);
+    const auth = useAuthStore.getState();
+    const accountId = auth.isAuthenticated && !auth.isLoading ? auth.activeAccountId : null;
+    const rich = settings.emailNotificationsEnabled && settings.notificationPreviewsEnabled &&
+      companyAccountPresent && !generic && isCompanyPushPresentation(content) && !!accountId &&
+      await companyPushPreviewModeActive(accountId);
+    const currentAuth = useAuthStore.getState();
+    const mail = useSettingsStore.getState().emailNotificationsEnabled && companyAccountPresent &&
       isCompanyPushPresentation(content) &&
-      ((settings.notificationPreviewsEnabled && companyPushPreviewModeActive()) ||
-        isGenericCompanyPushPresentation(content));
+      (generic || (rich && currentAuth.isAuthenticated && !currentAuth.isLoading &&
+        currentAuth.activeAccountId === accountId && useSettingsStore.getState().notificationPreviewsEnabled));
     const visible = !!calendar || mail;
     return {
       shouldShowBanner: visible,

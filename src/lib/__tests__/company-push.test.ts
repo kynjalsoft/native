@@ -38,7 +38,7 @@ vi.mock('expo-notifications', () => ({
 vi.mock('../../api/jmap-client', () => ({ jmapClient: session }));
 vi.mock('../../api/email', () => ({ getEmails }));
 
-import { isCompanyPushPresentation, isGenericCompanyPushPresentation, parseCompanyPushDestination, companyPushPreviewAvailable, companyPushPreviewModeActive, companyPushPreviewOptOutPending, companyPushRelayOrigin, companyPushStatus, parseCompanyPushPayload, registerCompanyPush, revokeCompanyPush, resolveCompanyPush } from '../company-push';
+import { isCompanyPushPresentation, isGenericCompanyPushPresentation, parseCompanyPushDestination, companyPushPreviewAvailable, companyPushPreviewModeActive, companyPushPreviewOptOutPending, companyPushRevocationPending, companyPushRelayOrigin, companyPushStatus, parseCompanyPushPayload, reconcileCompanyPush, registerCompanyPush, revokeCompanyPush, resolveCompanyPush } from '../company-push';
 import { useSettingsStore } from '../../stores/settings-store';
 import { useAccountStore } from '../../stores/account-store';
 import { ZYNDMAIL_COMPANY } from '../zyndmail-company';
@@ -52,7 +52,7 @@ const jwt = (subject: string) => {
 beforeEach(() => {
   records.clear();
   useAccountStore.setState({ accounts: [] });
-  useSettingsStore.setState({ notificationPreviewsEnabled: true, emailNotificationsEnabled: true });
+  useSettingsStore.setState({ hydrated: true, notificationPreviewsEnabled: true, emailNotificationsEnabled: true });
   vi.clearAllMocks();
   process.env.EXPO_PUBLIC_MAIL_PUSH_RELAY_ORIGIN = 'https://mail.zyndpay.io';
   const accessToken = jwt('staff-subject');
@@ -236,7 +236,7 @@ describe('company Expo push boundary', () => {
     releasePut();
     expect(await registration).toEqual({ status: 'ACTIVE' });
     expect(await revocation).toBe(true);
-    expect(companyPushPreviewModeActive()).toBe(false);
+    expect(await companyPushPreviewModeActive(accountId)).toBe(false);
     expect(await companyPushStatus(accountId)).toEqual({ status: 'OFF' });
   });
 
@@ -270,9 +270,48 @@ describe('company Expo push boundary', () => {
     } : activeTokens);
 
     expect(await revokeCompanyPush('other-account')).toBe(true);
-    expect(companyPushPreviewModeActive()).toBe(true);
+    expect(await companyPushPreviewModeActive(accountId)).toBe(true);
     expect(dismiss).not.toHaveBeenCalled();
     expect(JSON.parse(records.get('zyndmail.production.push.registration.v1')!).subject).toBe('staff-subject');
+  });
+
+  it('presents a previously verified rich registration before renewal and rejects ownership changes', async () => {
+    records.set('zyndmail.production.push.preference.v1', 'staff-subject');
+    records.set('zyndmail.production.push.registration.v1', JSON.stringify({
+      subject: 'staff-subject', registrationId: 'registration-1', renewedAt: Date.now(),
+      routingVersion: 3, previews: true,
+    }));
+    expect(await companyPushPreviewModeActive(accountId)).toBe(true);
+    expect(await companyPushPreviewModeActive('other-account')).toBe(false);
+    useSettingsStore.setState({ notificationPreviewsEnabled: false });
+    expect(await companyPushPreviewModeActive(accountId)).toBe(false);
+    useSettingsStore.setState({ notificationPreviewsEnabled: true });
+    records.set('zyndmail.production.push.registration.v1', JSON.stringify({
+      subject: 'other-subject', registrationId: 'registration-2', renewedAt: Date.now(),
+      routingVersion: 3, previews: true,
+    }));
+    expect(await companyPushPreviewModeActive(accountId)).toBe(false);
+  });
+
+  it('persists failed disable revocation and clears it on retry', async () => {
+    let deleteFails = true;
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
+      if (url.includes('/v1/push-health?')) return { ok: true, status: 200,
+        json: async () => ({ status: 'ok', previewMode: 'sender-subject-snippet-v1' }) };
+      if (init.method === 'DELETE') return { ok: !deleteFails, status: deleteFails ? 503 : 200 };
+      return { ok: true, status: 200, json: async () => ({ registrationId: 'registration-1' }) };
+    }));
+    expect(await registerCompanyPush(accountId, true)).toEqual({ status: 'ACTIVE' });
+    useSettingsStore.setState({ emailNotificationsEnabled: false });
+    expect(await reconcileCompanyPush(accountId)).toMatchObject({ status: 'REVOKE_PENDING' });
+    expect(await companyPushRevocationPending(accountId)).toBe(true);
+    expect(await companyPushStatus(accountId)).toMatchObject({ status: 'REVOKE_PENDING' });
+    expect(await companyPushPreviewModeActive(accountId)).toBe(false);
+    expect(JSON.parse(records.get('zyndmail.production.push.registration.v1')!).revocationPending).toBe(true);
+    deleteFails = false;
+    expect(await reconcileCompanyPush(accountId)).toEqual({ status: 'OFF' });
+    expect(await companyPushRevocationPending(accountId)).toBe(false);
+    expect(await companyPushStatus(accountId)).toEqual({ status: 'OFF' });
   });
 
   it('does not invite or request notification permission when the production relay redirects to webmail', async () => {

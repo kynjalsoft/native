@@ -73,10 +73,9 @@ import { canAutoReloadMailUpdate } from './src/lib/auto-ota';
 import { AppUnlockGate, shouldHideMailForAppState, requiresMailboxUnlock } from './src/lib/app-unlock-gate';
 import {
   isCompanyPushPresentation,
-  registerCompanyPush,
+  reconcileCompanyPush,
   registeredCompanyPushAccountId,
   resolveCompanyPush,
-  revokeCompanyPush,
 } from './src/lib/company-push';
 import { openCompanyPushIntent } from './src/lib/company-push-intent';
 
@@ -746,28 +745,41 @@ function AppContent() {
   // The company relay owns its JMAP subscription. The fork must never also
   // register the same company mailbox with Bulwark's public FCM relay.
   React.useEffect(() => {
-    if (!isAuthenticated || !client || !activeAccountId || !isCompanyMailServer(client.serverUrl ?? '')) return;
-    if (!emailNotificationsEnabled) {
-      void revokeCompanyPush(activeAccountId).catch(() => undefined);
-      return;
-    }
-    const refresh = (force = false) => { void registerCompanyPush(activeAccountId, false, force); };
-    // Reconcile the server on every cold start. A local cache can say that
-    // previews are enabled while Stalwart still has an older generic
-    // subscription (for example after an OTA or a relay-side migration).
-    // The relay's PUT is idempotent for an unchanged mode and renews its lease.
-    refresh(true);
+    if (!activeAccountId) return;
+    const account = useAccountStore.getState().getAccountById(activeAccountId);
+    if (!settingsHydrated || !accountRegistryHydrated || !isAuthenticated || !account || !isCompanyMailServer(account.serverUrl)) return;
+    let live = true;
+    let running = false;
+    let rerun = false;
+    const refresh = () => {
+      if (running) { rerun = true; return; }
+      running = true;
+      void (async () => {
+        do {
+          rerun = false;
+          try {
+            await reconcileCompanyPush(activeAccountId);
+          } catch {}
+        } while (live && rerun);
+      })().finally(() => { running = false; });
+    };
+    refresh();
     const stateSubscription = AppState.addEventListener('change', (state) => {
-      if (state === 'active') refresh(true);
+      if (state === 'active') refresh();
     });
-    const tokenSubscription = Notifications.addPushTokenListener(() => refresh(true));
-    const nativeTokenSubscription = addTokenRefreshListener(() => refresh(true));
+    const networkSubscription = useNetworkStore.subscribe((state, previous) => {
+      if (state.online && !previous.online) refresh();
+    });
+    const tokenSubscription = Notifications.addPushTokenListener(refresh);
+    const nativeTokenSubscription = addTokenRefreshListener(refresh);
     return () => {
+      live = false;
       stateSubscription.remove();
+      networkSubscription();
       tokenSubscription.remove();
       nativeTokenSubscription();
     };
-  }, [client, isAuthenticated, activeAccountId, emailNotificationsEnabled]);
+  }, [isAuthenticated, activeAccountId, accountRegistryHydrated, emailNotificationsEnabled, settingsHydrated]);
 
   // Capture notification taps independently of auth and the optional app
   // lock. Expo retains the cold-start response until it is explicitly cleared,

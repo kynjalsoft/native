@@ -4,7 +4,8 @@ import { useSettingsStore } from '../../stores/settings-store';
 import { useAuthStore } from '../../stores/auth-store';
 import { useLocaleStore } from '../../stores/locale-store';
 import { useColors } from '../../theme/colors';
-import { companyPushPreviewAvailable, companyPushPreviewOptOutPending, companyPushPreviewPending, companyPushStatus, dismissCompanyPushNotifications, registerCompanyPush, revokeCompanyPush, type CompanyPushStatus } from '../../lib/company-push';
+import { companyPushPreviewAvailable, companyPushPreviewOptOutPending, companyPushPreviewPending, companyPushRevocationPendingStatus, companyPushStatus, dismissCompanyPushNotifications, registerCompanyPush, revokeCompanyPush, type CompanyPushStatus } from '../../lib/company-push';
+import { useNetworkStore } from '../../stores/network-store';
 import { SettingItem, SettingsSection, ToggleSwitch } from './settings-section';
 
 /** Company push uses the authenticated mail-plane relay, never a user-entered URL. */
@@ -34,6 +35,9 @@ export function CompanyPushSettings(): React.ReactElement {
         if (next.status === 'ACTIVE' || next.status === 'PENDING') {
           const renewed = await registerCompanyPush(accountId, false, true);
           next = next.status === 'PENDING' && renewed.status !== 'ACTIVE' ? next : renewed;
+        } else if (next.status === 'REVOKE_PENDING') {
+          await revokeCompanyPush(accountId).catch(() => false);
+          next = await companyPushStatus(accountId);
         }
         if (current && request === statusRequest.current) {
           setPreviewAvailable(supportsPreviews);
@@ -46,7 +50,10 @@ export function CompanyPushSettings(): React.ReactElement {
     const subscription = AppState.addEventListener('change', (state) => {
       if (state === 'active') refresh();
     });
-    return () => { current = false; statusRequest.current += 1; subscription.remove(); };
+    const networkSubscription = useNetworkStore.subscribe((state, previous) => {
+      if (state.online && !previous.online) refresh();
+    });
+    return () => { current = false; statusRequest.current += 1; subscription.remove(); networkSubscription(); };
   }, [accountId, emailEnabled]);
 
   const onChange = async (enabled: boolean) => {
@@ -57,7 +64,7 @@ export function CompanyPushSettings(): React.ReactElement {
       if (enabled) setStatus(await registerCompanyPush(accountId, true));
       else setStatus(await revokeCompanyPush(accountId)
         ? { status: 'OFF' }
-        : { status: 'ERROR', reason: 'The relay could not revoke this device. Try again before switching staff accounts.' });
+        : companyPushRevocationPendingStatus);
     } catch (error) {
       setStatus({ status: 'ERROR', reason: error instanceof Error ? error.message : 'Mail notification setup failed.' });
     } finally {
@@ -88,7 +95,9 @@ export function CompanyPushSettings(): React.ReactElement {
     } finally { setBusy(false); }
   };
 
-  const description = !emailEnabled
+  const description = status?.status === 'REVOKE_PENDING'
+    ? status.reason
+    : !emailEnabled
     ? t('settings.notifications.company.email_disabled', 'Turn on Email notifications above to enable company mail alerts.')
     : status?.status === 'ACTIVE'
     ? t('settings.notifications.company.active', 'This device was registered for private mail alerts. Delivery depends on server and device connectivity.')

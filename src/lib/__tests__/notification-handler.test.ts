@@ -6,6 +6,7 @@ const current = vi.hoisted(() => ({
   accounts: [{ serverUrl: 'https://mail.zyndpay.io' }] as { serverUrl: string }[],
   serverUrl: 'https://mail.zyndpay.io' as string | null,
   previewModeActive: false,
+  auth: { isAuthenticated: true, isLoading: false, activeAccountId: 'staff-account' as string | null },
 }));
 
 vi.mock('expo-notifications', () => ({
@@ -16,13 +17,14 @@ vi.mock('expo-notifications', () => ({
 vi.mock('../calendar-notifications', () => ({ CALENDAR_NOTIFICATION_TAG: 'calendar-alert' }));
 vi.mock('../zyndmail-company', () => ({ isCompanyMailServer: (url: string) => url === 'https://mail.zyndpay.io' }));
 vi.mock('../company-push', () => ({
-  companyPushPreviewModeActive: () => current.previewModeActive,
+  companyPushPreviewModeActive: async (accountId: string) => accountId === 'staff-account' && current.previewModeActive,
   isCompanyPushPresentation: (content: { data?: { notificationRef?: string } }) => !!content.data?.notificationRef,
   isGenericCompanyPushPresentation: (content: { title: string; body: string }) =>
     content.title === 'ZyndMail' && content.body === 'New ZyndPay Mail activity',
 }));
 vi.mock('../../api/jmap-client', () => ({ jmapClient: { get serverUrl() { return current.serverUrl; } } }));
 vi.mock('../../stores/account-store', () => ({ useAccountStore: { getState: () => ({ accounts: current.accounts }) } }));
+vi.mock('../../stores/auth-store', () => ({ useAuthStore: { getState: () => current.auth } }));
 vi.mock('../../stores/settings-store', () => ({ useSettingsStore: { getState: () => current.settings } }));
 
 import '../notification-handler';
@@ -41,6 +43,9 @@ beforeEach(() => {
   current.accounts = [{ serverUrl: 'https://mail.zyndpay.io' }];
   current.serverUrl = 'https://mail.zyndpay.io';
   current.previewModeActive = false;
+  current.auth.isAuthenticated = true;
+  current.auth.isLoading = false;
+  current.auth.activeAccountId = 'staff-account';
 });
 
 describe('foreground notification presentation', () => {
@@ -59,6 +64,17 @@ describe('foreground notification presentation', () => {
     current.settings.emailNotificationsEnabled = true;
     current.accounts = [];
     expect((await display(generic)).shouldShowList).toBe(false);
+  });
+
+  it('shows verified rich mail during renewal and hides it during an account switch', async () => {
+    current.settings.notificationPreviewsEnabled = true;
+    current.previewModeActive = true;
+    expect((await display(preview)).shouldShowList).toBe(true);
+    current.auth.isLoading = true;
+    expect((await display(preview)).shouldShowList).toBe(false);
+    current.auth.isLoading = false;
+    current.auth.activeAccountId = 'other-account';
+    expect((await display(preview)).shouldShowList).toBe(false);
   });
 
   it('shows only enabled calendar reminders for a connected non-company account', async () => {

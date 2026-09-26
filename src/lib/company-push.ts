@@ -15,9 +15,6 @@ const INSTALLATION_KEY = 'zyndmail.production.push.installation.v1';
 const REGISTRATION_KEY = 'zyndmail.production.push.registration.v1';
 const PREFERENCE_KEY = 'zyndmail.production.push.preference.v1';
 const RENEW_AFTER_MS = 30 * 60_000;
-// Foreground content is allowed only after this process has confirmed a
-// preview-capable relay and a successful preview registration.
-let previewModeActive = false;
 const RELAY_UNAVAILABLE = 'Company mail alerts are temporarily unavailable. Please try again later.';
 const OPAQUE_REFERENCE = /^[A-Za-z0-9_-]{22,256}$/;
 const storageOptions: SecureStore.SecureStoreOptions = {
@@ -30,17 +27,24 @@ interface Registration {
   renewedAt: number;
   routingVersion?: number;
   previews?: boolean;
+  revocationPending?: boolean;
 }
 
 export type CompanyPushStatus =
   | { status: 'OFF' | 'NOT_REQUESTED' | 'DENIED' | 'ACTIVE' }
   | { status: 'PENDING'; reason: string }
+  | { status: 'REVOKE_PENDING'; reason: string }
   | { status: 'UNAVAILABLE'; reason: string }
   | { status: 'ERROR'; reason: string };
 
 export const companyPushPreviewPending: CompanyPushStatus = {
   status: 'PENDING',
   reason: 'Previews are off on this device. Server synchronization is pending; rich background notifications may continue until it succeeds.',
+};
+
+export const companyPushRevocationPendingStatus: CompanyPushStatus = {
+  status: 'REVOKE_PENDING',
+  reason: 'Mail alerts are off on this device. Server revocation is pending; background notifications may continue until it succeeds.',
 };
 
 /** No default: this must be the reviewed mail-plane relay, never the public Bulwark relay. */
@@ -135,8 +139,28 @@ export async function companyPushPreviewAvailable(): Promise<boolean> {
   return health.ready && health.previewMode;
 }
 
-export function companyPushPreviewModeActive(): boolean {
-  return previewModeActive;
+export async function companyPushPreviewModeActive(accountId: string): Promise<boolean> {
+  const settings = useSettingsStore.getState();
+  if (!settings.hydrated || !settings.emailNotificationsEnabled || !settings.notificationPreviewsEnabled ||
+      revoking.has(accountId) ||
+      generateAccountId(jmapClient.username ?? '', jmapClient.serverUrl ?? '') !== accountId ||
+      !isCompanyMailServer(jmapClient.serverUrl ?? '')) return false;
+  try {
+    const [registration, preferredSubject, tokens] = await Promise.all([
+      readRegistration(), preferenceSubject(), jmapClient.getStoredOAuthTokens(accountId),
+    ]);
+    const current = useSettingsStore.getState();
+    return current.hydrated && current.emailNotificationsEnabled && current.notificationPreviewsEnabled &&
+      !revoking.has(accountId) &&
+      generateAccountId(jmapClient.username ?? '', jmapClient.serverUrl ?? '') === accountId &&
+      !!registration?.registrationId && registration.routingVersion === 3 &&
+      registration.previews === true && registration.revocationPending !== true &&
+      registration.subject === preferredSubject &&
+      tokens?.clientId === ZYNDMAIL_COMPANY.clientId &&
+      tokens.companyIdentity?.subject === registration.subject;
+  } catch {
+    return false;
+  }
 }
 
 async function installationId(): Promise<string> {
@@ -153,7 +177,7 @@ async function readRegistration(): Promise<Registration | null> {
   try {
     const value = JSON.parse(raw) as Partial<Registration>;
     return typeof value.subject === 'string' && typeof value.registrationId === 'string'
-      ? { subject: value.subject, registrationId: value.registrationId, renewedAt: value.renewedAt ?? 0, routingVersion: value.routingVersion, previews: value.previews }
+      ? { subject: value.subject, registrationId: value.registrationId, renewedAt: value.renewedAt ?? 0, routingVersion: value.routingVersion, previews: value.previews, revocationPending: value.revocationPending === true }
       : null;
   } catch {
     return null;
@@ -241,6 +265,13 @@ export async function dismissCompanyPushNotifications(): Promise<void> {
 }
 
 export async function companyPushStatus(accountId: string): Promise<CompanyPushStatus> {
+  if (!useSettingsStore.getState().emailNotificationsEnabled) {
+    const [registration, tokens] = await Promise.all([
+      readRegistration(), jmapClient.getStoredOAuthTokens(accountId).catch(() => null),
+    ]);
+    return registration?.subject && registration.subject === tokens?.companyIdentity?.subject
+      ? companyPushRevocationPendingStatus : { status: 'OFF' };
+  }
   const problem = configurationError();
   if (problem) return { status: 'UNAVAILABLE', reason: problem };
   const session = await currentCompanySession(accountId);
@@ -249,8 +280,8 @@ export async function companyPushStatus(accountId: string): Promise<CompanyPushS
   if (registration && registration.subject !== session.subject) {
     return { status: 'ERROR', reason: 'An earlier staff registration must be revoked first.' };
   }
-  if (!useSettingsStore.getState().emailNotificationsEnabled) return { status: 'OFF' };
   if (!registration && !(await relayHealth()).ready) return { status: 'UNAVAILABLE', reason: RELAY_UNAVAILABLE };
+  if (registration?.revocationPending) return companyPushRevocationPendingStatus;
   if (await preferenceSubject() !== session.subject) return { status: 'OFF' };
   const permission = await Notifications.getPermissionsAsync();
   if (permission.status === 'undetermined') return { status: 'NOT_REQUESTED' };
@@ -269,6 +300,15 @@ export async function companyPushPreviewOptOutPending(accountId: string): Promis
     jmapClient.getStoredOAuthTokens(accountId).catch(() => null),
   ]);
   return !!registration && registration.routingVersion === 3 && registration.previews === true &&
+    registration.revocationPending !== true &&
+    registration.subject === tokens?.companyIdentity?.subject;
+}
+
+export async function companyPushRevocationPending(accountId: string): Promise<boolean> {
+  const [registration, tokens] = await Promise.all([
+    readRegistration(), jmapClient.getStoredOAuthTokens(accountId).catch(() => null),
+  ]);
+  return registration?.revocationPending === true && !!registration.registrationId &&
     registration.subject === tokens?.companyIdentity?.subject;
 }
 
@@ -324,7 +364,6 @@ async function registerCompanyPushInner(accountId: string, requestPermission: bo
   if (!requestPermission && await preferenceSubject() !== session.subject) return { status: 'OFF' };
   const health = await relayHealth();
   if (!health.ready) return { status: 'UNAVAILABLE', reason: RELAY_UNAVAILABLE };
-  if (!health.previewMode) previewModeActive = false;
   const previews = health.previewMode && desiredPreviews;
   const routingVersion = health.previewMode ? 3 : 2;
   if (previous?.previews === previews && previous?.routingVersion === routingVersion && !force && !requestPermission && Date.now() - previous.renewedAt < RENEW_AFTER_MS) return companyPushStatus(accountId);
@@ -383,7 +422,6 @@ async function registerCompanyPushInner(accountId: string, requestPermission: bo
       return { status: 'ERROR', reason: 'The active mail account changed during registration.' };
     }
     await SecureStore.setItemAsync(PREFERENCE_KEY, session.subject, storageOptions);
-    previewModeActive = previews;
     return { status: 'ACTIVE' };
   } catch (error) {
     return { status: 'ERROR', reason: error instanceof Error ? error.message : 'Mail push registration failed.' };
@@ -397,14 +435,13 @@ export async function revokeCompanyPush(accountId: string): Promise<boolean> {
     const subject = tokens?.companyIdentity?.subject;
     const initialRegistration = await readRegistration();
     if (subject && initialRegistration?.subject === subject) {
-      previewModeActive = false;
       await dismissCompanyPushNotifications();
     }
     const pending = inFlight.get(accountId)?.promise;
     if (pending) await pending.catch(() => undefined);
     const registration = await readRegistration();
     if (subject && registration?.subject === subject) {
-      previewModeActive = false;
+      await SecureStore.setItemAsync(REGISTRATION_KEY, JSON.stringify({ ...registration, revocationPending: true }), storageOptions);
       await dismissCompanyPushNotifications();
     }
     if (subject && await preferenceSubject() === subject) {
@@ -426,6 +463,15 @@ export async function revokeCompanyPush(accountId: string): Promise<boolean> {
   } finally {
     revoking.delete(accountId);
   }
+}
+
+export async function reconcileCompanyPush(accountId: string): Promise<CompanyPushStatus> {
+  const enabled = useSettingsStore.getState().emailNotificationsEnabled;
+  if (!enabled || await companyPushRevocationPending(accountId)) {
+    if (!await revokeCompanyPush(accountId)) return companyPushRevocationPendingStatus;
+    if (!enabled) return { status: 'OFF' };
+  }
+  return registerCompanyPush(accountId, false, true);
 }
 
 export type CompanyPushDestination = { target: 'INBOX' } | {
