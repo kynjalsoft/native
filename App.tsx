@@ -74,6 +74,7 @@ import { AppUnlockGate, shouldHideMailForAppState, requiresMailboxUnlock } from 
 import {
   isCompanyPushPresentation,
   reconcileCompanyPush,
+  reconcileDisabledCompanyPush,
   reconcilePendingCompanyPushRevocation,
   companyPushRevocationPendingStatus,
   registeredCompanyPushAccountId,
@@ -785,7 +786,7 @@ function AppContent() {
   }, [isAuthenticated, activeAccountId, accountRegistryHydrated, emailNotificationsEnabled, settingsHydrated]);
 
   React.useEffect(() => {
-    if (!accountRegistryHydrated) return;
+    if (!accountRegistryHydrated || !settingsHydrated) return;
     let live = true;
     let running = false;
     let rerun = false;
@@ -796,7 +797,9 @@ function AppContent() {
         do {
           rerun = false;
           try {
-            const pending = await reconcilePendingCompanyPushRevocation();
+            const pending = emailNotificationsEnabled
+              ? await reconcilePendingCompanyPushRevocation()
+              : await reconcileDisabledCompanyPush();
             if (live) setCompanyRevocationPending(pending);
           } catch {
             if (live) setCompanyRevocationPending(true);
@@ -816,7 +819,7 @@ function AppContent() {
       stateSubscription.remove();
       networkSubscription();
     };
-  }, [accountRegistryHydrated, isAuthenticated, activeAccountId, emailNotificationsEnabled]);
+  }, [accountRegistryHydrated, settingsHydrated, isAuthenticated, activeAccountId, emailNotificationsEnabled]);
 
   // Capture notification taps independently of auth and the optional app
   // lock. Expo retains the cold-start response until it is explicitly cleared,

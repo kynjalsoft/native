@@ -355,13 +355,14 @@ export async function hasPendingCompanyPushRevocation(): Promise<boolean> {
 }
 
 async function deleteRegistration(registration: Registration, bearer: string | null): Promise<boolean> {
-  if (!bearer && !registration.revocationKey) return false;
   try {
     const response = await relayFetch('v1/device-registrations/current', bearer, {
       method: 'DELETE',
       body: JSON.stringify(bearer
         ? { registrationId: registration.registrationId }
-        : { registrationId: registration.registrationId, revocationKey: registration.revocationKey }),
+        : registration.revocationKey
+          ? { registrationId: registration.registrationId, revocationKey: registration.revocationKey }
+          : { registrationId: registration.registrationId, installationId: await installationId() }),
     });
     if (!response.ok && response.status !== 404 && response.status !== 410) return false;
     const current = await readRegistration();
@@ -376,6 +377,13 @@ async function deleteRegistration(registration: Registration, bearer: string | n
 
 const inFlight = new Map<string, { promise: Promise<CompanyPushStatus>; previews: boolean; requestPermission: boolean; force: boolean }>();
 const revoking = new Set<string>();
+let registrationQueue: Promise<void> = Promise.resolve();
+
+function withRegistrationLock<T>(work: () => Promise<T>): Promise<T> {
+  const run = registrationQueue.then(work, work);
+  registrationQueue = run.then(() => undefined, () => undefined);
+  return run;
+}
 
 export function registerCompanyPush(accountId: string, requestPermission: boolean, force = false): Promise<CompanyPushStatus> {
   if (revoking.has(accountId)) return Promise.resolve({ status: 'OFF' });
@@ -389,7 +397,7 @@ export function registerCompanyPush(accountId: string, requestPermission: boolea
         ? registerCompanyPush(accountId, requestPermission, force)
         : companyPushStatus(accountId));
   }
-  const run = registerCompanyPushInner(accountId, requestPermission, force, previews)
+  const run = withRegistrationLock(() => registerCompanyPushInner(accountId, requestPermission, force, previews))
     .catch((error): CompanyPushStatus => ({
       status: 'ERROR', reason: error instanceof Error ? error.message : 'Mail push registration failed.',
     }))
@@ -407,7 +415,7 @@ async function registerCompanyPushInner(accountId: string, requestPermission: bo
   if (!requestPermission && !await hasPushPreference(session.subject)) return { status: 'OFF' };
   let previous = await readRegistration();
   if (previous?.revocationPending && previous.subject !== session.subject) {
-    if (await reconcilePendingCompanyPushRevocation()) {
+    if (await reconcilePendingCompanyPushRevocationInner()) {
       return { status: 'UNAVAILABLE', reason: 'The previous staff registration is awaiting server revocation. Retry when the mail relay is available.' };
     }
     previous = await readRegistration();
@@ -422,7 +430,7 @@ async function registerCompanyPushInner(accountId: string, requestPermission: bo
     for (const oldId of oldIds) {
       const tokens = await jmapClient.getStoredOAuthTokens(oldId).catch(() => null);
       if (tokens?.companyIdentity?.subject !== previous.subject) continue;
-      revoked = await revokeCompanyPush(oldId, true);
+      revoked = await revokeCompanyPushInner(oldId, true);
       break;
     }
     if (!revoked) {
@@ -486,6 +494,11 @@ async function registerCompanyPushInner(accountId: string, requestPermission: bo
           : {}),
       renewedAt: Date.now(), routingVersion, previews,
     };
+    if (generateAccountId(jmapClient.username ?? '', jmapClient.serverUrl ?? '') !== accountId) {
+      await SecureStore.setItemAsync(REGISTRATION_KEY, JSON.stringify({ ...registration, revocationPending: true }), storageOptions);
+      if (!await deleteRegistration(registration, session.bearer)) await deleteRegistration(registration, null);
+      return { status: 'ERROR', reason: 'The active mail account changed during registration.' };
+    }
     await SecureStore.setItemAsync(REGISTRATION_KEY, JSON.stringify(registration), storageOptions);
     if (generateAccountId(jmapClient.username ?? '', jmapClient.serverUrl ?? '') !== accountId) {
       await SecureStore.setItemAsync(REGISTRATION_KEY, JSON.stringify({ ...registration, revocationPending: true }), storageOptions);
@@ -502,62 +515,72 @@ async function registerCompanyPushInner(accountId: string, requestPermission: bo
 export async function revokeCompanyPush(accountId: string, preservePreference = false): Promise<boolean> {
   revoking.add(accountId);
   try {
-    const tokens = await jmapClient.getStoredOAuthTokens(accountId).catch(() => null);
-    const subject = tokens?.companyIdentity?.subject;
-    const initialRegistration = await readRegistration();
-    if (subject && initialRegistration?.subject === subject) {
-      await dismissCompanyPushNotifications();
-    }
-    const pending = inFlight.get(accountId)?.promise;
-    if (pending) await pending.catch(() => undefined);
-    const registration = await readRegistration();
-    if (subject && registration?.subject === subject) {
-      await SecureStore.setItemAsync(REGISTRATION_KEY, JSON.stringify({ ...registration, revocationPending: true }), storageOptions);
-      await dismissCompanyPushNotifications();
-    }
-    if (subject && !preservePreference && await hasPushPreference(subject)) {
-      await setPushPreference(subject, false);
-    }
-    if (!registration || registration.subject !== subject) return true;
-    const isActiveOwner = generateAccountId(jmapClient.username ?? '', jmapClient.serverUrl ?? '') === accountId;
-    if (!isActiveOwner && registration.revocationKey) return deleteRegistration(registration, null);
-    const session = await storedCompanySession(accountId).catch(() => null);
-    if (session?.subject === registration.subject && await deleteRegistration(registration, session.bearer)) return true;
-    return deleteRegistration(registration, null);
+    return await withRegistrationLock(() => revokeCompanyPushInner(accountId, preservePreference));
   } finally {
     revoking.delete(accountId);
   }
 }
 
-export async function revokeEvictedCompanyPush(accountId: string): Promise<void> {
+async function revokeCompanyPushInner(accountId: string, preservePreference: boolean): Promise<boolean> {
+  const tokens = await jmapClient.getStoredOAuthTokens(accountId).catch(() => null);
+  const subject = tokens?.companyIdentity?.subject;
   const registration = await readRegistration();
-  if (!registration) return;
-  if (registration.accountId !== accountId) {
-    if (registration.accountId) return;
-    const tokens = await jmapClient.getStoredOAuthTokens(accountId).catch(() => null);
-    if (tokens?.companyIdentity?.subject !== registration.subject) return;
+  if (subject && registration?.subject === subject) {
+    await SecureStore.setItemAsync(REGISTRATION_KEY, JSON.stringify({ ...registration, revocationPending: true }), storageOptions);
+    await dismissCompanyPushNotifications();
   }
+  if (subject && !preservePreference && await hasPushPreference(subject)) {
+    await setPushPreference(subject, false);
+  }
+  if (!registration || registration.subject !== subject) return true;
+  const isActiveOwner = generateAccountId(jmapClient.username ?? '', jmapClient.serverUrl ?? '') === accountId;
+  if (!isActiveOwner && registration.revocationKey) return deleteRegistration(registration, null);
+  const session = await storedCompanySession(accountId).catch(() => null);
+  if (session?.subject === registration.subject && await deleteRegistration(registration, session.bearer)) return true;
+  return deleteRegistration(registration, null);
+}
+
+export async function revokeEvictedCompanyPush(accountId: string): Promise<void> {
+  await withRegistrationLock(async () => {
+    const registration = await readRegistration();
+    if (!registration) return;
+    if (registration.accountId !== accountId) {
+      if (registration.accountId) return;
+      const tokens = await jmapClient.getStoredOAuthTokens(accountId).catch(() => null);
+      if (tokens?.companyIdentity?.subject !== registration.subject) {
+        const staffAccounts = useAccountStore.getState().accounts.filter((account) => isCompanyMailServer(account.serverUrl));
+        if (staffAccounts.length !== 1 || staffAccounts[0].id !== accountId) return;
+      }
+    }
+    await revokeSavedRegistration(registration);
+  });
+}
+
+export async function reconcilePendingCompanyPushRevocation(): Promise<boolean> {
+  return withRegistrationLock(reconcilePendingCompanyPushRevocationInner);
+}
+
+async function reconcilePendingCompanyPushRevocationInner(): Promise<boolean> {
+  const registration = await readRegistration();
+  if (!registration?.revocationPending) return false;
+  await deleteRegistration(registration, null);
+  return hasPendingCompanyPushRevocation();
+}
+
+async function revokeSavedRegistration(registration: Registration): Promise<void> {
   await SecureStore.setItemAsync(REGISTRATION_KEY, JSON.stringify({ ...registration, revocationPending: true }), storageOptions);
   await setPushPreference(registration.subject, false);
   await dismissCompanyPushNotifications();
   await deleteRegistration(registration, null);
 }
 
-export async function reconcilePendingCompanyPushRevocation(): Promise<boolean> {
-  const registration = await readRegistration();
-  if (!registration?.revocationPending) return false;
-  if (registration.revocationKey) {
-    await deleteRegistration(registration, null);
-  } else {
-    for (const account of useAccountStore.getState().accounts) {
-      if (!isCompanyMailServer(account.serverUrl)) continue;
-      const tokens = await jmapClient.getStoredOAuthTokens(account.id).catch(() => null);
-      if (tokens?.companyIdentity?.subject !== registration.subject) continue;
-      await revokeCompanyPush(account.id, await hasPushPreference(registration.subject));
-      break;
-    }
-  }
-  return hasPendingCompanyPushRevocation();
+export async function reconcileDisabledCompanyPush(): Promise<boolean> {
+  if (useSettingsStore.getState().emailNotificationsEnabled) return hasPendingCompanyPushRevocation();
+  return withRegistrationLock(async () => {
+    const registration = await readRegistration();
+    if (registration) await revokeSavedRegistration(registration);
+    return hasPendingCompanyPushRevocation();
+  });
 }
 
 export async function reconcileCompanyPush(accountId: string): Promise<CompanyPushStatus> {
