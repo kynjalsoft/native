@@ -24,6 +24,12 @@ import java.net.HttpURLConnection
 import java.net.URL
 import kotlin.concurrent.thread
 
+internal fun mailTapIntent(context: Context, kind: String, id: String): Intent =
+    Intent(context, MainActivity::class.java).apply {
+        action = "${context.packageName}.notification.$kind:$id"
+        flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+    }
+
 class BulwarkFcmModule(reactContext: ReactApplicationContext)
     : ReactContextBaseJavaModule(reactContext) {
 
@@ -130,8 +136,7 @@ class BulwarkFcmModule(reactContext: ReactApplicationContext)
         groupKey: String?,
     ) {
         val ctx = reactApplicationContext
-        val intent = Intent(ctx, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        val intent = mailTapIntent(ctx, "message", notificationId).apply {
             if (emailId != null) putExtra(NotificationTapStore.EXTRA_EMAIL_ID, emailId)
             if (threadId != null) putExtra(NotificationTapStore.EXTRA_THREAD_ID, threadId)
             if (subject != null) putExtra(NotificationTapStore.EXTRA_SUBJECT, subject)
@@ -140,7 +145,7 @@ class BulwarkFcmModule(reactContext: ReactApplicationContext)
         }
         val pending = PendingIntent.getActivity(
             ctx,
-            notificationId.hashCode(),
+            0,
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
@@ -188,13 +193,12 @@ class BulwarkFcmModule(reactContext: ReactApplicationContext)
         inbox.setBigContentTitle(groupTitle)
         inbox.setSummaryText(if (count == 1) "1 new message" else "$count new messages")
 
-        val intent = Intent(ctx, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        val intent = mailTapIntent(ctx, "summary", groupKey).apply {
             if (accountId != null) putExtra(NotificationTapStore.EXTRA_ACCOUNT_ID, accountId)
         }
         val pending = PendingIntent.getActivity(
             ctx,
-            groupKey.hashCode(),
+            0,
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )

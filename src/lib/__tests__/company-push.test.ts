@@ -171,6 +171,48 @@ describe('company Expo push boundary', () => {
     expect(methods).toEqual(['DELETE', 'PUT']);
   });
 
+  it('preserves each staff account opt-in across A to B to A switching', async () => {
+    const otherId = 'other@zyndpay.io@mail.zyndpay.io';
+    useAccountStore.setState({ accounts: [
+      { id: accountId, serverUrl: 'https://mail.zyndpay.io' } as never,
+      { id: otherId, serverUrl: 'https://mail.zyndpay.io' } as never,
+    ] });
+    session.getStoredOAuthTokens.mockImplementation(async (id?: string) => {
+      const subject = id === otherId ? 'other-subject' : 'staff-subject';
+      return {
+        accessToken: jwt(subject), clientId: ZYNDMAIL_COMPANY.clientId,
+        companyIdentity: { issuer: ZYNDMAIL_COMPANY.issuer, audience: 'stalwart', subject },
+      };
+    });
+    const methods: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
+      if (url.includes('/v1/push-health?')) return { ok: true, status: 200,
+        json: async () => ({ status: 'ok', previewMode: 'sender-subject-snippet-v1' }) };
+      methods.push(init.method ?? 'GET');
+      return { ok: true, status: 200, json: async () => ({
+        registrationId: session.username === 'other@zyndpay.io' ? 'other-registration' : 'staff-registration',
+      }) };
+    }));
+
+    expect(await registerCompanyPush(accountId, true)).toEqual({ status: 'ACTIVE' });
+    records.set('zyndmail.production.push.preference.v1', 'staff-subject');
+    session.username = 'other@zyndpay.io';
+    expect(await registerCompanyPush(otherId, false, true)).toEqual({ status: 'OFF' });
+    expect(await companyPushStatus(otherId)).toEqual({ status: 'OFF' });
+    expect(methods).toEqual(['PUT']);
+    expect(JSON.parse(records.get('zyndmail.production.push.registration.v1')!).subject).toBe('staff-subject');
+
+    session.username = 'staff@zyndpay.io';
+    expect(await registerCompanyPush(accountId, false)).toEqual({ status: 'ACTIVE' });
+    session.username = 'other@zyndpay.io';
+    expect(await registerCompanyPush(otherId, true)).toEqual({ status: 'ACTIVE' });
+    session.username = 'staff@zyndpay.io';
+    expect(await registerCompanyPush(accountId, false)).toEqual({ status: 'ACTIVE' });
+    session.username = 'other@zyndpay.io';
+    expect(await registerCompanyPush(otherId, false)).toEqual({ status: 'ACTIVE' });
+    expect(methods).toEqual(['PUT', 'DELETE', 'PUT', 'DELETE', 'PUT', 'DELETE', 'PUT']);
+  });
+
   it('force-renews a fresh local registration so a stale server subscription is upgraded', async () => {
     records.set('zyndmail.production.push.preference.v1', 'staff-subject');
     records.set('zyndmail.production.push.registration.v1', JSON.stringify({
