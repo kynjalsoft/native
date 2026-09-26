@@ -24,7 +24,7 @@ import {
   teardownPushNotifications,
   teardownPushNotificationsForAccount,
 } from '../lib/push-notifications';
-import { reconcileCompanyPush, revokeCompanyPush, revokeEvictedCompanyPush } from '../lib/company-push';
+import { dismissCompanyPushNotifications, reconcileCompanyPush, revokeCompanyPush, revokeEvictedCompanyPush } from '../lib/company-push';
 import { clearCalendarNotifications, resumeCalendarNotifications, suspendCalendarNotifications } from '../lib/calendar-notifications';
 
 // Persist middleware hydrates asynchronously on cold start. Without this
@@ -179,6 +179,15 @@ async function syncAccountDisplayName(accountId: string): Promise<void> {
   }
 }
 
+async function retirePreviousCompanyPush(
+  previousAccountId: string | null, previousServerUrl: string | null, nextAccountId: string,
+): Promise<void> {
+  if (!previousAccountId || previousAccountId === nextAccountId ||
+      !isCompanyMailServer(previousServerUrl ?? '')) return;
+  await revokeCompanyPush(previousAccountId, true).catch(() => undefined);
+  await dismissCompanyPushNotifications().catch(() => undefined);
+}
+
 // Shared tail of the OAuth sign-in flows (browser handoff and cross-device QR
 // pairing both end here). Bootstraps a JMAP session from the token bundle,
 // registers the account, and flips the store to connected. Throws on failure
@@ -212,6 +221,7 @@ async function completeOAuthHandoff(
 
   let connected: { session: JMAPSession; username: string; accountId: string };
   const previousAccountId = get().isAuthenticated ? get().activeAccountId : null;
+  const previousServerUrl = get().serverUrl;
   const resumePersonalPushSetup = previousAccountId && !isCompanyMailServer(jmapClient.serverUrl ?? '')
     ? await suspendPersonalPushSetupForAccount(previousAccountId) : () => undefined;
   try {
@@ -223,6 +233,7 @@ async function completeOAuthHandoff(
     resumePersonalPushSetup();
   }
   const { session, username, accountId } = connected;
+  await retirePreviousCompanyPush(previousAccountId, previousServerUrl, accountId);
   if (previous) {
     useContactsStore.getState().reset();
     useCalendarStore.getState().reset();
@@ -300,6 +311,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     try {
       let session: JMAPSession;
       const previousAccountId = get().isAuthenticated ? get().activeAccountId : null;
+      const previousServerUrl = get().serverUrl;
       const resumePersonalPushSetup = previousAccountId && !isCompanyMailServer(jmapClient.serverUrl ?? '')
         ? await suspendPersonalPushSetupForAccount(previousAccountId) : () => undefined;
       try {
@@ -317,6 +329,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         useCalendarStore.getState().reset();
       }
       const accountId = generateAccountId(username, serverUrl.replace(/\/+$/, ''));
+      await retirePreviousCompanyPush(previousAccountId, previousServerUrl, accountId);
 
       const accountStore = useAccountStore.getState();
       accountStore.addAccount({
@@ -625,6 +638,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     // jmapClient first. If it fails, restore the previous active account
     // so we don't leave the user stranded on a half-switched state.
     const previousActive = get().activeAccountId;
+    const previousServerUrl = get().serverUrl;
     // loadAccount overwrites the client's credentials/session; keep the live
     // connection around so a failed switch can put it back instead of
     // leaving the previous account dead until relaunch.
@@ -674,6 +688,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       resumePersonalPushSetup();
     }
 
+    const session = jmapClient.currentSession;
+    if (!session) {
+      set({ isLoading: false, error: 'Failed to load session' });
+      return;
+    }
+
+    await retirePreviousCompanyPush(previousActive, previousServerUrl, accountId);
     accountStore.setActiveAccount(accountId);
     accountStore.updateAccount(accountId, {
       isConnected: true,
@@ -681,12 +702,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       errorMessage: undefined,
       lastLoginAt: Date.now(),
     });
-
-    const session = jmapClient.currentSession;
-    if (!session) {
-      set({ isLoading: false, error: 'Failed to load session' });
-      return;
-    }
 
     await clearCalendarNotifications();
     applyConnectedState(set, session, target.serverUrl, target.username, accountId);
