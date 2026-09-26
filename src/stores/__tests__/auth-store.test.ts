@@ -35,7 +35,13 @@ vi.mock('../../lib/push-notifications', () => ({
   teardownPushNotificationsForAccount: vi.fn(async () => undefined),
 }));
 
+vi.mock('../../lib/company-push', () => ({
+  revokeCompanyPush: vi.fn(async () => true),
+  revokeEvictedCompanyPush: vi.fn(async () => undefined),
+}));
+
 import { jmapClient } from '../../api/jmap-client';
+import { revokeEvictedCompanyPush } from '../../lib/company-push';
 import { useAuthStore } from '../auth-store';
 import { useAccountStore } from '../account-store';
 
@@ -158,6 +164,43 @@ describe('auth-store', () => {
 
       expect(restored).toBe(true);
       expect(useAuthStore.getState().isAuthenticated).toBe(true);
+    });
+
+    it('retires an invalid staff registration before removing restore credentials', async () => {
+      const id = 'staff@zyndpay.io@mail.zyndpay.io';
+      useAccountStore.setState({ accounts: [{
+        id, serverUrl: 'https://mail.zyndpay.io', username: 'staff@zyndpay.io',
+      } as never], activeAccountId: id, defaultAccountId: id });
+      const { AuthenticationError } = await import('../../api/jmap-client');
+      mockLoadAccount.mockRejectedValue(new AuthenticationError('Expired'));
+      (jmapClient.clearAccountCredentials as ReturnType<typeof vi.fn>).mockImplementationOnce(async () => {
+        expect(revokeEvictedCompanyPush).toHaveBeenCalledWith(id);
+      });
+
+      expect(await useAuthStore.getState().restoreSession()).toBe(false);
+      expect(revokeEvictedCompanyPush).toHaveBeenCalledWith(id);
+      expect(useAccountStore.getState().getAccountById(id)).toBeUndefined();
+    });
+  });
+
+  describe('switchAccount', () => {
+    it('retires only the invalid staff account before evicting it', async () => {
+      const id = 'staff@zyndpay.io@mail.zyndpay.io';
+      useAccountStore.setState({ accounts: [
+        { id: 'acc-1', serverUrl: 'https://mail.example.com', username: 'user' } as never,
+        { id, serverUrl: 'https://mail.zyndpay.io', username: 'staff@zyndpay.io' } as never,
+      ], activeAccountId: 'acc-1', defaultAccountId: 'acc-1' });
+      useAuthStore.setState({ activeAccountId: 'acc-1', isAuthenticated: true });
+      const { AuthenticationError } = await import('../../api/jmap-client');
+      mockLoadAccount.mockRejectedValue(new AuthenticationError('Expired'));
+      (jmapClient.clearAccountCredentials as ReturnType<typeof vi.fn>).mockImplementationOnce(async () => {
+        expect(revokeEvictedCompanyPush).toHaveBeenCalledWith(id);
+      });
+
+      await useAuthStore.getState().switchAccount(id);
+      expect(revokeEvictedCompanyPush).toHaveBeenCalledExactlyOnceWith(id);
+      expect(useAccountStore.getState().getAccountById(id)).toBeUndefined();
+      expect(useAccountStore.getState().getAccountById('acc-1')).toBeDefined();
     });
   });
 

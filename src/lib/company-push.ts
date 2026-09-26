@@ -24,6 +24,7 @@ const storageOptions: SecureStore.SecureStoreOptions = {
 
 interface Registration {
   subject: string;
+  accountId?: string;
   registrationId: string;
   revocationKey?: string;
   renewedAt: number;
@@ -189,7 +190,8 @@ async function readRegistration(): Promise<Registration | null> {
   try {
     const value = JSON.parse(raw) as Partial<Registration>;
     return typeof value.subject === 'string' && typeof value.registrationId === 'string'
-      ? { subject: value.subject, registrationId: value.registrationId,
+      ? { subject: value.subject, accountId: typeof value.accountId === 'string' ? value.accountId : undefined,
+          registrationId: value.registrationId,
           revocationKey: typeof value.revocationKey === 'string' && REVOCATION_KEY.test(value.revocationKey) ? value.revocationKey : undefined,
           renewedAt: value.renewedAt ?? 0, routingVersion: value.routingVersion, previews: value.previews, revocationPending: value.revocationPending === true }
       : null;
@@ -476,7 +478,7 @@ async function registerCompanyPushInner(accountId: string, requestPermission: bo
       throw new Error('The mail relay returned an invalid registration.');
     }
     const registration: Registration = {
-      subject: session.subject, registrationId: body.registrationId,
+      subject: session.subject, accountId, registrationId: body.registrationId,
       ...(typeof body.revocationKey === 'string' && REVOCATION_KEY.test(body.revocationKey)
         ? { revocationKey: body.revocationKey }
         : previous?.registrationId === body.registrationId && previous.revocationKey
@@ -525,6 +527,20 @@ export async function revokeCompanyPush(accountId: string, preservePreference = 
   } finally {
     revoking.delete(accountId);
   }
+}
+
+export async function revokeEvictedCompanyPush(accountId: string): Promise<void> {
+  const registration = await readRegistration();
+  if (!registration) return;
+  if (registration.accountId !== accountId) {
+    if (registration.accountId) return;
+    const tokens = await jmapClient.getStoredOAuthTokens(accountId).catch(() => null);
+    if (tokens?.companyIdentity?.subject !== registration.subject) return;
+  }
+  await SecureStore.setItemAsync(REGISTRATION_KEY, JSON.stringify({ ...registration, revocationPending: true }), storageOptions);
+  await setPushPreference(registration.subject, false);
+  await dismissCompanyPushNotifications();
+  await deleteRegistration(registration, null);
 }
 
 export async function reconcilePendingCompanyPushRevocation(): Promise<boolean> {
