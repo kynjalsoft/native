@@ -962,6 +962,15 @@ export interface NotificationTapPayload {
   jmapAccountId?: string;
 }
 
+export async function setAndroidMailPreviewEnabled(enabled: boolean): Promise<void> {
+  if (Platform.OS !== 'android') return;
+  const native = (NativeModules as Record<string, unknown>).BulwarkFcm as
+    | { setMailPreviewEnabled?: (value: boolean) => Promise<void> }
+    | undefined;
+  if (!native?.setMailPreviewEnabled) throw new Error('Native mail preview protection is unavailable.');
+  await native.setMailPreviewEnabled(enabled);
+}
+
 /** Remove delivered non-company mail cards from the Android tray when the
  * account is disabled or removed. Older installed binaries lack this bridge. */
 export async function dismissAndroidMailNotifications(accountId?: string): Promise<void> {

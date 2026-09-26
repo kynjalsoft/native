@@ -25,6 +25,7 @@ import {
   getInitialNotificationTap,
   getStoredRelayBaseUrl,
   setupPushNotifications,
+  setAndroidMailPreviewEnabled,
   teardownPushNotificationsForAccount,
   type NotificationTapPayload,
 } from './src/lib/push-notifications';
@@ -348,6 +349,11 @@ function AppContent() {
   const [gateLocked, setAppLocked] = React.useState(true);
   const lockEnabled = useSettingsStore((state) => state.appLockEnabled);
   const settingsHydrated = useSettingsStore((state) => state.hydrated);
+  React.useEffect(() => {
+    if (!settingsHydrated) return;
+    void setAndroidMailPreviewEnabled(useSettingsStore.getState().notificationPreviewsEnabled)
+      .catch(() => undefined);
+  }, [settingsHydrated]);
   const appLocked = requiresMailboxUnlock(settingsHydrated, lockEnabled, gateLocked);
   const [unlockBusy, setUnlockBusy] = React.useState(false);
   const [unlockError, setUnlockError] = React.useState<string | null>(null);

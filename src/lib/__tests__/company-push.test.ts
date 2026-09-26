@@ -230,6 +230,38 @@ describe('company Expo push boundary', () => {
     expect(fetchMock.mock.calls).toHaveLength(2);
   });
 
+  it('retires an unmapped legacy registration after the sole staff mailbox changes subject', async () => {
+    const registrationKey = 'zyndmail.production.push.registration.v1';
+    records.set(registrationKey, JSON.stringify({
+      subject: 'staff-subject', registrationId: 'legacy-registration', renewedAt: Date.now(),
+      routingVersion: 3, previews: true,
+    }));
+    records.set('zyndmail.production.push.installation.v1', 'legacy-installation');
+    useAccountStore.setState({ accounts: [{ id: accountId, serverUrl: 'https://mail.zyndpay.io' } as never] });
+    session.getStoredOAuthTokens.mockResolvedValue({
+      accessToken: jwt('replacement-subject'), clientId: ZYNDMAIL_COMPANY.clientId,
+      companyIdentity: { issuer: ZYNDMAIL_COMPANY.issuer, audience: 'stalwart', subject: 'replacement-subject' },
+    });
+    let online = false;
+    const requests: Array<{ method?: string; body: unknown }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init: RequestInit) => {
+      requests.push({ method: init.method, body: JSON.parse(init.body as string) });
+      return { ok: online, status: online ? 200 : 503 };
+    }));
+
+    expect((await registerCompanyPush(accountId, false)).status).toBe('UNAVAILABLE');
+    expect(JSON.parse(records.get(registrationKey)!)).toMatchObject({
+      registrationId: 'legacy-registration', revocationPending: true, revocationReason: 'required',
+    });
+    online = true;
+    expect(await registerCompanyPush(accountId, false)).toEqual({ status: 'OFF' });
+    expect(records.has(registrationKey)).toBe(false);
+    expect(requests).toEqual([
+      { method: 'DELETE', body: { registrationId: 'legacy-registration', installationId: 'legacy-installation' } },
+      { method: 'DELETE', body: { registrationId: 'legacy-registration', installationId: 'legacy-installation' } },
+    ]);
+  });
+
   it('does not restore migrated legacy consent after an overlapping opt-out', async () => {
     const preferenceKey = 'zyndmail.production.push.preference.v1';
     records.set(preferenceKey, JSON.stringify({ version: 2, subjects: ['staff-subject'] }));
@@ -444,7 +476,7 @@ describe('company Expo push boundary', () => {
     relayReady = false;
     expect((await registerCompanyPush(accountId, false, true)).status).toBe('UNAVAILABLE');
     expect(await companyPushStatus(accountId)).toMatchObject({ status: 'PENDING' });
-    expect(await companyPushPreviewOptOutPending(accountId)).toBe(true);
+    expect(await companyPushPreviewOptOutPending()).toBe(true);
     relayReady = true;
     expect(await registerCompanyPush(accountId, false, true)).toEqual({ status: 'ACTIVE' });
     expect(await companyPushStatus(accountId)).toEqual({ status: 'ACTIVE' });
@@ -472,19 +504,56 @@ describe('company Expo push boundary', () => {
     expect(await companyPushStatus(accountId)).toEqual({ status: 'OFF' });
   });
 
-  it('does not report preview reconciliation without an owned rich registration', async () => {
+  it('reports preview reconciliation for any rich registration on this installation', async () => {
     useSettingsStore.setState({ notificationPreviewsEnabled: false });
-    expect(await companyPushPreviewOptOutPending(accountId)).toBe(false);
+    expect(await companyPushPreviewOptOutPending()).toBe(false);
     records.set('zyndmail.production.push.registration.v1', JSON.stringify({
       subject: 'other-subject', registrationId: 'other-registration', renewedAt: Date.now(),
       routingVersion: 3, previews: true,
     }));
-    expect(await companyPushPreviewOptOutPending(accountId)).toBe(false);
+    expect(await companyPushPreviewOptOutPending()).toBe(true);
     records.set('zyndmail.production.push.registration.v1', JSON.stringify({
       subject: 'staff-subject', registrationId: 'registration-1', renewedAt: Date.now(),
       routingVersion: 2, previews: false,
     }));
-    expect(await companyPushPreviewOptOutPending(accountId)).toBe(false);
+    expect(await companyPushPreviewOptOutPending()).toBe(false);
+  });
+
+  it('retires another staff account rich registration when previews are disabled', async () => {
+    const registrationKey = 'zyndmail.production.push.registration.v1';
+    const preferenceKey = 'zyndmail.production.push.preference.v1';
+    const otherId = 'other@zyndpay.io@mail.zyndpay.io';
+    records.set(preferenceKey, JSON.stringify({ version: 3, accountIds: [otherId] }));
+    records.set(registrationKey, JSON.stringify({
+      subject: 'other-subject', accountId: otherId, registrationId: 'other-registration',
+      revocationKey: 'a'.repeat(43), renewedAt: Date.now(), routingVersion: 3, previews: true,
+    }));
+    useAccountStore.setState({ accounts: [
+      { id: accountId, serverUrl: 'https://mail.zyndpay.io' } as never,
+      { id: otherId, serverUrl: 'https://mail.zyndpay.io' } as never,
+    ] });
+    useSettingsStore.setState({ notificationPreviewsEnabled: false });
+    let online = false;
+    const requests: Array<{ method?: string; body: unknown }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init: RequestInit) => {
+      requests.push({ method: init.method, body: JSON.parse(init.body as string) });
+      return { ok: online, status: online ? 200 : 503 };
+    }));
+
+    expect(await companyPushStatus(accountId)).toMatchObject({ status: 'PENDING' });
+    expect((await registerCompanyPush(accountId, false)).status).toBe('PENDING');
+    expect(JSON.parse(records.get(registrationKey)!)).toMatchObject({
+      accountId: otherId, revocationPending: true, revocationReason: 'required',
+    });
+    expect(await companyPushPreviewOptOutPending()).toBe(true);
+    online = true;
+    expect(await registerCompanyPush(accountId, false)).toEqual({ status: 'OFF' });
+    expect(records.has(registrationKey)).toBe(false);
+    expect(JSON.parse(records.get(preferenceKey)!)).toEqual({ version: 3, accountIds: [otherId] });
+    expect(requests).toEqual([
+      { method: 'DELETE', body: { registrationId: 'other-registration', revocationKey: 'a'.repeat(43) } },
+      { method: 'DELETE', body: { registrationId: 'other-registration', revocationKey: 'a'.repeat(43) } },
+    ]);
   });
 
   it('keeps the active registration visible when another staff account is removed', async () => {

@@ -411,9 +411,14 @@ export async function companyPushStatus(accountId: string): Promise<CompanyPushS
   }
   const problem = configurationError();
   if (problem) return { status: 'UNAVAILABLE', reason: problem };
-  const session = await currentCompanySession(accountId);
-  if (!session) return { status: 'UNAVAILABLE', reason: 'Sign in with ZyndPay Staff to enable mail alerts.' };
   const registration = await readRegistration();
+  const session = await currentCompanySession(accountId);
+  if (registration?.routingVersion === 3 && registration.previews === true &&
+      !useSettingsStore.getState().notificationPreviewsEnabled &&
+      (!session || registration.accountId !== accountId || registration.subject !== session.subject)) {
+    return companyPushPreviewPending;
+  }
+  if (!session) return { status: 'UNAVAILABLE', reason: 'Sign in with ZyndPay Staff to enable mail alerts.' };
   if (registration?.revocationPending && registration.subject === session.subject &&
       (!registration.accountId || registration.accountId === accountId)) return companyPushRevocationPendingStatus;
   if (!registration && !(await relayHealth()).ready) return { status: 'UNAVAILABLE', reason: RELAY_UNAVAILABLE };
@@ -437,16 +442,10 @@ export async function companyPushStatus(accountId: string): Promise<CompanyPushS
   return registration ? { status: 'ACTIVE' } : { status: 'ERROR', reason: 'Register this device again.' };
 }
 
-export async function companyPushPreviewOptOutPending(accountId: string): Promise<boolean> {
+export async function companyPushPreviewOptOutPending(): Promise<boolean> {
   if (useSettingsStore.getState().notificationPreviewsEnabled) return false;
-  const [registration, tokens] = await Promise.all([
-    readRegistration(),
-    jmapClient.getStoredOAuthTokens(accountId).catch(() => null),
-  ]);
-  return !!registration && registration.routingVersion === 3 && registration.previews === true &&
-    registration.revocationPending !== true &&
-    (!registration.accountId || registration.accountId === accountId) &&
-    registration.subject === tokens?.companyIdentity?.subject;
+  const registration = await readRegistration();
+  return !!registration && registration.routingVersion === 3 && registration.previews === true;
 }
 
 export async function companyPushRevocationPending(accountId: string): Promise<boolean> {
@@ -531,11 +530,23 @@ async function registerCompanyPushInner(accountId: string, requestPermission: bo
   const problem = configurationError();
   if (problem) return { status: 'UNAVAILABLE', reason: problem };
   const session = await currentCompanySession(accountId);
+  let previous = await readRegistration();
+  if (previous?.routingVersion === 3 && previous.previews === true &&
+      !useSettingsStore.getState().notificationPreviewsEnabled &&
+      (!session || previous.accountId !== accountId || previous.subject !== session.subject)) {
+    const pending = await markRegistrationPending(previous, 'required');
+    await dismissCompanyPushNotifications();
+    if (!await deleteRegistration(pending, null)) return companyPushPreviewPending;
+    previous = await readRegistration();
+  }
   if (!session) return { status: 'UNAVAILABLE', reason: 'Sign in with ZyndPay Staff to enable mail alerts.' };
   const oldSubject = (await accountSubjects()).find((entry) => entry.accountId === accountId)?.subject;
-  let previous = await readRegistration();
+  const soleSavedCompanyAccount = useAccountStore.getState().accounts.filter((account) =>
+    isCompanyMailServer(account.serverUrl));
   const changedOwner = !!previous && previous.subject !== session.subject &&
-    (previous.accountId === accountId || (!previous.accountId && oldSubject === previous.subject));
+    (previous.accountId === accountId || (!previous.accountId &&
+      (oldSubject === previous.subject ||
+        (soleSavedCompanyAccount.length === 1 && soleSavedCompanyAccount[0].id === accountId))));
   if (changedOwner && previous) previous = await markRegistrationPending(previous, 'required');
   await rememberAccountSubject(accountId, session.subject);
   if (changedOwner && previous) {
@@ -547,6 +558,7 @@ async function registerCompanyPushInner(accountId: string, requestPermission: bo
   if (!useSettingsStore.getState().emailNotificationsEnabled) return { status: 'OFF' };
   if (previous?.revocationPending) {
     if (await reconcilePendingCompanyPushRevocationInner()) {
+      if (await companyPushPreviewOptOutPending()) return companyPushPreviewPending;
       if (!requestPermission && !await hasPushPreference(accountId)) return { status: 'OFF' };
       return { status: 'UNAVAILABLE', reason: 'The previous staff registration is awaiting server revocation. Retry when the mail relay is available.' };
     }

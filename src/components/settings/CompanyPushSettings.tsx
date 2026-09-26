@@ -1,7 +1,7 @@
 import React from 'react';
 import { ActivityIndicator, AppState, View } from 'react-native';
 import { useSettingsStore } from '../../stores/settings-store';
-import { dismissAndroidMailNotifications } from '../../lib/push-notifications';
+import { dismissAndroidMailNotifications, setAndroidMailPreviewEnabled } from '../../lib/push-notifications';
 import { useAuthStore } from '../../stores/auth-store';
 import { useLocaleStore } from '../../stores/locale-store';
 import { useColors } from '../../theme/colors';
@@ -76,21 +76,40 @@ export function CompanyPushSettings(): React.ReactElement {
     if (!accountId || busy || !emailEnabled || (enabled && !previewAvailable)) return;
     setBusy(true);
     statusRequest.current += 1;
+    const guarded = !enabled
+      ? await setAndroidMailPreviewEnabled(false).then(() => true, () => false)
+      : true;
     useSettingsStore.getState().updateSetting('notificationPreviewsEnabled', enabled);
+    if (enabled) {
+      try { await setAndroidMailPreviewEnabled(true); } catch {
+        useSettingsStore.getState().updateSetting('notificationPreviewsEnabled', previews);
+        setStatus({ status: 'ERROR', reason: 'Native mail preview protection is unavailable.' });
+        setBusy(false);
+        return;
+      }
+    }
     if (!enabled) await Promise.all([
       dismissCompanyPushNotifications(), dismissAndroidMailNotifications(),
     ]);
     try {
       const result = await registerCompanyPush(accountId, false, true);
       if (result.status !== 'ACTIVE' && result.status !== 'OFF') {
-        if (enabled) useSettingsStore.getState().updateSetting('notificationPreviewsEnabled', previews);
+        if (enabled) {
+          await setAndroidMailPreviewEnabled(false).catch(() => undefined);
+          useSettingsStore.getState().updateSetting('notificationPreviewsEnabled', previews);
+        }
       }
       const pending = !enabled && result.status !== 'ACTIVE' &&
-        await companyPushPreviewOptOutPending(accountId).catch(() => false);
-      setStatus(pending ? companyPushPreviewPending : result);
+        await companyPushPreviewOptOutPending().catch(() => false);
+      setStatus(!guarded
+        ? { status: 'ERROR', reason: 'Native mail preview protection is unavailable.' }
+        : pending ? companyPushPreviewPending : result);
     } catch {
-      if (enabled) useSettingsStore.getState().updateSetting('notificationPreviewsEnabled', previews);
-      const pending = !enabled && await companyPushPreviewOptOutPending(accountId).catch(() => false);
+      if (enabled) {
+        await setAndroidMailPreviewEnabled(false).catch(() => undefined);
+        useSettingsStore.getState().updateSetting('notificationPreviewsEnabled', previews);
+      }
+      const pending = !enabled && await companyPushPreviewOptOutPending().catch(() => false);
       setStatus(pending
         ? companyPushPreviewPending
         : { status: 'ERROR', reason: 'Preview preference could not be applied. Please try again.' });

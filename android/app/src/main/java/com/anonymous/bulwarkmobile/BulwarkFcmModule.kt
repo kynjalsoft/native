@@ -77,18 +77,44 @@ class BulwarkFcmModule(reactContext: ReactApplicationContext)
             ?: accountId?.let { "bulwark-mail:$it" }
         val groupTitle = options.takeIf { it.hasKey("groupTitle") }?.getString("groupTitle")
             ?: accountId ?: "ZyndMail"
+        val generation = mailPreviewGate.snapshot()
 
         // Bitmap fetch + draw off the bridge thread so the caller doesn't
         // block waiting for the favicon request.
         thread(name = "bulwark-notification") {
-            val largeIcon = iconUrl?.let { fetchBitmap(it) }
-                ?: makeLetterAvatar(initials, bgColorHex)
-            postNotification(
-                notificationId, title, body, largeIcon, bgColorHex,
-                emailId, threadId, accountId, jmapAccountId, groupKey, previews,
-            )
-            if (groupKey != null) postGroupSummary(groupKey, groupTitle, bgColorHex, accountId, previews)
+            try {
+                val largeIcon = iconUrl?.let { fetchBitmap(it) }
+                    ?: makeLetterAvatar(initials, bgColorHex)
+                val posted = mailPreviewGate.postIfCurrent(generation, previews, {
+                    reactApplicationContext.getSharedPreferences(MAIL_PREVIEW_PREFERENCES, Context.MODE_PRIVATE)
+                        .getBoolean("enabled", false)
+                }) {
+                    postNotification(
+                        notificationId, title, body, largeIcon, bgColorHex,
+                        emailId, threadId, accountId, jmapAccountId, groupKey, previews,
+                    )
+                    if (groupKey != null) postGroupSummary(groupKey, groupTitle, bgColorHex, accountId, previews)
+                }
+                if (posted) promise.resolve(null)
+                else promise.reject("mail_preview_changed", "Mail preview preference changed before posting")
+            } catch (error: Exception) {
+                promise.reject("mail_post_failed", error)
+            }
+        }
+    }
+
+    @ReactMethod
+    fun setMailPreviewEnabled(enabled: Boolean, promise: Promise) {
+        try {
+            mailPreviewGate.update(enabled, { value ->
+                reactApplicationContext.getSharedPreferences(MAIL_PREVIEW_PREFERENCES, Context.MODE_PRIVATE)
+                    .edit().putBoolean("enabled", value).commit()
+            }) {
+                cancelMailNotifications(null)
+            }
             promise.resolve(null)
+        } catch (error: Exception) {
+            promise.reject("mail_preview_update_failed", error)
         }
     }
 
@@ -101,18 +127,22 @@ class BulwarkFcmModule(reactContext: ReactApplicationContext)
     @ReactMethod
     fun dismissMailNotifications(accountId: String?, promise: Promise) {
         try {
-            val manager = reactApplicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            val expectedGroup = accountId?.let { "bulwark-mail:$it" }
-            manager.activeNotifications.forEach { item ->
-                val group = item.notification.group
-                if (group?.startsWith("bulwark-mail:") == true &&
-                    (expectedGroup == null || group == expectedGroup)) {
-                    manager.cancel(item.tag, item.id)
-                }
-            }
+            cancelMailNotifications(accountId)
             promise.resolve(null)
         } catch (error: Exception) {
             promise.reject("dismiss_mail_failed", error)
+        }
+    }
+
+    private fun cancelMailNotifications(accountId: String?) {
+        val manager = reactApplicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val expectedGroup = accountId?.let { "bulwark-mail:$it" }
+        manager.activeNotifications.forEach { item ->
+            val group = item.notification.group
+            if (group?.startsWith("bulwark-mail:") == true &&
+                (expectedGroup == null || group == expectedGroup)) {
+                manager.cancel(item.tag, item.id)
+            }
         }
     }
 
@@ -293,6 +323,8 @@ class BulwarkFcmModule(reactContext: ReactApplicationContext)
     companion object {
         // 1 MiB is plenty for a favicon; anything bigger is a sign of trouble.
         private const val MAX_FAVICON_BYTES = 1 * 1024 * 1024
+        private const val MAIL_PREVIEW_PREFERENCES = "bulwark-mail-preview"
+        private val mailPreviewGate = MailPreviewGate()
 
         @Volatile private var currentInstance: BulwarkFcmModule? = null
 
