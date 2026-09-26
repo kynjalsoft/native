@@ -81,7 +81,7 @@ import {
   resolveCompanyPush,
 } from './src/lib/company-push';
 import { openCompanyPushIntent } from './src/lib/company-push-intent';
-import { openFetchedPersonalNotification, ownsPersonalNotificationTap } from './src/lib/personal-notification-tap';
+import { openFetchedPersonalNotification, ownsPersonalNotificationTap, resolveLegacyPersonalNotification } from './src/lib/personal-notification-tap';
 import { generateAccountId } from './src/lib/account-utils';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -118,22 +118,21 @@ async function navigateToNotificationTap(
   if (!currentOwner()) return 'retry';
   try {
     if (payload.emailId && payload.threadId) {
-      if (!payload.jmapAccountId) {
-        navigationRef.navigate('UnifiedInbox');
-        Alert.alert(
-          useLocaleStore.getState().t('error'),
-          useLocaleStore.getState().t(
-            'notification_link_unavailable',
-            'This notification cannot open a single email. Search your inbox to find the message.',
-          ),
-        );
-        return 'opened';
-      }
       const emailId = payload.emailId;
       const jmapAccountId = payload.jmapAccountId;
       return openFetchedPersonalNotification(
         payload.accountId,
-        async () => (await getEmails([emailId], jmapAccountId))[0],
+        async () => {
+          if (jmapAccountId) {
+            const email = (await getEmails([emailId], jmapAccountId))[0];
+            return email?.id === emailId ? { email, jmapAccountId } : undefined;
+          }
+          return resolveLegacyPersonalNotification(
+            emailId,
+            [jmapClient.accountId, ...jmapClient.getSharedMailAccounts().map((account) => account.id)],
+            async (accountId) => (await getEmails([emailId], accountId))[0],
+          );
+        },
         () => ({
           activeAccountId: useAuthStore.getState().activeAccountId,
           sessionUsername: jmapClient.username,
@@ -141,18 +140,7 @@ async function navigateToNotificationTap(
           switching: useAuthStore.getState().isLoading,
         }),
         () => navigationRef.isReady() && stillReady(),
-        (email) => {
-          if (!email) {
-            navigationRef.navigate('UnifiedInbox');
-            Alert.alert(
-              useLocaleStore.getState().t('error'),
-              useLocaleStore.getState().t(
-                'notification_link_unavailable',
-                'This notification cannot open a single email. Search your inbox to find the message.',
-              ),
-            );
-            return;
-          }
+        ({ email, jmapAccountId }) => {
           navigationRef.navigate('EmailThread', {
             emailId: email.id,
             threadId: email.threadId,

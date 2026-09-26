@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { openFetchedPersonalNotification, ownsPersonalNotificationTap } from '../personal-notification-tap';
+import { openFetchedPersonalNotification, ownsPersonalNotificationTap, resolveLegacyPersonalNotification } from '../personal-notification-tap';
 
 describe('personal notification tap', () => {
   it('discards an email fetched after the active account switches', async () => {
@@ -56,6 +56,39 @@ describe('personal notification tap', () => {
     owner.switching = true;
     finish({ id: 'message-a' });
     await expect(opening).resolves.toBe('ignored');
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it('opens a prior-build message only in its unique authorized JMAP account', async () => {
+    const owner = { activeAccountId: 'alice@mail.example.com', sessionUsername: 'alice',
+      sessionServerUrl: 'https://mail.example.com', switching: false };
+    const fetchMessage = vi.fn(async (jmapAccountId: string) => jmapAccountId === 'shared'
+      ? { id: 'old-message', threadId: 'verified-thread' } : undefined);
+    const navigate = vi.fn();
+    expect(await openFetchedPersonalNotification(owner.activeAccountId,
+      () => resolveLegacyPersonalNotification('old-message', ['primary', 'shared'], fetchMessage),
+      () => owner, () => true, navigate)).toBe('opened');
+    expect(fetchMessage).toHaveBeenCalledWith('primary');
+    expect(fetchMessage).toHaveBeenCalledWith('shared');
+    expect(navigate).toHaveBeenCalledWith({
+      email: { id: 'old-message', threadId: 'verified-thread' }, jmapAccountId: 'shared',
+    });
+  });
+
+  it('keeps missing, ambiguous, and offline prior-build messages pending', async () => {
+    const owner = { activeAccountId: 'alice@mail.example.com', sessionUsername: 'alice',
+      sessionServerUrl: 'https://mail.example.com' };
+    const navigate = vi.fn();
+    const open = (fetchMessage: (accountId: string) => Promise<{ id: string } | undefined>) =>
+      openFetchedPersonalNotification(owner.activeAccountId,
+        () => resolveLegacyPersonalNotification('old-message', ['primary', 'shared'], fetchMessage),
+        () => owner, () => true, navigate);
+    expect(await open(async () => undefined)).toBe('retry');
+    expect(await open(async () => ({ id: 'old-message' }))).toBe('retry');
+    expect(await open(async (accountId) => {
+      if (accountId === 'shared') throw new Error('Offline');
+      return { id: 'old-message' };
+    })).toBe('retry');
     expect(navigate).not.toHaveBeenCalled();
   });
 });

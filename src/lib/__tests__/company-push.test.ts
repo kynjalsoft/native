@@ -200,6 +200,36 @@ describe('company Expo push boundary', () => {
     expect(JSON.parse(records.get('zyndmail.production.push.preference.v1')!).accountIds).toContain(accountId);
   });
 
+  it.each([true, false])('retires a changed-subject registration before returning OFF (owned: %s)', async (owned) => {
+    const preferenceKey = 'zyndmail.production.push.preference.v1';
+    const registrationKey = 'zyndmail.production.push.registration.v1';
+    records.set(preferenceKey, JSON.stringify({ version: 3, accountIds: [accountId] }));
+    records.set('zyndmail.production.push.account-subjects.v1', JSON.stringify([
+      { accountId, subject: 'staff-subject' },
+    ]));
+    records.set(registrationKey, JSON.stringify({
+      subject: 'staff-subject', ...(owned ? { accountId } : {}),
+      registrationId: 'old-registration', renewedAt: Date.now(), routingVersion: 3, previews: true,
+    }));
+    session.getStoredOAuthTokens.mockResolvedValue({
+      accessToken: jwt('replacement-subject'), clientId: ZYNDMAIL_COMPANY.clientId,
+      companyIdentity: { issuer: ZYNDMAIL_COMPANY.issuer, audience: 'stalwart', subject: 'replacement-subject' },
+    });
+    let online = false;
+    const fetchMock = vi.fn(async () => ({ ok: online, status: online ? 200 : 503 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    expect(await registerCompanyPush(accountId, false)).toMatchObject({ status: 'UNAVAILABLE' });
+    expect(JSON.parse(records.get(registrationKey)!)).toMatchObject({
+      registrationId: 'old-registration', revocationPending: true, revocationReason: 'required',
+    });
+    expect(records.has(preferenceKey)).toBe(false);
+    online = true;
+    expect(await registerCompanyPush(accountId, false)).toEqual({ status: 'OFF' });
+    expect(records.has(registrationKey)).toBe(false);
+    expect(fetchMock.mock.calls).toHaveLength(2);
+  });
+
   it('does not restore migrated legacy consent after an overlapping opt-out', async () => {
     const preferenceKey = 'zyndmail.production.push.preference.v1';
     records.set(preferenceKey, JSON.stringify({ version: 2, subjects: ['staff-subject'] }));
@@ -1154,8 +1184,8 @@ describe('company notification destination', () => {
     expect(await registeredCompanyPushAccountId()).toBe(otherId);
   });
 
-  it('accepts documented account and message targets and ignores an old thread hint', () => {
-    expect(parseCompanyPushDestination({ target: 'ACCOUNT', accountId: 'shared' })).toEqual({ target: 'ACCOUNT', accountId: 'shared' });
+  it('accepts documented message targets and ignores an old thread hint', () => {
+    expect(parseCompanyPushDestination({ target: 'ACCOUNT', accountId: 'shared' })).toBeNull();
     expect(parseCompanyPushDestination({ target: 'MESSAGE', accountId: 'shared', emailId: 'message' })).toEqual({ target: 'MESSAGE', accountId: 'shared', emailId: 'message' });
     expect(parseCompanyPushDestination({ target: 'EMAIL', accountId: 'shared', emailId: 'message', threadId: 'untrusted' })).toBeNull();
     expect(parseCompanyPushDestination({ target: 'INBOX' })).toEqual({ target: 'INBOX' });

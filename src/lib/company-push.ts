@@ -533,24 +533,34 @@ async function registerCompanyPushInner(accountId: string, requestPermission: bo
   const session = await currentCompanySession(accountId);
   if (!session) return { status: 'UNAVAILABLE', reason: 'Sign in with ZyndPay Staff to enable mail alerts.' };
   const oldSubject = (await accountSubjects()).find((entry) => entry.accountId === accountId)?.subject;
-  await rememberAccountSubject(accountId, session.subject);
-  if (!useSettingsStore.getState().emailNotificationsEnabled) return { status: 'OFF' };
-  if (!requestPermission && !await hasPushPreference(accountId)) return { status: 'OFF' };
   let previous = await readRegistration();
-  if (previous?.revocationPending) {
-    if (await reconcilePendingCompanyPushRevocationInner()) {
+  const changedOwner = !!previous && previous.subject !== session.subject &&
+    (previous.accountId === accountId || (!previous.accountId && oldSubject === previous.subject));
+  if (changedOwner && previous) previous = await markRegistrationPending(previous, 'required');
+  await rememberAccountSubject(accountId, session.subject);
+  if (changedOwner && previous) {
+    if (!await deleteRegistration(previous, null)) {
       return { status: 'UNAVAILABLE', reason: 'The previous staff registration is awaiting server revocation. Retry when the mail relay is available.' };
     }
     previous = await readRegistration();
   }
+  if (!useSettingsStore.getState().emailNotificationsEnabled) return { status: 'OFF' };
+  if (previous?.revocationPending) {
+    if (await reconcilePendingCompanyPushRevocationInner()) {
+      if (!requestPermission && !await hasPushPreference(accountId)) return { status: 'OFF' };
+      return { status: 'UNAVAILABLE', reason: 'The previous staff registration is awaiting server revocation. Retry when the mail relay is available.' };
+    }
+    previous = await readRegistration();
+  }
+  if (!requestPermission && !await hasPushPreference(accountId)) return { status: 'OFF' };
   if (previous && (previous.subject !== session.subject ||
       (previous.accountId && previous.accountId !== accountId))) {
     // One installation has one staff registration. Switching staff identities
     // must retire the earlier subject before enrolling the new one.
     let revoked = false;
     if (previous.accountId === accountId || (!previous.accountId && oldSubject === previous.subject)) {
-      await markRegistrationPending(previous, 'required');
-      revoked = await deleteRegistration(previous, null);
+      const pending = await markRegistrationPending(previous, 'required');
+      revoked = await deleteRegistration(pending, null);
     } else {
       const oldIds = useAccountStore.getState().accounts
         .filter((account) => account.id !== accountId && isCompanyMailServer(account.serverUrl))
@@ -763,8 +773,8 @@ export type CompanyPushDestination = {
 };
 
 export type CompanyPushReferenceTarget = { target: 'INBOX' } | {
-  target: 'ACCOUNT'; accountId: string;
-} | { target: 'MESSAGE'; accountId: string; emailId: string };
+  target: 'MESSAGE'; accountId: string; emailId: string;
+};
 
 function validIdentifier(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= 256;
@@ -775,9 +785,6 @@ export function parseCompanyPushDestination(value: unknown): CompanyPushReferenc
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const result = value as Record<string, unknown>;
   if (result.target === 'INBOX' && Object.keys(result).length === 1) return { target: 'INBOX' };
-  if (result.target === 'ACCOUNT' && Object.keys(result).length === 2 && validIdentifier(result.accountId)) {
-    return { target: 'ACCOUNT', accountId: result.accountId };
-  }
   if (result.target === 'MESSAGE' && Object.keys(result).length === 3 &&
       validIdentifier(result.accountId) && validIdentifier(result.emailId)) {
     return { target: 'MESSAGE', accountId: result.accountId, emailId: result.emailId };
