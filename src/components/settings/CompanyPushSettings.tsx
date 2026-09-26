@@ -4,7 +4,7 @@ import { useSettingsStore } from '../../stores/settings-store';
 import { useAuthStore } from '../../stores/auth-store';
 import { useLocaleStore } from '../../stores/locale-store';
 import { useColors } from '../../theme/colors';
-import { companyPushPreviewAvailable, companyPushPreviewPending, companyPushStatus, dismissCompanyPushNotifications, registerCompanyPush, revokeCompanyPush, type CompanyPushStatus } from '../../lib/company-push';
+import { companyPushPreviewAvailable, companyPushPreviewOptOutPending, companyPushPreviewPending, companyPushStatus, dismissCompanyPushNotifications, registerCompanyPush, revokeCompanyPush, type CompanyPushStatus } from '../../lib/company-push';
 import { SettingItem, SettingsSection, ToggleSwitch } from './settings-section';
 
 /** Company push uses the authenticated mail-plane relay, never a user-entered URL. */
@@ -76,12 +76,13 @@ export function CompanyPushSettings(): React.ReactElement {
       if (result.status !== 'ACTIVE' && result.status !== 'OFF') {
         if (enabled) useSettingsStore.getState().updateSetting('notificationPreviewsEnabled', previews);
       }
-      setStatus(!enabled && result.status !== 'ACTIVE'
-        ? companyPushPreviewPending
-        : result);
+      const pending = !enabled && result.status !== 'ACTIVE' &&
+        await companyPushPreviewOptOutPending(accountId).catch(() => false);
+      setStatus(pending ? companyPushPreviewPending : result);
     } catch {
       if (enabled) useSettingsStore.getState().updateSetting('notificationPreviewsEnabled', previews);
-      setStatus(!enabled
+      const pending = !enabled && await companyPushPreviewOptOutPending(accountId).catch(() => false);
+      setStatus(pending
         ? companyPushPreviewPending
         : { status: 'ERROR', reason: 'Preview preference could not be applied. Please try again.' });
     } finally { setBusy(false); }

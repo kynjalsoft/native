@@ -262,6 +262,16 @@ export async function companyPushStatus(accountId: string): Promise<CompanyPushS
   return registration ? { status: 'ACTIVE' } : { status: 'ERROR', reason: 'Register this device again.' };
 }
 
+export async function companyPushPreviewOptOutPending(accountId: string): Promise<boolean> {
+  if (useSettingsStore.getState().notificationPreviewsEnabled) return false;
+  const [registration, tokens] = await Promise.all([
+    readRegistration(),
+    jmapClient.getStoredOAuthTokens(accountId).catch(() => null),
+  ]);
+  return !!registration && registration.routingVersion === 3 && registration.previews === true &&
+    registration.subject === tokens?.companyIdentity?.subject;
+}
+
 const inFlight = new Map<string, { promise: Promise<CompanyPushStatus>; previews: boolean; requestPermission: boolean; force: boolean }>();
 const revoking = new Set<string>();
 
@@ -382,21 +392,24 @@ async function registerCompanyPushInner(accountId: string, requestPermission: bo
 
 export async function revokeCompanyPush(accountId: string): Promise<boolean> {
   revoking.add(accountId);
-  previewModeActive = false;
-  await dismissCompanyPushNotifications();
   try {
+    const tokens = await jmapClient.getStoredOAuthTokens(accountId).catch(() => null);
+    const subject = tokens?.companyIdentity?.subject;
+    const initialRegistration = await readRegistration();
+    if (subject && initialRegistration?.subject === subject) {
+      previewModeActive = false;
+      await dismissCompanyPushNotifications();
+    }
     const pending = inFlight.get(accountId)?.promise;
     if (pending) await pending.catch(() => undefined);
-    previewModeActive = false;
-    // A failed token refresh or relay outage must not silently re-enable push
-    // after opt-out. Only clear this account's preference, since a different
-    // staff account may be active on the same device.
-    const tokens = await jmapClient.getStoredOAuthTokens(accountId).catch(() => null);
-    if (tokens?.companyIdentity?.subject &&
-        await preferenceSubject() === tokens.companyIdentity.subject) {
+    const registration = await readRegistration();
+    if (subject && registration?.subject === subject) {
+      previewModeActive = false;
+      await dismissCompanyPushNotifications();
+    }
+    if (subject && await preferenceSubject() === subject) {
       await SecureStore.deleteItemAsync(PREFERENCE_KEY, storageOptions);
     }
-    const registration = await readRegistration();
     const session = await storedCompanySession(accountId).catch(() => null);
     if (!session) return registration === null;
     if (!registration || registration.subject !== session.subject) return true;
@@ -411,7 +424,6 @@ export async function revokeCompanyPush(accountId: string): Promise<boolean> {
       return false;
     }
   } finally {
-    previewModeActive = false;
     revoking.delete(accountId);
   }
 }

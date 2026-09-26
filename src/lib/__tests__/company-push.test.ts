@@ -38,7 +38,7 @@ vi.mock('expo-notifications', () => ({
 vi.mock('../../api/jmap-client', () => ({ jmapClient: session }));
 vi.mock('../../api/email', () => ({ getEmails }));
 
-import { isCompanyPushPresentation, isGenericCompanyPushPresentation, parseCompanyPushDestination, companyPushPreviewAvailable, companyPushPreviewModeActive, companyPushRelayOrigin, companyPushStatus, parseCompanyPushPayload, registerCompanyPush, revokeCompanyPush, resolveCompanyPush } from '../company-push';
+import { isCompanyPushPresentation, isGenericCompanyPushPresentation, parseCompanyPushDestination, companyPushPreviewAvailable, companyPushPreviewModeActive, companyPushPreviewOptOutPending, companyPushRelayOrigin, companyPushStatus, parseCompanyPushPayload, registerCompanyPush, revokeCompanyPush, resolveCompanyPush } from '../company-push';
 import { useSettingsStore } from '../../stores/settings-store';
 import { useAccountStore } from '../../stores/account-store';
 import { ZYNDMAIL_COMPANY } from '../zyndmail-company';
@@ -212,6 +212,7 @@ describe('company Expo push boundary', () => {
     relayReady = false;
     expect((await registerCompanyPush(accountId, false, true)).status).toBe('UNAVAILABLE');
     expect(await companyPushStatus(accountId)).toMatchObject({ status: 'PENDING' });
+    expect(await companyPushPreviewOptOutPending(accountId)).toBe(true);
     relayReady = true;
     expect(await registerCompanyPush(accountId, false, true)).toEqual({ status: 'ACTIVE' });
     expect(await companyPushStatus(accountId)).toEqual({ status: 'ACTIVE' });
@@ -237,6 +238,41 @@ describe('company Expo push boundary', () => {
     expect(await revocation).toBe(true);
     expect(companyPushPreviewModeActive()).toBe(false);
     expect(await companyPushStatus(accountId)).toEqual({ status: 'OFF' });
+  });
+
+  it('does not report preview reconciliation without an owned rich registration', async () => {
+    useSettingsStore.setState({ notificationPreviewsEnabled: false });
+    expect(await companyPushPreviewOptOutPending(accountId)).toBe(false);
+    records.set('zyndmail.production.push.registration.v1', JSON.stringify({
+      subject: 'other-subject', registrationId: 'other-registration', renewedAt: Date.now(),
+      routingVersion: 3, previews: true,
+    }));
+    expect(await companyPushPreviewOptOutPending(accountId)).toBe(false);
+    records.set('zyndmail.production.push.registration.v1', JSON.stringify({
+      subject: 'staff-subject', registrationId: 'registration-1', renewedAt: Date.now(),
+      routingVersion: 2, previews: false,
+    }));
+    expect(await companyPushPreviewOptOutPending(accountId)).toBe(false);
+  });
+
+  it('keeps the active registration visible when another staff account is removed', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => ({
+      ok: true, status: 200,
+      json: async () => url.includes('/v1/push-health?')
+        ? { status: 'ok', previewMode: 'sender-subject-snippet-v1' } : { registrationId: 'registration-1' },
+    })));
+    expect(await registerCompanyPush(accountId, true)).toEqual({ status: 'ACTIVE' });
+    const activeTokens = await session.getStoredOAuthTokens(accountId) as Record<string, unknown>;
+    session.getStoredOAuthTokens.mockImplementation(async (id?: string) => id === 'other-account' ? {
+      ...activeTokens,
+      accessToken: jwt('other-subject'),
+      companyIdentity: { issuer: ZYNDMAIL_COMPANY.issuer, audience: 'stalwart', subject: 'other-subject' },
+    } : activeTokens);
+
+    expect(await revokeCompanyPush('other-account')).toBe(true);
+    expect(companyPushPreviewModeActive()).toBe(true);
+    expect(dismiss).not.toHaveBeenCalled();
+    expect(JSON.parse(records.get('zyndmail.production.push.registration.v1')!).subject).toBe('staff-subject');
   });
 
   it('does not invite or request notification permission when the production relay redirects to webmail', async () => {
