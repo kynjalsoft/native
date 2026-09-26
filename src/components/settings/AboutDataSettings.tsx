@@ -4,7 +4,7 @@ import Constants from 'expo-constants';
 import * as DocumentPicker from 'expo-document-picker';
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
-import { CloudDownload, ExternalLink } from 'lucide-react-native';
+import { CloudDownload } from 'lucide-react-native';
 import { SettingsSection, SettingItem, Select, ToggleSwitch } from './settings-section';
 import Button from '../Button';
 import Dialog from '../Dialog';
@@ -23,9 +23,6 @@ import { UPDATE_REPO } from '../../api/updates';
 const APP_VERSION = Constants.expoConfig?.version ?? '0.0.0';
 const GIT_COMMIT = (Constants.expoConfig?.extra as { commit?: string } | undefined)?.commit ?? 'dev';
 const APP_STORE_URL = `https://github.com/${UPDATE_REPO}/releases`;
-const SOURCE_REF = /^[0-9a-f]{7,40}$/i.test(GIT_COMMIT) ? GIT_COMMIT : 'main';
-const SOURCE_URL = `https://github.com/${UPDATE_REPO}/tree/${SOURCE_REF}`;
-const LICENSE_URL = `https://github.com/${UPDATE_REPO}/blob/${SOURCE_REF}/LICENSE`;
 
 export function AboutDataSettings() {
   const c = useColors();
@@ -207,16 +204,6 @@ export function AboutDataSettings() {
               </Pressable>
             )}
           </View>
-        </View>
-        <View style={styles.sourceLinks}>
-          <Pressable accessibilityRole="link" onPress={() => void Linking.openURL(SOURCE_URL)} style={styles.sourceLink}>
-            <ExternalLink size={14} color={c.primary} />
-            <Text style={styles.sourceLinkText}>{t('settings.advanced.about.source_code', 'Source code')}</Text>
-          </Pressable>
-          <Pressable accessibilityRole="link" onPress={() => void Linking.openURL(LICENSE_URL)} style={styles.sourceLink}>
-            <ExternalLink size={14} color={c.primary} />
-            <Text style={styles.sourceLinkText}>{t('settings.advanced.about.license', 'License')}</Text>
-          </Pressable>
         </View>
       </View>
 
@@ -437,9 +424,6 @@ function makeStyles(c: ThemePalette) {
   aboutTitle: { ...typography.bodyMedium, color: c.text },
   aboutVersion: { ...typography.caption, color: c.mutedForeground, marginTop: 2 },
   aboutCommit: { color: c.mutedForeground, opacity: 0.6 },
-  sourceLinks: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.lg, marginTop: spacing.md },
-  sourceLink: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
-  sourceLinkText: { ...typography.caption, color: c.primary },
   updatePill: {
     alignSelf: 'flex-start',
     marginTop: spacing.xs,

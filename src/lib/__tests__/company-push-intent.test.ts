@@ -31,8 +31,6 @@ function dependencies(overrides: Partial<CompanyPushIntentDependencies> = {}): C
       threadId: 'message-thread',
     })),
     navigateToEmail: vi.fn(),
-    navigateToInbox: vi.fn(),
-    showInboxFallback: vi.fn(),
     clearLastNotificationResponse: vi.fn(async () => undefined),
     ...overrides,
   };
@@ -87,7 +85,6 @@ describe('company push tap routing', () => {
     expect(deps.navigateToEmail).toHaveBeenCalledWith({
       target: 'EMAIL', accountId: 'jmap-account', emailId: 'delivered-message', threadId: 'message-thread',
     });
-    expect(deps.navigateToInbox).not.toHaveBeenCalled();
     expect(deps.clearLastNotificationResponse).toHaveBeenCalledOnce();
   });
 
@@ -151,7 +148,6 @@ describe('company push tap routing', () => {
 
     await expect(openCompanyPushIntent(deps)).resolves.toBe('retry');
     expect(deps.navigateToEmail).not.toHaveBeenCalled();
-    expect(deps.navigateToInbox).not.toHaveBeenCalled();
     expect(deps.clearLastNotificationResponse).not.toHaveBeenCalled();
   });
 
@@ -171,20 +167,17 @@ describe('company push tap routing', () => {
 
     await expect(openCompanyPushIntent(deps)).resolves.toBe('retry');
     expect(deps.resolveDestination).not.toHaveBeenCalled();
-    expect(deps.navigateToInbox).not.toHaveBeenCalled();
     expect(deps.clearLastNotificationResponse).not.toHaveBeenCalled();
   });
 
-  it('explains legacy or expired references before opening Inbox as the safe fallback', async () => {
+  it('does not navigate an unresolved or expired reference', async () => {
     const deps = dependencies({
-      resolveDestination: vi.fn(async () => ({ target: 'INBOX' as const })),
+      resolveDestination: vi.fn(async () => null),
     });
 
-    await expect(openCompanyPushIntent(deps)).resolves.toBe('opened');
-    expect(deps.showInboxFallback).toHaveBeenCalledOnce();
-    expect(deps.navigateToInbox).toHaveBeenCalledOnce();
+    await expect(openCompanyPushIntent(deps)).resolves.toBe('retry');
     expect(deps.navigateToEmail).not.toHaveBeenCalled();
-    expect(deps.clearLastNotificationResponse).toHaveBeenCalledOnce();
+    expect(deps.clearLastNotificationResponse).not.toHaveBeenCalled();
   });
 
   it('defers a tap when switching starts during message resolution', async () => {

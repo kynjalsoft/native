@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import * as SecureStore from 'expo-secure-store';
 
 const records = vi.hoisted(() => new Map<string, string>());
 const expoToken = vi.hoisted(() => vi.fn(async () => ({ data: 'ExpoPushToken[ABCDEFGHIJKLMNOP1234567890]' })));
@@ -174,6 +175,57 @@ describe('company Expo push boundary', () => {
     }));
     expect(await registerCompanyPush(accountId, true)).toEqual({ status: 'ACTIVE' });
     expect(methods).toEqual(['DELETE', 'PUT']);
+  });
+
+  it('replaces this mailbox registration after its authenticated subject changes', async () => {
+    const methods: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
+      if (url.includes('/v1/push-health?')) return { ok: true, status: 200,
+        json: async () => ({ status: 'ok', previewMode: 'sender-subject-snippet-v1' }) };
+      methods.push(init.method ?? 'GET');
+      return { ok: true, status: 200,
+        json: async () => ({ registrationId: methods.length === 1 ? 'old-registration' : 'new-registration' }) };
+    }));
+    expect(await registerCompanyPush(accountId, true)).toEqual({ status: 'ACTIVE' });
+    const newSubject = 'replacement-subject';
+    session.getStoredOAuthTokens.mockResolvedValue({
+      accessToken: jwt(newSubject), clientId: ZYNDMAIL_COMPANY.clientId,
+      companyIdentity: { issuer: ZYNDMAIL_COMPANY.issuer, audience: 'stalwart', subject: newSubject },
+    });
+    expect(await registerCompanyPush(accountId, true)).toEqual({ status: 'ACTIVE' });
+    expect(methods).toEqual(['PUT', 'DELETE', 'PUT']);
+    expect(JSON.parse(records.get('zyndmail.production.push.registration.v1')!)).toMatchObject({
+      accountId, subject: newSubject, registrationId: 'new-registration',
+    });
+    expect(JSON.parse(records.get('zyndmail.production.push.preference.v1')!).accountIds).toContain(accountId);
+  });
+
+  it('does not restore migrated legacy consent after an overlapping opt-out', async () => {
+    const preferenceKey = 'zyndmail.production.push.preference.v1';
+    records.set(preferenceKey, JSON.stringify({ version: 2, subjects: ['staff-subject'] }));
+    records.set('zyndmail.production.push.registration.v1', JSON.stringify({
+      subject: 'staff-subject', accountId, registrationId: 'registration-1',
+      renewedAt: Date.now(), routingVersion: 3, previews: true,
+    }));
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200 })));
+    let entered!: () => void;
+    let release!: () => void;
+    const reachedWrite = new Promise<void>((resolve) => { entered = resolve; });
+    const heldWrite = new Promise<void>((resolve) => { release = resolve; });
+    vi.mocked(SecureStore.setItemAsync).mockImplementationOnce(async (key, value) => {
+      entered();
+      await heldWrite;
+      records.set(key, value);
+    });
+    const status = companyPushStatus(accountId);
+    await reachedWrite;
+    const optOut = revokeCompanyPush(accountId);
+    await vi.waitFor(() => expect(JSON.parse(records.get('zyndmail.production.push.registration.v1')!).revocationPending).toBe(true));
+    await Promise.race([optOut, new Promise((resolve) => setTimeout(resolve, 30))]);
+    release();
+    await Promise.all([status, optOut]);
+    expect(records.has(preferenceKey)).toBe(false);
+    expect(await registerCompanyPush(accountId, false)).toEqual({ status: 'OFF' });
   });
 
   it('preserves each staff account opt-in across A to B to A switching', async () => {
@@ -1138,6 +1190,19 @@ describe('company notification destination', () => {
       target: 'EMAIL', accountId: 'shared', emailId: 'message', threadId: 'authoritative-thread',
     });
     expect(getEmails).toHaveBeenCalledWith(['message'], 'shared');
+  });
+
+  it('never routes expired or foreign references to another inbox', async () => {
+    records.set('zyndmail.production.push.registration.v1', JSON.stringify({
+      subject: 'staff-subject', accountId, registrationId: 'registration-1', renewedAt: Date.now(),
+    }));
+    const fetchMock = vi.fn().mockResolvedValueOnce({ ok: false, status: 404 })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ target: 'INBOX' }) });
+    vi.stubGlobal('fetch', fetchMock);
+    const payload = { version: 1, notificationRef: 'c'.repeat(24) };
+    expect(await resolveCompanyPush(accountId, payload)).toBeNull();
+    expect(await resolveCompanyPush(accountId, payload)).toBeNull();
+    expect(getEmails).not.toHaveBeenCalled();
   });
 });
 

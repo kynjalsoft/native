@@ -897,14 +897,6 @@ function AppContent() {
         jmapAccountId: destination.accountId,
         emailIds: [destination.emailId],
       }),
-      navigateToInbox: () => navigationRef.navigate('UnifiedInbox'),
-      showInboxFallback: () => Alert.alert(
-        useLocaleStore.getState().t('error'),
-        useLocaleStore.getState().t(
-          'notification_link_unavailable',
-          'This notification cannot open a single email. Search your inbox to find the message.',
-        ),
-      ),
       clearLastNotificationResponse: Notifications.clearLastNotificationResponseAsync,
     }).then((result) => {
       if (result === 'opened' || result === 'ignored') {

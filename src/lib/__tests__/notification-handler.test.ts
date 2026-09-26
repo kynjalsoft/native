@@ -5,10 +5,13 @@ const current = vi.hoisted(() => ({
   settings: { emailNotificationsEnabled: true, calendarNotificationsEnabled: true, notificationPreviewsEnabled: false },
   accounts: [{ serverUrl: 'https://mail.zyndpay.io' }] as { serverUrl: string }[],
   serverUrl: 'https://mail.zyndpay.io' as string | null,
+  username: 'staff@zyndpay.io',
   pushModeActive: true,
   revocationPending: false,
   previewModeActive: false,
-  auth: { isAuthenticated: true, isLoading: false, activeAccountId: 'staff-account' as string | null },
+  auth: { isAuthenticated: true, isLoading: false, activeAccountId: 'staff@zyndpay.io@mail.zyndpay.io' as string | null },
+  resolveDestination: (async (_accountId: string, _data: unknown) => ({ target: 'EMAIL' as const })) as
+    (accountId: string, data: unknown) => Promise<{ target: 'EMAIL' } | null>,
 }));
 
 vi.mock('expo-notifications', () => ({
@@ -20,13 +23,16 @@ vi.mock('../calendar-notifications', () => ({ CALENDAR_NOTIFICATION_TAG: 'calend
 vi.mock('../zyndmail-company', () => ({ isCompanyMailServer: (url: string) => url === 'https://mail.zyndpay.io' }));
 vi.mock('../company-push', () => ({
   companyPushModeActive: async (accountId: string) =>
-    accountId === 'staff-account' && current.pushModeActive && !current.revocationPending,
-  companyPushPreviewModeActive: async (accountId: string) => accountId === 'staff-account' && current.previewModeActive,
+    accountId === 'staff@zyndpay.io@mail.zyndpay.io' && current.pushModeActive && !current.revocationPending,
+  companyPushPreviewModeActive: async (accountId: string) => accountId === 'staff@zyndpay.io@mail.zyndpay.io' && current.previewModeActive,
+  resolveCompanyPush: (accountId: string, data: unknown) => current.resolveDestination(accountId, data),
   isCompanyPushPresentation: (content: { data?: { notificationRef?: string } }) => !!content.data?.notificationRef,
   isGenericCompanyPushPresentation: (content: { title: string; body: string }) =>
     content.title === 'ZyndMail' && content.body === 'New ZyndPay Mail activity',
 }));
-vi.mock('../../api/jmap-client', () => ({ jmapClient: { get serverUrl() { return current.serverUrl; } } }));
+vi.mock('../../api/jmap-client', () => ({ jmapClient: {
+  get serverUrl() { return current.serverUrl; }, get username() { return current.username; },
+} }));
 vi.mock('../../stores/account-store', () => ({ useAccountStore: { getState: () => ({ accounts: current.accounts }) } }));
 vi.mock('../../stores/auth-store', () => ({ useAuthStore: { getState: () => current.auth } }));
 vi.mock('../../stores/settings-store', () => ({ useSettingsStore: { getState: () => current.settings } }));
@@ -46,12 +52,14 @@ beforeEach(() => {
   current.settings.notificationPreviewsEnabled = false;
   current.accounts = [{ serverUrl: 'https://mail.zyndpay.io' }];
   current.serverUrl = 'https://mail.zyndpay.io';
+  current.username = 'staff@zyndpay.io';
+  current.resolveDestination = async () => ({ target: 'EMAIL' as const });
   current.pushModeActive = true;
   current.revocationPending = false;
   current.previewModeActive = false;
   current.auth.isAuthenticated = true;
   current.auth.isLoading = false;
-  current.auth.activeAccountId = 'staff-account';
+  current.auth.activeAccountId = 'staff@zyndpay.io@mail.zyndpay.io';
 });
 
 describe('foreground notification presentation', () => {
@@ -94,6 +102,26 @@ describe('foreground notification presentation', () => {
     current.auth.isLoading = false;
     current.auth.activeAccountId = 'other-account';
     expect((await display(preview)).shouldShowList).toBe(false);
+  });
+
+  it('suppresses rich mail when the reference belongs to another account', async () => {
+    current.settings.notificationPreviewsEnabled = true;
+    current.previewModeActive = true;
+    current.resolveDestination = async () => null;
+    expect((await display(preview)).shouldShowList).toBe(false);
+  });
+
+  it('suppresses rich mail when the account switches during resolution', async () => {
+    current.settings.notificationPreviewsEnabled = true;
+    current.previewModeActive = true;
+    let finish!: (destination: { target: 'EMAIL' }) => void;
+    current.resolveDestination = () => new Promise((resolve) => { finish = resolve; });
+    const showing = display(preview);
+    await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+    current.auth.isLoading = true;
+    current.username = 'other@zyndpay.io';
+    finish({ target: 'EMAIL' });
+    expect((await showing).shouldShowList).toBe(false);
   });
 
   it('shows only enabled calendar reminders for a connected non-company account', async () => {

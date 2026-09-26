@@ -241,7 +241,15 @@ export async function registeredCompanyPushAccountId(): Promise<string | null> {
   return legacyOwner;
 }
 
-async function preferredAccountIds(): Promise<string[]> {
+let preferenceQueue: Promise<void> = Promise.resolve();
+
+function withPreferenceLock<T>(work: () => Promise<T>): Promise<T> {
+  const run = preferenceQueue.then(work, work);
+  preferenceQueue = run.then(() => undefined, () => undefined);
+  return run;
+}
+
+async function preferredAccountIdsInner(): Promise<string[]> {
   const raw = await SecureStore.getItemAsync(PREFERENCE_KEY, storageOptions);
   if (!raw) return [];
   let legacySubjects: string[];
@@ -278,18 +286,24 @@ async function preferredAccountIds(): Promise<string[]> {
   return accountIds;
 }
 
+function preferredAccountIds(): Promise<string[]> {
+  return withPreferenceLock(preferredAccountIdsInner);
+}
+
 async function hasPushPreference(accountId: string): Promise<boolean> {
   return (await preferredAccountIds()).includes(accountId);
 }
 
 async function setPushPreference(accountId: string, enabled: boolean): Promise<void> {
-  const accountIds = (await preferredAccountIds()).filter((value) => value !== accountId);
-  if (enabled) accountIds.push(accountId);
-  if (accountIds.length) {
-    await SecureStore.setItemAsync(PREFERENCE_KEY, JSON.stringify({ version: 3, accountIds }), storageOptions);
-  } else {
-    await SecureStore.deleteItemAsync(PREFERENCE_KEY, storageOptions);
-  }
+  await withPreferenceLock(async () => {
+    const accountIds = (await preferredAccountIdsInner()).filter((value) => value !== accountId);
+    if (enabled) accountIds.push(accountId);
+    if (accountIds.length) {
+      await SecureStore.setItemAsync(PREFERENCE_KEY, JSON.stringify({ version: 3, accountIds }), storageOptions);
+    } else {
+      await SecureStore.deleteItemAsync(PREFERENCE_KEY, storageOptions);
+    }
+  });
 }
 
 interface AccountSubject { accountId: string; subject: string }
@@ -518,6 +532,7 @@ async function registerCompanyPushInner(accountId: string, requestPermission: bo
   if (problem) return { status: 'UNAVAILABLE', reason: problem };
   const session = await currentCompanySession(accountId);
   if (!session) return { status: 'UNAVAILABLE', reason: 'Sign in with ZyndPay Staff to enable mail alerts.' };
+  const oldSubject = (await accountSubjects()).find((entry) => entry.accountId === accountId)?.subject;
   await rememberAccountSubject(accountId, session.subject);
   if (!useSettingsStore.getState().emailNotificationsEnabled) return { status: 'OFF' };
   if (!requestPermission && !await hasPushPreference(accountId)) return { status: 'OFF' };
@@ -532,15 +547,20 @@ async function registerCompanyPushInner(accountId: string, requestPermission: bo
       (previous.accountId && previous.accountId !== accountId))) {
     // One installation has one staff registration. Switching staff identities
     // must retire the earlier subject before enrolling the new one.
-    const oldIds = useAccountStore.getState().accounts
-      .filter((account) => account.id !== accountId && isCompanyMailServer(account.serverUrl))
-      .map((account) => account.id);
     let revoked = false;
-    for (const oldId of oldIds) {
-      const tokens = await jmapClient.getStoredOAuthTokens(oldId).catch(() => null);
-      if (previous.accountId ? oldId !== previous.accountId : tokens?.companyIdentity?.subject !== previous.subject) continue;
-      revoked = await revokeCompanyPushInner(oldId, true);
-      break;
+    if (previous.accountId === accountId || (!previous.accountId && oldSubject === previous.subject)) {
+      await markRegistrationPending(previous, 'required');
+      revoked = await deleteRegistration(previous, null);
+    } else {
+      const oldIds = useAccountStore.getState().accounts
+        .filter((account) => account.id !== accountId && isCompanyMailServer(account.serverUrl))
+        .map((account) => account.id);
+      for (const oldId of oldIds) {
+        const tokens = await jmapClient.getStoredOAuthTokens(oldId).catch(() => null);
+        if (previous.accountId ? oldId !== previous.accountId : tokens?.companyIdentity?.subject !== previous.subject) continue;
+        revoked = await revokeCompanyPushInner(oldId, true);
+        break;
+      }
     }
     if (!revoked) {
       return { status: 'ERROR', reason: 'The previous staff registration could not be revoked. Retry when the mail relay is available.' };
@@ -738,7 +758,7 @@ export async function reconcileCompanyPush(accountId: string): Promise<CompanyPu
   return registerCompanyPush(accountId, false, true);
 }
 
-export type CompanyPushDestination = { target: 'INBOX' } | {
+export type CompanyPushDestination = {
   target: 'EMAIL'; accountId: string; emailId: string; threadId: string;
 };
 
@@ -777,14 +797,14 @@ export async function resolveCompanyPush(accountId: string, value: unknown): Pro
       method: 'POST',
       body: JSON.stringify({ installationId: await installationId(), notificationRef: payload.notificationRef }),
     });
-    if (response.status === 404 || response.status === 410) return { target: 'INBOX' };
+    if (response.status === 404 || response.status === 410) return null;
     if (!response.ok) return null;
     const result = await response.json() as Record<string, unknown>;
     const target = parseCompanyPushDestination(result);
     if (!target) return null;
-    if (target.target !== 'MESSAGE') return { target: 'INBOX' };
+    if (target.target !== 'MESSAGE') return null;
     const [email] = await getEmails([target.emailId], target.accountId);
-    if (!email) return { target: 'INBOX' };
+    if (!email) return null;
     return {
       target: 'EMAIL', accountId: target.accountId, emailId: email.id, threadId: email.threadId,
     };

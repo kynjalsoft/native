@@ -1,6 +1,7 @@
 import * as Notifications from 'expo-notifications';
 import { CALENDAR_NOTIFICATION_TAG } from './calendar-notifications';
-import { companyPushModeActive, companyPushPreviewModeActive, isCompanyPushPresentation, isGenericCompanyPushPresentation } from './company-push';
+import { companyPushModeActive, companyPushPreviewModeActive, isCompanyPushPresentation, isGenericCompanyPushPresentation, resolveCompanyPush } from './company-push';
+import { generateAccountId } from './account-utils';
 import { isCompanyMailServer } from './zyndmail-company';
 import { jmapClient } from '../api/jmap-client';
 import { useAccountStore } from '../stores/account-store';
@@ -24,11 +25,25 @@ Notifications.setNotificationHandler({
     const mailCandidate = companyAccountPresent && isCompanyPushPresentation(content);
     const eligible = settings.emailNotificationsEnabled && mailCandidate && !!accountId &&
       await (generic ? companyPushModeActive(accountId) : companyPushPreviewModeActive(accountId));
+    let verified = generic;
+    if (eligible && !generic && accountId) {
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const destination = await Promise.race([
+          resolveCompanyPush(accountId, content.data),
+          new Promise<null>((resolve) => { timeout = setTimeout(() => resolve(null), 1500); }),
+        ]);
+        verified = destination?.target === 'EMAIL';
+      } finally {
+        if (timeout) clearTimeout(timeout);
+      }
+    }
     const currentAuth = useAuthStore.getState();
     const currentSettings = useSettingsStore.getState();
     const mail = eligible && currentSettings.emailNotificationsEnabled &&
       currentAuth.isAuthenticated && !currentAuth.isLoading && currentAuth.activeAccountId === accountId &&
-      (generic || currentSettings.notificationPreviewsEnabled);
+      generateAccountId(jmapClient.username ?? '', jmapClient.serverUrl ?? '') === accountId &&
+      verified && (generic || currentSettings.notificationPreviewsEnabled);
     const visible = !!calendar || mail;
     return {
       shouldShowBanner: visible,

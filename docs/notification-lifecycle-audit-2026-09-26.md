@@ -2,7 +2,7 @@
 
 ## Release status
 
-**Backend health is preview capable; signed-client delivery and display remain unqualified.** Backend PR #2641 is reported merged. On 2026-09-26, `GET https://mail.zyndpay.io/v1/push-health?probe=review-20260926b` returned HTTP/2 200 with `{ "status": "ok", "previewMode": "sender-subject-snippet-v1" }`, `Cache-Control: no-store`, and no redirect. The connection used TLS 1.3 and a valid certificate for `mail.zyndpay.io`. This workspace has no authenticated test mailbox, EAS login, current signed iOS/Android build, or physical-device result. The health response proves the advertised contract is reachable over verified transport; it does not prove an authenticated registration, real mail callback, provider receipt, OS presentation, or tap destination. Production activation remains blocked pending signed iOS and Android qualification.
+**Backend health is preview capable; signed-client delivery and display remain unqualified.** Backend `kynjalsoft/zyndpay` PR #2641 is merged at `9d0957e21ba9c635671ea7595d90af5e50049fff`. On 2026-09-26, `GET https://mail.zyndpay.io/v1/push-health?probe=review-20260926b` returned HTTP/2 200 with `{ "status": "ok", "previewMode": "sender-subject-snippet-v1" }`, `Cache-Control: no-store`, and no redirect. The connection used TLS 1.3 and a valid certificate for `mail.zyndpay.io`. This workspace has no authenticated test mailbox, EAS login, current signed iOS/Android build, or physical-device result. The health response proves the advertised contract is reachable over verified transport; it does not prove an authenticated registration, real mail callback, provider receipt, OS presentation, or tap destination. Production activation remains blocked pending signed iOS and Android qualification.
 
 | Stage | Client behavior after this audit | Evidence still needed |
 | --- | --- | --- |
@@ -14,7 +14,7 @@
 
 ## Changes made in the client
 
-- Aligned staff push resolve parsing with the published `INBOX`/`ACCOUNT`/`MESSAGE` response shapes. JMAP supplies the current thread. A missing message opens the inbox with explanation.
+- Aligned staff push resolve parsing with the published `INBOX`/`ACCOUNT`/`MESSAGE` response shapes. JMAP supplies the current thread. Only an authenticated `MESSAGE` target with a current JMAP email can open a notification; unresolved references do not navigate.
 - Defaulted staff message previews to on for new installations, matching the requested experience. Preview registration and ACTIVE status require `previewMode: "sender-subject-snippet-v1"` from live relay health. Generic registration is permitted only with previews off. Successful registration also gates foreground preview display in this process.
 - Set the generic Android channel to default importance, private lock-screen visibility and no badge. A preview-capable relay uses the separate `mail-messages-v2` channel. Android retains user choices and much of a channel's original behavior once created, so upgrade devices require explicit observation.
 - Synchronized the global email switch and company push UI; hid irrelevant calendar controls on company accounts; cleared already visible company alerts on revoke and preview opt-out.
@@ -25,7 +25,7 @@
 
 ## Relay contract and remaining signed-client gates
 
-Backend PR #2641 is reported merged, and the production health endpoint now advertises `previewMode: "sender-subject-snippet-v1"`. The client can send `previews: true` on registration and fetch an exact message and current thread after a tap. Previously issued generic references without message identity cannot be retroactively mapped to an email. Sender, subject, and snippet pass through Expo and APNs/FCM and may appear on the lock screen according to device settings. The JS foreground handler cannot prevent an already delivered background notification from appearing, so the relay must enforce the preference. A preview opt-out replaces the rich subscription with an id-only one. Signed iOS and Android release, real mail transport, and physical preview and tap verification remain open; this change cannot be called fully live yet.
+Backend PR #2641 is merged, and the production health endpoint now advertises `previewMode: "sender-subject-snippet-v1"`. The client can send `previews: true` on registration and fetch an exact message and current thread after a tap. Previously issued generic references without message identity cannot be retroactively mapped to an email. Sender, subject, and snippet pass through Expo and APNs/FCM and may appear on the lock screen according to device settings. The JS foreground handler cannot prevent an already delivered background notification from appearing, so the relay must enforce the preference. A preview opt-out replaces the rich subscription with an id-only one. Signed iOS and Android release, real mail transport, and physical preview and tap verification remain open; this change cannot be called fully live yet.
 
 ## Physical-device acceptance matrix
 

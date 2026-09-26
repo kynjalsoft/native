@@ -39,8 +39,6 @@ export interface CompanyPushIntentDependencies {
   switchAccount: (accountId: string) => Promise<void>;
   resolveDestination: (accountId: string, data: unknown) => Promise<CompanyPushDestination | null>;
   navigateToEmail: (destination: Extract<CompanyPushDestination, { target: 'EMAIL' }>) => void;
-  navigateToInbox: () => void;
-  showInboxFallback: () => void;
   clearLastNotificationResponse: () => Promise<void>;
 }
 
@@ -92,12 +90,7 @@ export async function openCompanyPushIntent(
     if (readiness.activeAccountId !== companyAccount.id ||
         readiness.sessionAccountId !== companyAccount.id) return 'retry';
 
-    if (destination.target === 'EMAIL') {
-      dependencies.navigateToEmail(destination);
-    } else {
-      dependencies.navigateToInbox();
-      dependencies.showInboxFallback();
-    }
+    dependencies.navigateToEmail(destination);
 
     // Navigation is the success boundary. A failure clearing Expo's cached
     // response must not cause the same tap to navigate a second time.
