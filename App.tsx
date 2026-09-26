@@ -74,6 +74,8 @@ import { AppUnlockGate, shouldHideMailForAppState, requiresMailboxUnlock } from 
 import {
   isCompanyPushPresentation,
   reconcileCompanyPush,
+  reconcilePendingCompanyPushRevocation,
+  companyPushRevocationPendingStatus,
   registeredCompanyPushAccountId,
   resolveCompanyPush,
 } from './src/lib/company-push';
@@ -391,6 +393,7 @@ function AppContent() {
   const processingCompanyPush = React.useRef(false);
   const companyPushRetryCount = React.useRef(0);
   const [pendingCompanyPushRevision, setPendingCompanyPushRevision] = React.useState(0);
+  const [companyRevocationPending, setCompanyRevocationPending] = React.useState(false);
   React.useEffect(() => {
     if (useAccountStore.persist.hasHydrated()) {
       setAccountRegistryHydrated(true);
@@ -781,6 +784,40 @@ function AppContent() {
     };
   }, [isAuthenticated, activeAccountId, accountRegistryHydrated, emailNotificationsEnabled, settingsHydrated]);
 
+  React.useEffect(() => {
+    if (!accountRegistryHydrated) return;
+    let live = true;
+    let running = false;
+    let rerun = false;
+    const refresh = () => {
+      if (running) { rerun = true; return; }
+      running = true;
+      void (async () => {
+        do {
+          rerun = false;
+          try {
+            const pending = await reconcilePendingCompanyPushRevocation();
+            if (live) setCompanyRevocationPending(pending);
+          } catch {
+            if (live) setCompanyRevocationPending(true);
+          }
+        } while (live && rerun);
+      })().finally(() => { running = false; });
+    };
+    refresh();
+    const stateSubscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') refresh();
+    });
+    const networkSubscription = useNetworkStore.subscribe((state, previous) => {
+      if (state.online && !previous.online) refresh();
+    });
+    return () => {
+      live = false;
+      stateSubscription.remove();
+      networkSubscription();
+    };
+  }, [accountRegistryHydrated, isAuthenticated, activeAccountId, emailNotificationsEnabled]);
+
   // Capture notification taps independently of auth and the optional app
   // lock. Expo retains the cold-start response until it is explicitly cleared,
   // while this queue covers taps received before session restoration ends.
@@ -1019,6 +1056,10 @@ function AppContent() {
   // have a persisted active account, render the main UI immediately with
   // whatever the email-store hydrated from cache. restoreSession still runs
   // in the background and swaps in fresh data once it completes.
+  const revocationBanner = companyRevocationPending ? <Text style={[
+    styles.revocationBanner, { backgroundColor: appColors.warningBg, color: appColors.text },
+  ]}>{companyPushRevocationPendingStatus.reason}</Text> : null;
+
   if (!settingsHydrated || (!hasRestoredSession && !hasPersistedAccount)) {
     return (
       <>
@@ -1030,15 +1071,17 @@ function AppContent() {
 
   if (hasRestoredSession && !isAuthenticated) {
     return (
-      <>
+      <View style={{ flex: 1 }}>
         <StatusBar style={statusBarStyle} />
+        {revocationBanner}
         <LoginScreen />
-      </>
+      </View>
     );
   }
 
   return (
     <View style={{ flex: 1 }}>
+    {revocationBanner}
     <NavigationContainer
       ref={navigationRef}
       onReady={() => {
@@ -1115,6 +1158,7 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
+  revocationBanner: { paddingHorizontal: spacing.md, paddingVertical: spacing.sm, ...typography.body },
   privacyCover: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, zIndex: 101 },
   loadingContainer: {
     flex: 1,

@@ -17,6 +17,7 @@ const PREFERENCE_KEY = 'zyndmail.production.push.preference.v1';
 const RENEW_AFTER_MS = 30 * 60_000;
 const RELAY_UNAVAILABLE = 'Company mail alerts are temporarily unavailable. Please try again later.';
 const OPAQUE_REFERENCE = /^[A-Za-z0-9_-]{22,256}$/;
+const REVOCATION_KEY = /^[A-Za-z0-9_+/=-]{43,512}$/;
 const storageOptions: SecureStore.SecureStoreOptions = {
   keychainAccessible: SecureStore.WHEN_PASSCODE_SET_THIS_DEVICE_ONLY,
 };
@@ -24,6 +25,7 @@ const storageOptions: SecureStore.SecureStoreOptions = {
 interface Registration {
   subject: string;
   registrationId: string;
+  revocationKey?: string;
   renewedAt: number;
   routingVersion?: number;
   previews?: boolean;
@@ -42,7 +44,7 @@ export const companyPushPreviewPending: CompanyPushStatus = {
   reason: 'Previews are off on this device. Server synchronization is pending; rich background notifications may continue until it succeeds.',
 };
 
-export const companyPushRevocationPendingStatus: CompanyPushStatus = {
+export const companyPushRevocationPendingStatus: Extract<CompanyPushStatus, { status: 'REVOKE_PENDING' }> = {
   status: 'REVOKE_PENDING',
   reason: 'Mail alerts are off on this device. Server revocation is pending; background notifications may continue until it succeeds.',
 };
@@ -80,7 +82,7 @@ function configurationError(): string | null {
   return null;
 }
 
-async function relayFetch(path: string, bearer: string, init: RequestInit): Promise<Response> {
+async function relayFetch(path: string, bearer: string | null, init: RequestInit): Promise<Response> {
   const origin = companyPushRelayOrigin();
   if (!origin) throw new Error('The company mail push relay is not configured.');
   const abort = new AbortController();
@@ -92,7 +94,7 @@ async function relayFetch(path: string, bearer: string, init: RequestInit): Prom
       signal: abort.signal,
       headers: {
         Accept: 'application/json',
-        Authorization: `Bearer ${bearer}`,
+        ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}),
         'Content-Type': 'application/json',
       },
     });
@@ -177,7 +179,9 @@ async function readRegistration(): Promise<Registration | null> {
   try {
     const value = JSON.parse(raw) as Partial<Registration>;
     return typeof value.subject === 'string' && typeof value.registrationId === 'string'
-      ? { subject: value.subject, registrationId: value.registrationId, renewedAt: value.renewedAt ?? 0, routingVersion: value.routingVersion, previews: value.previews, revocationPending: value.revocationPending === true }
+      ? { subject: value.subject, registrationId: value.registrationId,
+          revocationKey: typeof value.revocationKey === 'string' && REVOCATION_KEY.test(value.revocationKey) ? value.revocationKey : undefined,
+          renewedAt: value.renewedAt ?? 0, routingVersion: value.routingVersion, previews: value.previews, revocationPending: value.revocationPending === true }
       : null;
   } catch {
     return null;
@@ -312,6 +316,30 @@ export async function companyPushRevocationPending(accountId: string): Promise<b
     registration.subject === tokens?.companyIdentity?.subject;
 }
 
+export async function hasPendingCompanyPushRevocation(): Promise<boolean> {
+  return (await readRegistration())?.revocationPending === true;
+}
+
+async function deleteRegistration(registration: Registration, bearer: string | null): Promise<boolean> {
+  if (!bearer && !registration.revocationKey) return false;
+  try {
+    const response = await relayFetch('v1/device-registrations/current', bearer, {
+      method: 'DELETE',
+      body: JSON.stringify(bearer
+        ? { registrationId: registration.registrationId }
+        : { registrationId: registration.registrationId, revocationKey: registration.revocationKey }),
+    });
+    if (!response.ok && response.status !== 404 && response.status !== 410) return false;
+    const current = await readRegistration();
+    if (current?.subject === registration.subject && current.registrationId === registration.registrationId) {
+      await SecureStore.deleteItemAsync(REGISTRATION_KEY, storageOptions);
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const inFlight = new Map<string, { promise: Promise<CompanyPushStatus>; previews: boolean; requestPermission: boolean; force: boolean }>();
 const revoking = new Set<string>();
 
@@ -409,16 +437,19 @@ async function registerCompanyPushInner(accountId: string, requestPermission: bo
     if (typeof body.registrationId !== 'string' || !body.registrationId) {
       throw new Error('The mail relay returned an invalid registration.');
     }
-    await SecureStore.setItemAsync(REGISTRATION_KEY, JSON.stringify({
-      subject: session.subject, registrationId: body.registrationId, renewedAt: Date.now(), routingVersion, previews,
-    }), storageOptions);
+    const registration: Registration = {
+      subject: session.subject, registrationId: body.registrationId,
+      ...(typeof body.revocationKey === 'string' && REVOCATION_KEY.test(body.revocationKey)
+        ? { revocationKey: body.revocationKey }
+        : previous?.registrationId === body.registrationId && previous.revocationKey
+          ? { revocationKey: previous.revocationKey }
+          : {}),
+      renewedAt: Date.now(), routingVersion, previews,
+    };
+    await SecureStore.setItemAsync(REGISTRATION_KEY, JSON.stringify(registration), storageOptions);
     if (generateAccountId(jmapClient.username ?? '', jmapClient.serverUrl ?? '') !== accountId) {
-      // Preserve the local reference until the relay confirms revocation. A
-      // user switch must never orphan a live registration on this device.
-      const revoked = await relayFetch('v1/device-registrations/current', session.bearer, {
-        method: 'DELETE', body: JSON.stringify({ registrationId: body.registrationId }),
-      }).then((result) => result.ok || result.status === 404 || result.status === 410).catch(() => false);
-      if (revoked) await SecureStore.deleteItemAsync(REGISTRATION_KEY, storageOptions);
+      await SecureStore.setItemAsync(REGISTRATION_KEY, JSON.stringify({ ...registration, revocationPending: true }), storageOptions);
+      if (!await deleteRegistration(registration, session.bearer)) await deleteRegistration(registration, null);
       return { status: 'ERROR', reason: 'The active mail account changed during registration.' };
     }
     await SecureStore.setItemAsync(PREFERENCE_KEY, session.subject, storageOptions);
@@ -447,22 +478,32 @@ export async function revokeCompanyPush(accountId: string): Promise<boolean> {
     if (subject && await preferenceSubject() === subject) {
       await SecureStore.deleteItemAsync(PREFERENCE_KEY, storageOptions);
     }
+    if (!registration || registration.subject !== subject) return true;
+    const isActiveOwner = generateAccountId(jmapClient.username ?? '', jmapClient.serverUrl ?? '') === accountId;
+    if (!isActiveOwner && registration.revocationKey) return deleteRegistration(registration, null);
     const session = await storedCompanySession(accountId).catch(() => null);
-    if (!session) return registration === null;
-    if (!registration || registration.subject !== session.subject) return true;
-    try {
-      const response = await relayFetch('v1/device-registrations/current', session.bearer, {
-        method: 'DELETE', body: JSON.stringify({ registrationId: registration.registrationId }),
-      });
-      if (!response.ok && response.status !== 404 && response.status !== 410) return false;
-      await SecureStore.deleteItemAsync(REGISTRATION_KEY, storageOptions);
-      return true;
-    } catch {
-      return false;
-    }
+    if (session?.subject === registration.subject && await deleteRegistration(registration, session.bearer)) return true;
+    return deleteRegistration(registration, null);
   } finally {
     revoking.delete(accountId);
   }
+}
+
+export async function reconcilePendingCompanyPushRevocation(): Promise<boolean> {
+  const registration = await readRegistration();
+  if (!registration?.revocationPending) return false;
+  if (registration.revocationKey) {
+    await deleteRegistration(registration, null);
+  } else {
+    for (const account of useAccountStore.getState().accounts) {
+      if (!isCompanyMailServer(account.serverUrl)) continue;
+      const tokens = await jmapClient.getStoredOAuthTokens(account.id).catch(() => null);
+      if (tokens?.companyIdentity?.subject !== registration.subject) continue;
+      await revokeCompanyPush(account.id);
+      break;
+    }
+  }
+  return hasPendingCompanyPushRevocation();
 }
 
 export async function reconcileCompanyPush(accountId: string): Promise<CompanyPushStatus> {
