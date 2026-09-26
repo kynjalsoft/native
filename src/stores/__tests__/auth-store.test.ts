@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('../../api/jmap-client', () => ({
   jmapClient: {
     connect: vi.fn(),
+    connectWithOAuth: vi.fn(),
     logout: vi.fn(),
     restoreSession: vi.fn(),
     loadAccount: vi.fn(),
@@ -38,8 +39,16 @@ vi.mock('../../lib/push-notifications', () => ({
 }));
 
 vi.mock('../../lib/company-push', () => ({
+  reconcileCompanyPush: vi.fn(async () => ({ status: 'OFF' })),
   revokeCompanyPush: vi.fn(async () => true),
   revokeEvictedCompanyPush: vi.fn(async () => undefined),
+}));
+
+vi.mock('../../lib/oauth-native', () => ({
+  discoverOAuthMetadata: vi.fn(async () => ({})),
+  loginWithPkce: vi.fn(),
+  probeWebmail: vi.fn(),
+  revokeRefreshToken: vi.fn(async () => undefined),
 }));
 
 vi.mock('../../lib/calendar-notifications', () => ({
@@ -49,7 +58,9 @@ vi.mock('../../lib/calendar-notifications', () => ({
 }));
 
 import { jmapClient } from '../../api/jmap-client';
-import { revokeEvictedCompanyPush } from '../../lib/company-push';
+import { reconcileCompanyPush, revokeEvictedCompanyPush } from '../../lib/company-push';
+import { loginWithPkce } from '../../lib/oauth-native';
+import { ZYNDMAIL_COMPANY } from '../../lib/zyndmail-company';
 import { suspendCalendarNotifications, resumeCalendarNotifications, clearCalendarNotifications } from '../../lib/calendar-notifications';
 import { disableAndroidMailAccount, teardownPushNotificationsForAccount } from '../../lib/push-notifications';
 import { useAuthStore } from '../auth-store';
@@ -124,6 +135,34 @@ describe('auth-store', () => {
 
       expect(useAuthStore.getState().error).toBe('Invalid username or password');
     });
+  });
+
+  it('reconciles a staff identity before completing OAuth reauthentication', async () => {
+    const accountId = 'staff@zyndpay.io@mail.zyndpay.io';
+    const payload = { iss: ZYNDMAIL_COMPANY.issuer, aud: ['stalwart'],
+      sub: 'replacement-subject', exp: Date.now() / 1000 + 3600 };
+    vi.mocked(loginWithPkce).mockResolvedValueOnce({
+      accessToken: `header.${Buffer.from(JSON.stringify(payload)).toString('base64url')}.signature`,
+      clientId: ZYNDMAIL_COMPANY.clientId,
+      tokenEndpoint: ZYNDMAIL_COMPANY.tokenEndpoint,
+    } as never);
+    vi.mocked(jmapClient.connectWithOAuth).mockResolvedValueOnce({
+      session: { apiUrl: 'https://mail.zyndpay.io/jmap/' },
+      username: 'staff@zyndpay.io', accountId,
+    } as never);
+    useAccountStore.setState({ accounts: [{ id: accountId, username: 'staff@zyndpay.io',
+      serverUrl: ZYNDMAIL_COMPANY.mailOrigin } as never], activeAccountId: accountId });
+    useAuthStore.setState({ isAuthenticated: true, activeAccountId: accountId });
+    let loadingDuringReconciliation: boolean | null = null;
+    vi.mocked(reconcileCompanyPush).mockImplementationOnce(async () => {
+      loadingDuringReconciliation = useAuthStore.getState().isLoading;
+      return { status: 'OFF' };
+    });
+
+    await useAuthStore.getState().loginViaCompany();
+    expect(reconcileCompanyPush).toHaveBeenCalledWith(accountId);
+    expect(loadingDuringReconciliation).toBe(true);
+    expect(useAuthStore.getState().isLoading).toBe(false);
   });
 
   describe('logout', () => {

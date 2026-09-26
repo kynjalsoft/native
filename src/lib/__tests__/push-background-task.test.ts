@@ -16,6 +16,7 @@ import {
   selectNotifiableEmails,
   notificationIdForEmail,
   pushBackgroundTask,
+  visibleMailNotification,
 } from '../push-background-task';
 import type { Email } from '../../api/types';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -56,6 +57,17 @@ describe('parseRelayPushData', () => {
     expect(parseRelayPushData(null).emailIds).toEqual([]);
     expect(parseRelayPushData({ emailIds: '{not json' }).emailIds).toEqual([]);
     expect(parseRelayPushData({ kind: 'weird' }).kind).toBeNull();
+  });
+});
+
+describe('visibleMailNotification', () => {
+  it('falls back to the safe address for a blank sender name', () => {
+    expect(visibleMailNotification({
+      from: [{ name: '  \n  ', email: 'ada@example.com' }],
+      subject: 'Project update', preview: 'A safe snippet',
+    } as Email, true)).toEqual({
+      title: 'ada@example.com', body: 'Project update\nA safe snippet',
+    });
   });
 });
 

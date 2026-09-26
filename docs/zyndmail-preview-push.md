@@ -6,6 +6,8 @@ Company mail alerts use the authenticated ZyndPay mail-plane relay in `kynjalsof
 
 The production relay advertises `previewMode: "sender-subject-snippet-v1"` for new opted-in alerts and scoped message references. Historical references without a message identity cannot open a specific email; the client rejects them and explains that the link could not be verified instead of opening All Inboxes. Preview-specific relay configuration and signed-device behavior still require qualification. Routing data remains opaque; visible preview text passes through Expo and the platform push provider. A provider ticket, receipt, app foreground handler, and physical OS presentation are separate evidence.
 
+In the foreground, a rich relay alert is shown only after its reference resolves to an authorized email for the active staff account. If verification exceeds 1.5 seconds, the app suppresses that rich alert and posts one generic local alert with the same opaque reference. Tapping the generic alert retries exact-email resolution; no unverified sender, subject, or snippet is displayed. Rich replacement after the timeout is not attempted because it could duplicate the generic card.
+
 The preview cannot be called notification-ready until all of these are witnessed:
 
 1. Configure the preview OAuth client and redirect URI in Keycloak, and confirm a signed preview build can authenticate and read the current JMAP session. Do not treat simulator or anonymous endpoint reachability as staff acceptance.

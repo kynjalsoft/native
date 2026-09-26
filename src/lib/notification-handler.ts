@@ -26,14 +26,19 @@ Notifications.setNotificationHandler({
     const eligible = settings.emailNotificationsEnabled && mailCandidate && !!accountId &&
       await (generic ? companyPushModeActive(accountId) : companyPushPreviewModeActive(accountId));
     let verified = generic;
+    let timedOut = false;
     if (eligible && !generic && accountId) {
       let timeout: ReturnType<typeof setTimeout> | undefined;
+      const deadline = Symbol();
       try {
         const destination = await Promise.race([
           resolveCompanyPush(accountId, content.data),
-          new Promise<null>((resolve) => { timeout = setTimeout(() => resolve(null), 1500); }),
+          new Promise<typeof deadline>((resolve) => { timeout = setTimeout(() => resolve(deadline), 1500); }),
         ]);
-        verified = destination?.target === 'EMAIL';
+        timedOut = destination === deadline;
+        verified = destination !== deadline && destination?.target === 'EMAIL';
+      } catch {
+        verified = false;
       } finally {
         if (timeout) clearTimeout(timeout);
       }
@@ -44,6 +49,14 @@ Notifications.setNotificationHandler({
       currentAuth.isAuthenticated && !currentAuth.isLoading && currentAuth.activeAccountId === accountId &&
       generateAccountId(jmapClient.username ?? '', jmapClient.serverUrl ?? '') === accountId &&
       verified && (generic || currentSettings.notificationPreviewsEnabled);
+    if (timedOut && eligible && currentSettings.emailNotificationsEnabled &&
+        currentAuth.isAuthenticated && !currentAuth.isLoading && currentAuth.activeAccountId === accountId &&
+        generateAccountId(jmapClient.username ?? '', jmapClient.serverUrl ?? '') === accountId) {
+      await Notifications.scheduleNotificationAsync({
+        content: { title: 'ZyndMail', body: 'New ZyndPay Mail activity', data: content.data },
+        trigger: null,
+      }).catch(() => undefined);
+    }
     const visible = !!calendar || mail;
     return {
       shouldShowBanner: visible,

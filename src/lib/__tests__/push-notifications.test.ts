@@ -17,6 +17,8 @@ vi.mock('react-native', () => {
         getToken: vi.fn(async () => 'fcm-token-xyz'),
         deleteToken: vi.fn(async () => undefined),
         dismissMailNotifications: vi.fn(async () => undefined),
+        disableMailAccount: vi.fn(async () => undefined),
+        activateMailAccount: vi.fn(async () => undefined),
       },
     },
     NativeEventEmitter,
@@ -67,6 +69,8 @@ import {
 import { jmapClient } from '../../api/jmap-client';
 import { NativeModules } from 'react-native';
 import { generateAccountId } from '../account-utils';
+import { useAccountStore } from '../../stores/account-store';
+import { useSettingsStore } from '../../stores/settings-store';
 
 const OUR_DCID = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const ACCOUNT_ID = generateAccountId('user@example.com', 'https://mail.example.com');
@@ -113,6 +117,28 @@ describe('setupPushNotifications leftover reaping', () => {
     await AsyncStorage.clear();
     // Pin our deviceClientId so we control which leftovers are "ours".
     await AsyncStorage.setItem(deviceClientIdKey(ACCOUNT_ID), OUR_DCID);
+  });
+
+  it('reactivates native posting only after valid account setup with email alerts enabled', async () => {
+    useAccountStore.setState({ accounts: [{ id: ACCOUNT_ID, serverUrl: 'https://mail.example.com' } as never] });
+    useSettingsStore.setState({ hydrated: true, emailNotificationsEnabled: true });
+    listMock.mockResolvedValue([]);
+    installFetch({});
+    try {
+      expect((await setupPushNotifications({ relayBaseUrl: RELAY })).verified).toBe(true);
+      const native = (NativeModules as { BulwarkFcm: {
+        activateMailAccount: ReturnType<typeof vi.fn>;
+      } }).BulwarkFcm;
+      expect(native.activateMailAccount).toHaveBeenCalledWith(ACCOUNT_ID);
+      native.activateMailAccount.mockClear();
+      useSettingsStore.setState({ emailNotificationsEnabled: false });
+      listMock.mockResolvedValue([sub('new-server-id', OUR_DCID)]);
+      expect((await setupPushNotifications({ relayBaseUrl: RELAY })).verified).toBe(true);
+      expect(native.activateMailAccount).not.toHaveBeenCalled();
+    } finally {
+      useAccountStore.setState({ accounts: [], activeAccountId: null });
+      useSettingsStore.setState({ hydrated: false, emailNotificationsEnabled: true });
+    }
   });
 
   it('reaps our own and relay-confirmed-dead leftovers, keeps live and unverifiable ones', async () => {
@@ -298,10 +324,27 @@ describe('teardownPushNotificationsForAccount', () => {
     const native = (NativeModules as { BulwarkFcm: {
       deleteToken: ReturnType<typeof vi.fn>;
       dismissMailNotifications: ReturnType<typeof vi.fn>;
+      disableMailAccount: ReturnType<typeof vi.fn>;
     } }).BulwarkFcm;
     expect(native.deleteToken).not.toHaveBeenCalled();
+    expect(native.disableMailAccount).toHaveBeenCalledWith(ACCOUNT_ID);
     expect(native.dismissMailNotifications).toHaveBeenCalledWith(ACCOUNT_ID);
     expect(await AsyncStorage.getItem(SUB_KEY)).toBeNull();
+  });
+
+  it('closes native posting before dismissing account cards', async () => {
+    const native = (NativeModules as { BulwarkFcm: {
+      disableMailAccount: ReturnType<typeof vi.fn>;
+      dismissMailNotifications: ReturnType<typeof vi.fn>;
+    } }).BulwarkFcm;
+    let release!: () => void;
+    native.disableMailAccount.mockImplementationOnce(() => new Promise<void>((resolve) => { release = resolve; }));
+    const teardown = teardownPushNotificationsForAccount(ACCOUNT_ID);
+    await vi.waitFor(() => expect(native.disableMailAccount).toHaveBeenCalledWith(ACCOUNT_ID));
+    expect(native.dismissMailNotifications).not.toHaveBeenCalled();
+    release();
+    await teardown;
+    expect(native.dismissMailNotifications).toHaveBeenCalledWith(ACCOUNT_ID);
   });
 });
 

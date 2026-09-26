@@ -19,12 +19,11 @@ import {
   validateCompanyTokenEndpoint,
 } from '../lib/zyndmail-company';
 import {
-  activateAndroidMailAccount,
   disableAndroidMailAccount,
   teardownPushNotifications,
   teardownPushNotificationsForAccount,
 } from '../lib/push-notifications';
-import { revokeCompanyPush, revokeEvictedCompanyPush } from '../lib/company-push';
+import { reconcileCompanyPush, revokeCompanyPush, revokeEvictedCompanyPush } from '../lib/company-push';
 import { clearCalendarNotifications, resumeCalendarNotifications, suspendCalendarNotifications } from '../lib/calendar-notifications';
 
 // Persist middleware hydrates asynchronously on cold start. Without this
@@ -236,6 +235,10 @@ async function completeOAuthHandoff(
   accountStore.setActiveAccount(accountId);
   useEmailStore.getState().setActiveAccount(accountId);
 
+  if (isCompanyMailServer(result.serverUrl)) {
+    await reconcileCompanyPush(accountId).catch(() => undefined);
+  }
+
   applyConnectedState(set, session, result.serverUrl.replace(/\/+$/, ''), username, accountId);
   void syncAccountDisplayName(accountId);
 }
@@ -262,7 +265,6 @@ function applyConnectedState(
     activeAccountId: accountId,
     client: jmapClient,
   });
-  void activateAndroidMailAccount(accountId).catch(() => undefined);
   resumeCalendarNotifications();
 }
 

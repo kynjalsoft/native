@@ -638,6 +638,7 @@ async function setupPushNotificationsInner(
         if (refreshed) {
           await addPushAccountId(accountId);
           await writePushJmapAccountId(accountId, jmapAccountId);
+          await activateSetupAccount(accountId);
           logPhase('done', 'reused existing subscription');
           return { subscriptionId: storedServerId, verified: true };
         }
@@ -701,6 +702,7 @@ async function setupPushNotificationsInner(
   await AsyncStorage.setItem(subKey, serverAssignedId);
   await addPushAccountId(accountId);
   await writePushJmapAccountId(accountId, jmapAccountId);
+  await activateSetupAccount(accountId);
   logPhase('done', 'subscription verified');
 
   return { subscriptionId: serverAssignedId, verified: true };
@@ -710,6 +712,18 @@ async function addPushAccountId(accountId: string): Promise<void> {
   const ids = await readPushAccountIds();
   if (!ids.includes(accountId)) {
     await writePushAccountIds([...ids, accountId]);
+  }
+}
+
+async function activateSetupAccount(accountId: string): Promise<void> {
+  const [{ useAccountStore }, { useSettingsStore }] = await Promise.all([
+    import('../stores/account-store'), import('../stores/settings-store'),
+  ]);
+  const settings = useSettingsStore.getState();
+  if (settings.hydrated && settings.emailNotificationsEnabled &&
+      useAccountStore.getState().getAccountById(accountId) &&
+      generateAccountId(jmapClient.username ?? '', jmapClient.serverUrl ?? '') === accountId) {
+    await activateAndroidMailAccount(accountId);
   }
 }
 
@@ -789,6 +803,7 @@ async function clearAccountPushKeys(accountId: string): Promise<void> {
 export async function teardownPushNotificationsForAccount(
   accountId: string,
 ): Promise<void> {
+  await disableAndroidMailAccount(accountId);
   await migrateLegacyPushKeys();
   const remaining = (await readPushAccountIds()).filter((id) => id !== accountId);
   await writePushAccountIds(remaining);

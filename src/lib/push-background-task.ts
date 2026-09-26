@@ -66,7 +66,7 @@ function safeVisibleText(value: unknown, max: number): string {
 export function visibleMailNotification(email: Email, previews: boolean): { title: string; body: string } {
   if (!previews) return { title: 'ZyndMail', body: 'New mail' };
   const from = email.from?.[0];
-  const title = safeVisibleText(from?.name || from?.email, 160) || 'New mail';
+  const title = safeVisibleText(from?.name, 160) || safeVisibleText(from?.email, 160) || 'New mail';
   const subject = safeVisibleText(email.subject, 200) || '(no subject)';
   const snippet = safeVisibleText(email.preview, 240);
   return { title, body: snippet ? `${subject}\n${snippet}` : subject };

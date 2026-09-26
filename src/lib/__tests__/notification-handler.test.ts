@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const handler = vi.hoisted(() => ({ current: null as null | ((notification: unknown) => Promise<unknown>) }));
+const scheduled = vi.hoisted(() => vi.fn(async (_request: unknown) => 'generic-fallback'));
 const current = vi.hoisted(() => ({
   settings: { emailNotificationsEnabled: true, calendarNotificationsEnabled: true, notificationPreviewsEnabled: false },
   accounts: [{ serverUrl: 'https://mail.zyndpay.io' }] as { serverUrl: string }[],
@@ -18,6 +19,7 @@ vi.mock('expo-notifications', () => ({
   setNotificationHandler: ({ handleNotification }: { handleNotification: (value: unknown) => Promise<unknown> }) => {
     handler.current = handleNotification;
   },
+  scheduleNotificationAsync: scheduled,
 }));
 vi.mock('../calendar-notifications', () => ({ CALENDAR_NOTIFICATION_TAG: 'calendar-alert' }));
 vi.mock('../zyndmail-company', () => ({ isCompanyMailServer: (url: string) => url === 'https://mail.zyndpay.io' }));
@@ -47,6 +49,7 @@ const generic = { title: 'ZyndMail', body: 'New ZyndPay Mail activity', data: { 
 const preview = { title: 'Ada', body: 'Tomorrow at 2', data: { notificationRef: 'ref' } };
 
 beforeEach(() => {
+  scheduled.mockClear();
   current.settings.emailNotificationsEnabled = true;
   current.settings.calendarNotificationsEnabled = true;
   current.settings.notificationPreviewsEnabled = false;
@@ -109,6 +112,7 @@ describe('foreground notification presentation', () => {
     current.previewModeActive = true;
     current.resolveDestination = async () => null;
     expect((await display(preview)).shouldShowList).toBe(false);
+    expect(scheduled).not.toHaveBeenCalled();
   });
 
   it('suppresses rich mail when the account switches during resolution', async () => {
@@ -122,6 +126,33 @@ describe('foreground notification presentation', () => {
     current.username = 'other@zyndpay.io';
     finish({ target: 'EMAIL' });
     expect((await showing).shouldShowList).toBe(false);
+  });
+
+  it('posts a safe generic alert when authorized preview verification misses the deadline', async () => {
+    current.settings.notificationPreviewsEnabled = true;
+    current.previewModeActive = true;
+    let started!: () => void;
+    const resolving = new Promise<void>((resolve) => { started = resolve; });
+    current.resolveDestination = () => {
+      started();
+      return new Promise(() => undefined);
+    };
+    vi.useFakeTimers();
+    try {
+      const showing = display(preview);
+      await resolving;
+      await vi.advanceTimersByTimeAsync(1500);
+      expect((await showing).shouldShowList).toBe(false);
+      expect(scheduled).toHaveBeenCalledOnce();
+      const fallback = scheduled.mock.calls[0][0];
+      expect(fallback).toEqual({
+        content: { title: 'ZyndMail', body: 'New ZyndPay Mail activity', data: preview.data },
+        trigger: null,
+      });
+      expect((await display(fallback.content)).shouldShowList).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('shows only enabled calendar reminders for a connected non-company account', async () => {
