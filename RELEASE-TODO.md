@@ -1,6 +1,6 @@
 # ZyndMail release reminder
 
-**Next action:** Build signed internal ZyndMail `0.3.0` qualification apps for **both iOS and Android** from the merged `main` branch. The notification fixes are in source control and the mail push relay is live, but the new native app has not been distributed.
+**Next action:** Build signed internal ZyndMail `0.3.0` qualification apps for **both iOS and Android** from the merged `main` branch. The notification fixes are in source control and the relay health endpoint responds, but the new native app has not been distributed.
 
 - [ ] Sign in to the `kynjal-softwares` EAS account and confirm that the production EAS environment contains `EXPO_PUBLIC_MAIL_PUSH_RELAY_ORIGIN=https://mail.zyndpay.io`. The value in `eas.json` applies to builds, not OTA publication.
 - [ ] Create and install signed internal iOS and Android `0.3.0` qualification builds. Record their EAS build IDs and native runtime versions. The Android notification changes require a new native build.
