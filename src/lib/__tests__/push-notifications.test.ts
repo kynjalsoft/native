@@ -56,6 +56,8 @@ vi.mock('../../api/push', () => ({
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   setupPushNotifications,
+  isPersonalPushOptedOut,
+  setPersonalPushOptedOut,
   disableAllRegisteredAndroidMailAccounts,
   disableGlobalEmailNotifications,
   disableAndroidMailAccount,
@@ -123,6 +125,7 @@ describe('setupPushNotifications leftover reaping', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     await AsyncStorage.clear();
+    await setPersonalPushOptedOut(ACCOUNT_ID, false);
     listMock.mockResolvedValue([]);
     Object.assign(jmapClient, {
       username: 'user@example.com',
@@ -159,6 +162,28 @@ describe('setupPushNotifications leftover reaping', () => {
       useAccountStore.setState({ accounts: [], activeAccountId: null });
       useSettingsStore.setState({ hydrated: false, emailNotificationsEnabled: true });
     }
+  });
+
+  it('keeps an explicitly disabled account off while another personal account remains enrolled', async () => {
+    installFetch({});
+    const secondId = generateAccountId('second@example.com', 'https://mail.example.com');
+    useAccountStore.setState({ accounts: [
+      { id: ACCOUNT_ID, serverUrl: 'https://mail.example.com' } as never,
+      { id: secondId, serverUrl: 'https://mail.example.com' } as never,
+    ], activeAccountId: ACCOUNT_ID });
+    await setPersonalPushOptedOut(ACCOUNT_ID, true);
+    expect(await isPersonalPushOptedOut(ACCOUNT_ID)).toBe(true);
+    Object.assign(jmapClient, { username: 'second@example.com', accountId: 'jmap-second' });
+    useAccountStore.setState({ activeAccountId: secondId });
+    await setupPushNotifications({ relayBaseUrl: RELAY });
+    expect(await readPushAccountIds()).toContain(secondId);
+    Object.assign(jmapClient, { username: 'user@example.com', accountId: 'jmap-primary' });
+    useAccountStore.setState({ activeAccountId: ACCOUNT_ID });
+    await expect(setupPushNotifications({ relayBaseUrl: RELAY })).rejects.toMatchObject({ phase: 'account' });
+    expect(await readPushAccountIds()).not.toContain(ACCOUNT_ID);
+    await setPersonalPushOptedOut(ACCOUNT_ID, false);
+    await setupPushNotifications({ relayBaseUrl: RELAY });
+    expect(await readPushAccountIds()).toContain(ACCOUNT_ID);
   });
 
   it('closes gates for active and inactive registered accounts on global email opt-out', async () => {

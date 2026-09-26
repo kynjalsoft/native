@@ -1,6 +1,6 @@
 import * as Notifications from 'expo-notifications';
 import { CALENDAR_NOTIFICATION_TAG } from './calendar-notifications';
-import { companyPushModeActive, companyPushPreviewModeActive, isCompanyPushPresentation, isGenericCompanyPushPresentation, resolveCompanyPush } from './company-push';
+import { companyPushModeActive, companyPushRegistrationIdActive, isCompanyPushPresentation, isGenericCompanyPushPresentation, parseCompanyPushPayload } from './company-push';
 import { generateAccountId } from './account-utils';
 import { isCompanyMailServer } from './zyndmail-company';
 import { jmapClient } from '../api/jmap-client';
@@ -20,44 +20,27 @@ Notifications.setNotificationHandler({
     const companyAccountPresent = useAccountStore.getState().accounts.some((account) =>
       isCompanyMailServer(account.serverUrl));
     const generic = isGenericCompanyPushPresentation(content);
+    const payload = parseCompanyPushPayload(content.data);
     const auth = useAuthStore.getState();
     const accountId = auth.isAuthenticated && !auth.isLoading ? auth.activeAccountId : null;
     const mailCandidate = companyAccountPresent && isCompanyPushPresentation(content);
-    const eligible = settings.emailNotificationsEnabled && mailCandidate && !!accountId &&
-      await (generic ? companyPushModeActive(accountId) : companyPushPreviewModeActive(accountId));
-    let verified = generic;
-    let timedOut = false;
-    if (eligible && !generic && accountId) {
-      let timeout: ReturnType<typeof setTimeout> | undefined;
-      const deadline = Symbol();
-      try {
-        const destination = await Promise.race([
-          resolveCompanyPush(accountId, content.data),
-          new Promise<typeof deadline>((resolve) => { timeout = setTimeout(() => resolve(deadline), 1500); }),
-        ]);
-        timedOut = destination === deadline;
-        verified = destination !== deadline && destination?.target === 'EMAIL';
-      } catch {
-        verified = false;
-      } finally {
-        if (timeout) clearTimeout(timeout);
-      }
-    }
+    const eligible = settings.emailNotificationsEnabled && mailCandidate && !!accountId && !!payload &&
+      await (payload.registrationId
+        ? companyPushRegistrationIdActive(accountId, payload.registrationId, !generic)
+        : companyPushModeActive(accountId));
     const currentAuth = useAuthStore.getState();
     const currentSettings = useSettingsStore.getState();
     const mail = eligible && currentSettings.emailNotificationsEnabled &&
       currentAuth.isAuthenticated && !currentAuth.isLoading && currentAuth.activeAccountId === accountId &&
       generateAccountId(jmapClient.username ?? '', jmapClient.serverUrl ?? '') === accountId &&
-      verified && (generic || currentSettings.notificationPreviewsEnabled);
-    if (timedOut && eligible && currentSettings.emailNotificationsEnabled &&
-        currentAuth.isAuthenticated && !currentAuth.isLoading && currentAuth.activeAccountId === accountId &&
-        generateAccountId(jmapClient.username ?? '', jmapClient.serverUrl ?? '') === accountId) {
+      (generic || !payload?.registrationId || currentSettings.notificationPreviewsEnabled);
+    if (mail && !generic && !payload?.registrationId) {
       await Notifications.scheduleNotificationAsync({
         content: { title: 'ZyndMail', body: 'New ZyndPay Mail activity', data: content.data },
         trigger: null,
       }).catch(() => undefined);
     }
-    const visible = !!calendar || mail;
+    const visible = !!calendar || (mail && (generic || !!payload?.registrationId));
     return {
       shouldShowBanner: visible,
       shouldShowList: visible,

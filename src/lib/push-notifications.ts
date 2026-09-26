@@ -32,6 +32,7 @@ export const LAST_NOTIFIED_EMAIL_ID_PREFIX = 'push:lastNotifiedEmailId:v2:';
 const NOTIFIED_IDS_PREFIX = 'push:notifiedIds:v1:';
 const PROMPT_DISMISSED_PREFIX = 'push:promptDismissed:v1:';
 const ACCOUNT_DISABLED_INTENT_PREFIX = 'push:disabledIntent:v1:';
+const PERSONAL_PUSH_OPT_OUT_PREFIX = 'push:personalOptOut:v1:';
 
 // Legacy single-account keys (pre-multi-account). Migrated lazily on the next
 // setupPushNotifications / pushBackgroundTask call, then deleted.
@@ -361,7 +362,24 @@ export async function setStoredRelayBaseUrl(url: string | null): Promise<void> {
 /** Whether this account has a JMAP subscription recorded on this device. */
 export async function isPushEnabledForAccount(accountId: string): Promise<boolean> {
   await migrateLegacyPushKeys();
-  return (await AsyncStorage.getItem(subscriptionIdKey(accountId))) !== null;
+  return !(await isPersonalPushOptedOut(accountId)) &&
+    (await AsyncStorage.getItem(subscriptionIdKey(accountId))) !== null;
+}
+
+export async function isPersonalPushOptedOut(accountId: string): Promise<boolean> {
+  return explicitlyDisabledPersonalAccounts.has(accountId) ||
+    (await AsyncStorage.getItem(PERSONAL_PUSH_OPT_OUT_PREFIX + accountId)) === '1';
+}
+
+export async function setPersonalPushOptedOut(accountId: string, optedOut: boolean): Promise<void> {
+  if (optedOut) {
+    explicitlyDisabledPersonalAccounts.add(accountId);
+    await AsyncStorage.setItem(PERSONAL_PUSH_OPT_OUT_PREFIX + accountId, '1');
+    await disableAndroidMailAccount(accountId);
+  } else {
+    await AsyncStorage.removeItem(PERSONAL_PUSH_OPT_OUT_PREFIX + accountId);
+    explicitlyDisabledPersonalAccounts.delete(accountId);
+  }
 }
 
 export async function wasPushPromptDismissed(accountId: string): Promise<boolean> {
@@ -554,6 +572,7 @@ const accountGateGenerations = new Map<string, number>();
 const accountGateOperations = new Map<string, Promise<void>>();
 const revokingAccounts = new Map<string, number>();
 const locallyDisabledAccounts = new Set<string>();
+const explicitlyDisabledPersonalAccounts = new Set<string>();
 const suspendedSetupAccounts = new Set<string>();
 let globalPushTransition: Promise<void> = Promise.resolve();
 
@@ -613,6 +632,7 @@ function isPersonalSetupCurrent(identity: PersonalSetupIdentity): boolean {
       !settings.hydrated || !settings.emailNotificationsEnabled ||
       !account || isCompanyMailServer(account.serverUrl) ||
       suspendedSetupAccounts.has(identity.accountId) || revokingAccounts.has(identity.accountId) ||
+      explicitlyDisabledPersonalAccounts.has(identity.accountId) ||
       registry.activeAccountId !== identity.accountId ||
       !jmapClient.currentSession ||
       jmapClient.username !== identity.username ||
@@ -718,6 +738,9 @@ async function setupPushNotificationsInner(
   let createdSubscriptionId: string | null = null;
   let deviceClientId = '';
   try {
+    if (await isPersonalPushOptedOut(accountId)) {
+      throw new PushSetupError('account', 'Mail alerts are disabled for this account.');
+    }
     assertPersonalSetupCurrent(identity);
     logPhase('permission');
     const granted = await requestNotificationPermission();
@@ -1131,6 +1154,7 @@ export async function revokePushDevice(params: {
   const relayBaseUrl = (params.relayBaseUrl ?? DEFAULT_RELAY_BASE_URL).replace(/\/+$/, '');
 
   if (params.device.isThisDevice) {
+    await setPersonalPushOptedOut(params.accountId, true);
     await teardownPushNotificationsForAccount(params.accountId);
     return;
   }
@@ -1255,14 +1279,15 @@ async function restoreRegisteredAndroidMailAccountsInner(): Promise<void> {
         !revokingAccounts.has(accountId) && !locallyDisabledAccounts.has(accountId);
     };
     if (!allowed()) continue;
-    const [subscriptionId, deviceClientId, credentials, disabledIntent] = await Promise.all([
+    const [subscriptionId, deviceClientId, credentials, disabledIntent, personalOptOut] = await Promise.all([
       AsyncStorage.getItem(subscriptionIdKey(accountId)),
       AsyncStorage.getItem(deviceClientIdKey(accountId)),
       jmapClient.getStoredCredentials(accountId),
       AsyncStorage.getItem(ACCOUNT_DISABLED_INTENT_PREFIX + accountId),
+      isPersonalPushOptedOut(accountId),
     ]);
     const account = useAccountStore.getState().getAccountById(accountId);
-    if (!subscriptionId || !deviceClientId || !credentials || disabledIntent || !allowed() ||
+    if (!subscriptionId || !deviceClientId || !credentials || disabledIntent || personalOptOut || !allowed() ||
         !account || credentials.serverUrl !== account.serverUrl ||
         generateAccountId(credentials.username, credentials.serverUrl) !== accountId) continue;
     await queueAccountGateOperation(accountId, async () => {

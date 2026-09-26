@@ -10,6 +10,7 @@ const getEmails = vi.hoisted(() => vi.fn(async () => [{ id: 'message', threadId:
 const session = vi.hoisted(() => ({
   username: 'staff@zyndpay.io',
   serverUrl: 'https://mail.zyndpay.io',
+  currentSession: { apiUrl: 'https://mail.zyndpay.io/jmap/' },
   ensureFreshToken: vi.fn(async () => undefined),
   getStoredOAuthTokens: vi.fn(async () => null as unknown),
   getStoredCredentials: vi.fn(async () => null as unknown),
@@ -39,7 +40,7 @@ vi.mock('expo-notifications', () => ({
 vi.mock('../../api/jmap-client', () => ({ jmapClient: session }));
 vi.mock('../../api/email', () => ({ getEmails }));
 
-import { isCompanyPushPresentation, isGenericCompanyPushPresentation, parseCompanyPushDestination, companyPushModeActive, companyPushPreviewAvailable, companyPushPreviewModeActive, companyPushPreviewOptOutPending, companyPushRevocationPending, companyPushRelayOrigin, companyPushStatus, parseCompanyPushPayload, reconcileCompanyPush, reconcileDisabledCompanyPush, reconcilePendingCompanyPushRevocation, registerCompanyPush, registeredCompanyPushAccountId, revokeCompanyPush, revokeEvictedCompanyPush, resolveCompanyPush } from '../company-push';
+import { isCompanyPushPresentation, isGenericCompanyPushPresentation, parseCompanyPushDestination, companyPushModeActive, companyPushPreviewAvailable, companyPushPreviewModeActive, companyPushRegistrationIdActive, companyPushPreviewOptOutPending, companyPushRevocationPending, companyPushRelayOrigin, companyPushStatus, parseCompanyPushPayload, reconcileCompanyPush, reconcileDisabledCompanyPush, reconcilePendingCompanyPushRevocation, registerCompanyPush, registeredCompanyPushAccountId, revokeCompanyPush, revokeEvictedCompanyPush, resolveCompanyPush } from '../company-push';
 import { useSettingsStore } from '../../stores/settings-store';
 import { useAccountStore } from '../../stores/account-store';
 import { ZYNDMAIL_COMPANY } from '../zyndmail-company';
@@ -78,6 +79,8 @@ describe('company Expo push boundary', () => {
     process.env.EXPO_PUBLIC_MAIL_PUSH_RELAY_ORIGIN = 'https://mail.zyndpay.io/other';
     expect(companyPushRelayOrigin()).toBeNull();
     expect(parseCompanyPushPayload({ version: 1, notificationRef: 'a'.repeat(24) })).not.toBeNull();
+    expect(parseCompanyPushPayload({ version: 1, notificationRef: 'a'.repeat(24), registrationId: 'registration-1' }))
+      .toMatchObject({ registrationId: 'registration-1' });
     expect(parseCompanyPushPayload({ version: 1, notificationRef: 'a'.repeat(24), subject: 'secret' })).toBeNull();
   });
 
@@ -707,6 +710,8 @@ describe('company Expo push boundary', () => {
       routingVersion: 3, previews: true,
     }));
     expect(await companyPushPreviewModeActive(accountId)).toBe(true);
+    expect(await companyPushRegistrationIdActive(accountId, 'registration-1', true)).toBe(true);
+    expect(await companyPushRegistrationIdActive(accountId, 'other-registration', true)).toBe(false);
     expect(await companyPushPreviewModeActive('other-account')).toBe(false);
     useSettingsStore.setState({ notificationPreviewsEnabled: false });
     expect(await companyPushPreviewModeActive(accountId)).toBe(false);
@@ -716,6 +721,18 @@ describe('company Expo push boundary', () => {
       routingVersion: 3, previews: true,
     }));
     expect(await companyPushPreviewModeActive(accountId)).toBe(false);
+  });
+
+  it('rejects a tap reference from a different registration before contacting the relay', async () => {
+    records.set('zyndmail.production.push.registration.v1', JSON.stringify({
+      subject: 'staff-subject', accountId, registrationId: 'registration-1', renewedAt: Date.now(),
+    }));
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await resolveCompanyPush(accountId, {
+      version: 1, notificationRef: 'a'.repeat(24), registrationId: 'other-registration',
+    })).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('persists failed disable revocation and clears it on retry', async () => {
@@ -1436,16 +1453,18 @@ describe('company notification destination', () => {
 
 describe('mail preview presentation and routing', () => {
   const content = { title: 'Ada Example', body: 'Meeting tomorrow\nPlease bring the notes.',
-    data: { version: 1, notificationRef: 'a'.repeat(24) } };
+    data: { version: 1, notificationRef: 'a'.repeat(24), registrationId: 'registration-1' } };
   it('accepts real visible previews and legacy alerts with opaque routing', () => {
     expect(isCompanyPushPresentation(content as never)).toBe(true);
     expect(isCompanyPushPresentation({ ...content, title: 'ZyndMail', body: 'New ZyndPay Mail activity' } as never)).toBe(true);
     expect(isGenericCompanyPushPresentation(content as never)).toBe(false);
     expect(isGenericCompanyPushPresentation({ ...content, title: 'ZyndMail', body: 'New ZyndPay Mail activity' } as never)).toBe(true);
+    expect(isCompanyPushPresentation({ ...content, data: { version: 1, notificationRef: 'a'.repeat(24) } } as never)).toBe(true);
   });
   it('rejects invisible, oversized and malformed notifications', () => {
     for (const patch of [{ title: '' }, { body: ' ' }, { body: 'x'.repeat(726) }, { title: '\u202ehidden' },
-      { data: { ...content.data, emailId: 'untrusted' } }]) {
+      { data: { ...content.data, emailId: 'untrusted' } },
+      { data: { ...content.data, registrationId: '' } }]) {
       expect(isCompanyPushPresentation({ ...content, ...patch } as never)).toBe(false);
     }
   });

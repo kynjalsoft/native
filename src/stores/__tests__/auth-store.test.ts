@@ -98,6 +98,23 @@ beforeEach(() => {
 
 describe('auth-store', () => {
   describe('login', () => {
+    it('drains the current account push setup before password sign-in replaces the client', async () => {
+      useAuthStore.setState({ isAuthenticated: true, activeAccountId: 'acc-1' });
+      let release!: () => void;
+      const resume = vi.fn();
+      vi.mocked(suspendPersonalPushSetupForAccount).mockImplementationOnce(
+        () => new Promise<() => void>((resolve) => { release = () => resolve(resume); }),
+      );
+      mockConnect.mockResolvedValueOnce({ apiUrl: 'https://other.example.com/jmap/' });
+      const login = useAuthStore.getState().login('https://other.example.com', 'other', 'secret', { addAccount: true });
+      await vi.waitFor(() => expect(suspendPersonalPushSetupForAccount).toHaveBeenCalledWith('acc-1'));
+      expect(mockConnect).not.toHaveBeenCalled();
+      release();
+      await login;
+      expect(mockConnect).toHaveBeenCalledOnce();
+      expect(resume).toHaveBeenCalledOnce();
+    });
+
     it('should set authenticated state on success', async () => {
       const session = { apiUrl: 'https://mail.example.com/jmap/' };
       mockConnect.mockResolvedValue(session);
@@ -164,6 +181,27 @@ describe('auth-store', () => {
     expect(reconcileCompanyPush).toHaveBeenCalledWith(accountId);
     expect(loadingDuringReconciliation).toBe(true);
     expect(useAuthStore.getState().isLoading).toBe(false);
+  });
+
+  it('drains the current account push setup before OAuth sign-in replaces the client', async () => {
+    useAuthStore.setState({ isAuthenticated: true, activeAccountId: 'acc-1' });
+    let release!: () => void;
+    const resume = vi.fn();
+    vi.mocked(suspendPersonalPushSetupForAccount).mockImplementationOnce(
+      () => new Promise<() => void>((resolve) => { release = () => resolve(resume); }),
+    );
+    vi.mocked(loginWithPkce).mockResolvedValueOnce({ accessToken: 'token' } as never);
+    vi.mocked(jmapClient.connectWithOAuth).mockResolvedValueOnce({
+      session: { apiUrl: 'https://other.example.com/jmap/' },
+      username: 'other', accountId: 'other@other.example.com',
+    } as never);
+    const login = useAuthStore.getState().loginViaOAuth('https://other.example.com', { addAccount: true });
+    await vi.waitFor(() => expect(suspendPersonalPushSetupForAccount).toHaveBeenCalledWith('acc-1'));
+    expect(jmapClient.connectWithOAuth).not.toHaveBeenCalled();
+    release();
+    await login;
+    expect(jmapClient.connectWithOAuth).toHaveBeenCalledOnce();
+    expect(resume).toHaveBeenCalledOnce();
   });
 
   describe('logout', () => {

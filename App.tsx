@@ -25,6 +25,7 @@ import {
   getInitialNotificationTap,
   getStoredRelayBaseUrl,
   setupPushNotifications,
+  isPersonalPushOptedOut,
   disableGlobalEmailNotifications,
   restoreRegisteredAndroidMailAccounts,
   setAndroidMailPreviewEnabled,
@@ -736,6 +737,7 @@ function AppContent() {
     let cancelled = false;
     const doSetup = async () => {
       if (!emailNotificationsEnabled) return;
+      if (activeAccountId && await isPersonalPushOptedOut(activeAccountId)) return;
       const relayBaseUrl = await getStoredRelayBaseUrl();
       if (!relayBaseUrl) return;
       try {

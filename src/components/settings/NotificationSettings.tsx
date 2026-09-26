@@ -30,6 +30,7 @@ import {
   revokePushDevice,
   setStoredRelayBaseUrl,
   setupPushNotifications,
+  setPersonalPushOptedOut,
   teardownPushNotificationsForAccount,
   type PushDevice,
   type PushSetupPhase,
@@ -144,6 +145,7 @@ export function NotificationSettings() {
     });
     try {
       await setStoredRelayBaseUrl(trimmed);
+      if (activeAccountId) await setPersonalPushOptedOut(activeAccountId, false);
       await setupPushNotifications({
         relayBaseUrl: trimmed,
         accountLabel: username ?? undefined,
@@ -166,6 +168,7 @@ export function NotificationSettings() {
     });
     try {
       if (activeAccountId) {
+        await setPersonalPushOptedOut(activeAccountId, true);
         await teardownPushNotificationsForAccount(activeAccountId);
       }
       // The relay base URL is a device-wide setting shared with any other

@@ -18,6 +18,7 @@ const ACCOUNT_SUBJECTS_KEY = 'zyndmail.production.push.account-subjects.v1';
 const RENEW_AFTER_MS = 30 * 60_000;
 const RELAY_UNAVAILABLE = 'Company mail alerts are temporarily unavailable. Please try again later.';
 const OPAQUE_REFERENCE = /^[A-Za-z0-9_-]{22,256}$/;
+const OPAQUE_REGISTRATION_ID = /^[A-Za-z0-9_-]{1,256}$/;
 const REVOCATION_KEY = /^[A-Za-z0-9_+/=-]{43,512}$/;
 const storageOptions: SecureStore.SecureStoreOptions = {
   keychainAccessible: SecureStore.WHEN_PASSCODE_SET_THIS_DEVICE_ONLY,
@@ -144,11 +145,12 @@ export async function companyPushPreviewAvailable(): Promise<boolean> {
   return health.ready && health.previewMode;
 }
 
-async function companyPushRegistrationActive(accountId: string, requirePreviews: boolean): Promise<boolean> {
+async function companyPushRegistrationActive(accountId: string, requirePreviews: boolean, registrationId?: string): Promise<boolean> {
   const settings = useSettingsStore.getState();
   if (!settings.hydrated || !settings.emailNotificationsEnabled ||
       (requirePreviews && !settings.notificationPreviewsEnabled) ||
       revoking.has(accountId) ||
+      !jmapClient.currentSession ||
       generateAccountId(jmapClient.username ?? '', jmapClient.serverUrl ?? '') !== accountId ||
       !isCompanyMailServer(jmapClient.serverUrl ?? '')) return false;
   try {
@@ -163,6 +165,7 @@ async function companyPushRegistrationActive(accountId: string, requirePreviews:
       !revoking.has(accountId) &&
       generateAccountId(jmapClient.username ?? '', jmapClient.serverUrl ?? '') === accountId &&
       !!registration?.registrationId && registration.revocationPending !== true &&
+      (!registrationId || registration.registrationId === registrationId) &&
       (!requirePreviews || (registration.routingVersion === 3 && registration.previews === true)) &&
       (!current.notificationPreviewsEnabled || (registration.routingVersion === 3 && registration.previews === true)) &&
       allowed && (!registration.accountId || registration.accountId === accountId) &&
@@ -179,6 +182,13 @@ export function companyPushModeActive(accountId: string): Promise<boolean> {
 
 export function companyPushPreviewModeActive(accountId: string): Promise<boolean> {
   return companyPushRegistrationActive(accountId, true);
+}
+
+export function companyPushRegistrationIdActive(
+  accountId: string, registrationId: string, previews: boolean,
+): Promise<boolean> {
+  if (!OPAQUE_REGISTRATION_ID.test(registrationId)) return Promise.resolve(false);
+  return companyPushRegistrationActive(accountId, previews, registrationId);
 }
 
 async function installationId(): Promise<string> {
@@ -399,14 +409,18 @@ async function storedCompanySession(accountId: string): Promise<{ subject: strin
   return { subject: identity.subject, bearer: tokens.accessToken };
 }
 
-export function parseCompanyPushPayload(value: unknown): { version: 1; notificationRef: string } | null {
+export function parseCompanyPushPayload(value: unknown): { version: 1; notificationRef: string; registrationId?: string } | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
   const keys = Object.keys(record).sort();
-  if (keys.length !== 2 || keys[0] !== 'notificationRef' || keys[1] !== 'version' ||
+  if (!((keys.length === 2 && keys[0] === 'notificationRef' && keys[1] === 'version') ||
+      (keys.length === 3 && keys[0] === 'notificationRef' && keys[1] === 'registrationId' && keys[2] === 'version')) ||
       record.version !== 1 || typeof record.notificationRef !== 'string' ||
+      (keys.length === 3 && (typeof record.registrationId !== 'string' ||
+        !OPAQUE_REGISTRATION_ID.test(record.registrationId))) ||
       !OPAQUE_REFERENCE.test(record.notificationRef)) return null;
-  return { version: 1, notificationRef: record.notificationRef };
+  return { version: 1, notificationRef: record.notificationRef,
+    ...(keys.length === 3 ? { registrationId: record.registrationId as string } : {}) };
 }
 
 /** Routing remains opaque; visible mail text is bounded and never interpreted as markup. */
@@ -855,6 +869,7 @@ export async function resolveCompanyPush(accountId: string, value: unknown): Pro
   const session = await currentCompanySession(accountId).catch(() => null);
   const registration = await readRegistration();
   if (!session || !registration || registration.subject !== session.subject ||
+      (payload.registrationId && registration.registrationId !== payload.registrationId) ||
       (registration.accountId && registration.accountId !== accountId)) return null;
   try {
     const response = await relayFetch('v1/notification-references/resolve', session.bearer, {

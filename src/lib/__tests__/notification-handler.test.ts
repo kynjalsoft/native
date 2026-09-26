@@ -10,9 +10,8 @@ const current = vi.hoisted(() => ({
   pushModeActive: true,
   revocationPending: false,
   previewModeActive: false,
+  registrationMatches: true,
   auth: { isAuthenticated: true, isLoading: false, activeAccountId: 'staff@zyndpay.io@mail.zyndpay.io' as string | null },
-  resolveDestination: (async (_accountId: string, _data: unknown) => ({ target: 'EMAIL' as const })) as
-    (accountId: string, data: unknown) => Promise<{ target: 'EMAIL' } | null>,
 }));
 
 vi.mock('expo-notifications', () => ({
@@ -27,7 +26,11 @@ vi.mock('../company-push', () => ({
   companyPushModeActive: async (accountId: string) =>
     accountId === 'staff@zyndpay.io@mail.zyndpay.io' && current.pushModeActive && !current.revocationPending,
   companyPushPreviewModeActive: async (accountId: string) => accountId === 'staff@zyndpay.io@mail.zyndpay.io' && current.previewModeActive,
-  resolveCompanyPush: (accountId: string, data: unknown) => current.resolveDestination(accountId, data),
+  companyPushRegistrationIdActive: async (accountId: string, registrationId: string, previews: boolean) =>
+    accountId === 'staff@zyndpay.io@mail.zyndpay.io' && registrationId === 'registration-1' &&
+    current.registrationMatches && current.pushModeActive && (!previews || current.previewModeActive),
+  parseCompanyPushPayload: (data: { notificationRef?: string; registrationId?: string }) =>
+    data?.notificationRef ? data : null,
   isCompanyPushPresentation: (content: { data?: { notificationRef?: string } }) => !!content.data?.notificationRef,
   isGenericCompanyPushPresentation: (content: { title: string; body: string }) =>
     content.title === 'ZyndMail' && content.body === 'New ZyndPay Mail activity',
@@ -46,7 +49,7 @@ async function display(content: { title: string; body: string; data?: Record<str
 }
 
 const generic = { title: 'ZyndMail', body: 'New ZyndPay Mail activity', data: { notificationRef: 'ref' } };
-const preview = { title: 'Ada', body: 'Tomorrow at 2', data: { notificationRef: 'ref' } };
+const preview = { title: 'Ada', body: 'Tomorrow at 2', data: { notificationRef: 'ref', registrationId: 'registration-1' } };
 
 beforeEach(() => {
   scheduled.mockClear();
@@ -56,7 +59,7 @@ beforeEach(() => {
   current.accounts = [{ serverUrl: 'https://mail.zyndpay.io' }];
   current.serverUrl = 'https://mail.zyndpay.io';
   current.username = 'staff@zyndpay.io';
-  current.resolveDestination = async () => ({ target: 'EMAIL' as const });
+  current.registrationMatches = true;
   current.pushModeActive = true;
   current.revocationPending = false;
   current.previewModeActive = false;
@@ -96,7 +99,7 @@ describe('foreground notification presentation', () => {
     expect((await display(reminder, { type: 'date' })).shouldShowList).toBe(true);
   });
 
-  it('shows verified rich mail during renewal and hides it during an account switch', async () => {
+  it('shows registration-bound rich mail during renewal and hides it during an account switch', async () => {
     current.settings.notificationPreviewsEnabled = true;
     current.previewModeActive = true;
     expect((await display(preview)).shouldShowList).toBe(true);
@@ -107,52 +110,34 @@ describe('foreground notification presentation', () => {
     expect((await display(preview)).shouldShowList).toBe(false);
   });
 
-  it('suppresses rich mail when the reference belongs to another account', async () => {
+  it('suppresses rich mail when the registration belongs to another account', async () => {
     current.settings.notificationPreviewsEnabled = true;
     current.previewModeActive = true;
-    current.resolveDestination = async () => null;
-    expect((await display(preview)).shouldShowList).toBe(false);
+    expect((await display({ ...preview, data: { ...preview.data, registrationId: 'other-registration' } })).shouldShowList).toBe(false);
     expect(scheduled).not.toHaveBeenCalled();
   });
 
-  it('suppresses rich mail when the account switches during resolution', async () => {
+  it('suppresses rich mail when the account switches during the local registration check', async () => {
     current.settings.notificationPreviewsEnabled = true;
     current.previewModeActive = true;
-    let finish!: (destination: { target: 'EMAIL' }) => void;
-    current.resolveDestination = () => new Promise((resolve) => { finish = resolve; });
     const showing = display(preview);
-    await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
     current.auth.isLoading = true;
     current.username = 'other@zyndpay.io';
-    finish({ target: 'EMAIL' });
     expect((await showing).shouldShowList).toBe(false);
   });
 
-  it('posts a safe generic alert when authorized preview verification misses the deadline', async () => {
+  it('posts a safe generic alert for legacy rich data without a registration ID', async () => {
     current.settings.notificationPreviewsEnabled = true;
     current.previewModeActive = true;
-    let started!: () => void;
-    const resolving = new Promise<void>((resolve) => { started = resolve; });
-    current.resolveDestination = () => {
-      started();
-      return new Promise(() => undefined);
-    };
-    vi.useFakeTimers();
-    try {
-      const showing = display(preview);
-      await resolving;
-      await vi.advanceTimersByTimeAsync(1500);
-      expect((await showing).shouldShowList).toBe(false);
-      expect(scheduled).toHaveBeenCalledOnce();
-      const fallback = scheduled.mock.calls[0][0];
-      expect(fallback).toEqual({
-        content: { title: 'ZyndMail', body: 'New ZyndPay Mail activity', data: preview.data },
-        trigger: null,
-      });
-      expect((await display(fallback.content)).shouldShowList).toBe(true);
-    } finally {
-      vi.useRealTimers();
-    }
+    const legacy = { ...preview, data: { notificationRef: 'ref' } };
+    expect((await display(legacy)).shouldShowList).toBe(false);
+    expect(scheduled).toHaveBeenCalledOnce();
+    const fallback = scheduled.mock.calls[0][0];
+    expect(fallback).toEqual({
+      content: { title: 'ZyndMail', body: 'New ZyndPay Mail activity', data: legacy.data },
+      trigger: null,
+    });
+    expect((await display(fallback.content)).shouldShowList).toBe(true);
   });
 
   it('shows only enabled calendar reminders for a connected non-company account', async () => {

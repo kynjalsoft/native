@@ -211,11 +211,16 @@ async function completeOAuthHandoff(
   const previous = opts?.addAccount && get().isAuthenticated ? jmapClient.snapshot() : null;
 
   let connected: { session: JMAPSession; username: string; accountId: string };
+  const previousAccountId = get().isAuthenticated ? get().activeAccountId : null;
+  const resumePersonalPushSetup = previousAccountId && !isCompanyMailServer(jmapClient.serverUrl ?? '')
+    ? await suspendPersonalPushSetupForAccount(previousAccountId) : () => undefined;
   try {
     connected = await jmapClient.connectWithOAuth(result.serverUrl, result.tokens);
   } catch (err) {
     if (previous) jmapClient.restoreSnapshot(previous);
     throw err;
+  } finally {
+    resumePersonalPushSetup();
   }
   const { session, username, accountId } = connected;
   if (previous) {
@@ -294,11 +299,16 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     const previous = opts?.addAccount && get().isAuthenticated ? jmapClient.snapshot() : null;
     try {
       let session: JMAPSession;
+      const previousAccountId = get().isAuthenticated ? get().activeAccountId : null;
+      const resumePersonalPushSetup = previousAccountId && !isCompanyMailServer(jmapClient.serverUrl ?? '')
+        ? await suspendPersonalPushSetupForAccount(previousAccountId) : () => undefined;
       try {
         session = await jmapClient.connect(serverUrl, username, password, opts?.totp);
       } catch (err) {
         if (previous) jmapClient.restoreSnapshot(previous);
         throw err;
+      } finally {
+        resumePersonalPushSetup();
       }
       // Contacts/calendar are still single-bucket, so wipe those now that
       // the new account is the one the client serves.

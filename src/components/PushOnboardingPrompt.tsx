@@ -16,6 +16,7 @@ import {
   PushSetupError,
   setStoredRelayBaseUrl,
   setupPushNotifications,
+  setPersonalPushOptedOut,
   wasPushPromptDismissed,
 } from '../lib/push-notifications';
 import { isCompanyMailServer } from '../lib/zyndmail-company';
@@ -86,6 +87,7 @@ export function PushOnboardingPrompt(): React.ReactElement | null {
       } else {
         const relayBaseUrl = (await getEffectiveRelayBaseUrl()) || DEFAULT_RELAY_BASE_URL;
         await setStoredRelayBaseUrl(relayBaseUrl);
+        await setPersonalPushOptedOut(activeAccountId, false);
         await setupPushNotifications({ relayBaseUrl, accountLabel: username ?? undefined });
       }
       await dismissPushPrompt(activeAccountId);
