@@ -66,6 +66,7 @@ class BulwarkFcmModule(reactContext: ReactApplicationContext)
         val threadId = options.getString("threadId")
         val subject = options.takeIf { it.hasKey("subject") }?.getString("subject")
         val accountId = options.takeIf { it.hasKey("accountId") }?.getString("accountId")
+        val jmapAccountId = options.takeIf { it.hasKey("jmapAccountId") }?.getString("jmapAccountId")
         val groupKey = options.takeIf { it.hasKey("groupKey") }?.getString("groupKey")
             ?: accountId?.let { "bulwark-mail:$it" }
         val groupTitle = options.takeIf { it.hasKey("groupTitle") }?.getString("groupTitle")
@@ -78,7 +79,7 @@ class BulwarkFcmModule(reactContext: ReactApplicationContext)
                 ?: makeLetterAvatar(initials, bgColorHex)
             postNotification(
                 notificationId, title, body, largeIcon, bgColorHex,
-                emailId, threadId, subject, accountId, groupKey,
+                emailId, threadId, subject, accountId, jmapAccountId, groupKey,
             )
             if (groupKey != null) postGroupSummary(groupKey, groupTitle, bgColorHex, accountId)
             promise.resolve(null)
@@ -89,6 +90,24 @@ class BulwarkFcmModule(reactContext: ReactApplicationContext)
     fun getInitialNotification(promise: Promise) {
         val payload = NotificationTapStore.consume()
         promise.resolve(payload?.toMap())
+    }
+
+    @ReactMethod
+    fun dismissMailNotifications(accountId: String?, promise: Promise) {
+        try {
+            val manager = reactApplicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val expectedGroup = accountId?.let { "bulwark-mail:$it" }
+            manager.activeNotifications.forEach { item ->
+                val group = item.notification.group
+                if (group?.startsWith("bulwark-mail:") == true &&
+                    (expectedGroup == null || group == expectedGroup)) {
+                    manager.cancel(item.tag, item.id)
+                }
+            }
+            promise.resolve(null)
+        } catch (error: Exception) {
+            promise.reject("dismiss_mail_failed", error)
+        }
     }
 
     @ReactMethod
@@ -107,6 +126,7 @@ class BulwarkFcmModule(reactContext: ReactApplicationContext)
         threadId: String?,
         subject: String?,
         accountId: String?,
+        jmapAccountId: String?,
         groupKey: String?,
     ) {
         val ctx = reactApplicationContext
@@ -116,6 +136,7 @@ class BulwarkFcmModule(reactContext: ReactApplicationContext)
             if (threadId != null) putExtra(NotificationTapStore.EXTRA_THREAD_ID, threadId)
             if (subject != null) putExtra(NotificationTapStore.EXTRA_SUBJECT, subject)
             if (accountId != null) putExtra(NotificationTapStore.EXTRA_ACCOUNT_ID, accountId)
+            if (jmapAccountId != null) putExtra(NotificationTapStore.EXTRA_JMAP_ACCOUNT_ID, jmapAccountId)
         }
         val pending = PendingIntent.getActivity(
             ctx,

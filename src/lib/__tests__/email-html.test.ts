@@ -187,6 +187,12 @@ describe('prepareEmailHtml', () => {
   it('neutralises height:100% wrappers', () => {
     expect(prepareEmailHtml('<p>x</p>').html).toContain('[style*="height:100%"]');
   });
+
+  it('uses the selected base size without changing authored HTML', () => {
+    const html = prepareEmailHtml('<p style="font-size:20px">x</p>', { fontSize: 16 }).html;
+    expect(html).toContain('font-size: 16px;');
+    expect(html).toContain('font-size:20px');
+  });
 });
 
 describe('wrapPlainTextEmail', () => {
@@ -194,6 +200,10 @@ describe('wrapPlainTextEmail', () => {
     expect(wrapPlainTextEmail('x', { font: 'sans' })).toContain('-apple-system');
     expect(wrapPlainTextEmail('x', { font: 'mono' })).toContain('ui-monospace');
     expect(wrapPlainTextEmail('x')).not.toContain('ui-monospace');
+  });
+
+  it('uses the selected base size for plain-text messages', () => {
+    expect(wrapPlainTextEmail('x', { fontSize: 16 })).toContain('font-size: 16px;');
   });
 });
 

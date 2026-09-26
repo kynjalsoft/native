@@ -74,6 +74,7 @@ import { AppUnlockGate, shouldHideMailForAppState, requiresMailboxUnlock } from 
 import {
   isCompanyPushPresentation,
   registerCompanyPush,
+  registeredCompanyPushAccountId,
   resolveCompanyPush,
   revokeCompanyPush,
 } from './src/lib/company-push';
@@ -83,8 +84,15 @@ const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<MainTabsParamList>();
 const navigationRef = createNavigationContainerRef<RootStackParamList>();
 
-async function navigateToNotificationTap(payload: NotificationTapPayload): Promise<void> {
-  if (!navigationRef.isReady()) return;
+async function navigateToNotificationTap(
+  payload: NotificationTapPayload, stillReady: () => boolean,
+): Promise<'opened' | 'retry' | 'ignored'> {
+  if (!navigationRef.isReady() || !stillReady()) return 'retry';
+  // Older notifications lack an account identity. Opening one against a
+  // different currently active account can show the wrong conversation.
+  if (!payload.accountId) return 'ignored';
+  const target = useAccountStore.getState().getAccountById(payload.accountId);
+  if (!target || isCompanyMailServer(target.serverUrl)) return 'ignored';
 
   // The notification carries the account it was generated for. If the user
   // has since switched to a different account (or had a different one active
@@ -92,17 +100,47 @@ async function navigateToNotificationTap(payload: NotificationTapPayload): Promi
   // account would fetch the email from the wrong server and fail.
   const auth = useAuthStore.getState();
   if (payload.accountId && payload.accountId !== auth.activeAccountId) {
-    const account = useAccountStore.getState().getAccountById(payload.accountId);
-    if (!account) return; // account was logged out — nothing safe to open.
-    await auth.switchAccount(payload.accountId);
-    if (useAuthStore.getState().activeAccountId !== payload.accountId) return;
+    try { await auth.switchAccount(payload.accountId); } catch { return 'retry'; }
+    if (useAuthStore.getState().activeAccountId !== payload.accountId) return 'retry';
   }
 
-  navigationRef.navigate('EmailThread', {
-    emailId: payload.emailId,
-    threadId: payload.threadId,
-    subject: payload.subject,
-  });
+  if (!navigationRef.isReady() || !stillReady()) return 'retry';
+  try {
+    if (payload.emailId && payload.threadId) {
+      let email;
+      try {
+        [email] = await getEmails([payload.emailId], payload.jmapAccountId);
+      } catch {
+        return 'retry';
+      }
+      if (!navigationRef.isReady() || !stillReady()) return 'retry';
+      if (!email) {
+        navigationRef.navigate('UnifiedInbox');
+        Alert.alert(
+          useLocaleStore.getState().t('error'),
+          useLocaleStore.getState().t(
+            'notification_link_unavailable',
+            'This notification cannot open a single email. Search your inbox to find the message.',
+          ),
+        );
+        return 'opened';
+      }
+      navigationRef.navigate('EmailThread', {
+        emailId: email.id,
+        threadId: email.threadId,
+        subject: email.subject ?? payload.subject,
+        jmapAccountId: payload.jmapAccountId,
+        emailIds: [email.id],
+      });
+    } else if (!payload.emailId && !payload.threadId) {
+      navigationRef.navigate('UnifiedInbox');
+    } else {
+      return 'ignored';
+    }
+    return 'opened';
+  } catch {
+    return 'retry';
+  }
 }
 
   // Deep links (zyndmail://, webmail https permalinks, mailto:) and
@@ -142,6 +180,9 @@ function MainTabsNavigator({ navigation, onMailListBusyChange }: NativeStackScre
   onMailListBusyChange: (busy: boolean) => void;
 }) {
   const c = useColors();
+  const t = useLocaleStore((state) => state.t);
+  const serverUrl = useAuthStore((state) => state.serverUrl);
+  const companyMailOnly = isCompanyMailServer(serverUrl ?? '') || jmapClient.hasCompanyNoDeletePolicy;
   const mailboxes = useEmailStore((state) => state.mailboxes);
   const logout = useAuthStore((state) => state.logout);
   const inboxUnreadCount = mailboxes.find((mailbox) => mailbox.role === 'inbox')?.unreadEmails ?? 0;
@@ -149,6 +190,10 @@ function MainTabsNavigator({ navigation, onMailListBusyChange }: NativeStackScre
   const hasContacts = useHasContacts();
   const hasFiles = useHasFiles();
   const disabledTabStyle = { opacity: 0.4 } as const;
+  const explainUnavailable = (feature: string) => Alert.alert(
+    t('navigation.feature_unavailable.title', '{feature} is unavailable', { feature }),
+    t('navigation.feature_unavailable.body', 'This server or account does not offer {feature}. Contact your workspace administrator if you need access.', { feature }),
+  );
 
   return (
     <View style={{ flex: 1, backgroundColor: c.background }}>
@@ -216,7 +261,7 @@ function MainTabsNavigator({ navigation, onMailListBusyChange }: NativeStackScre
           />
         )}
       </Tab.Screen>
-      <Tab.Screen
+      {!companyMailOnly && <Tab.Screen
         name="Calendar"
         component={CalendarScreen}
         options={{
@@ -226,11 +271,11 @@ function MainTabsNavigator({ navigation, onMailListBusyChange }: NativeStackScre
         }}
         listeners={{
           tabPress: (e) => {
-            if (!hasCalendar) e.preventDefault();
+            if (!hasCalendar) { e.preventDefault(); explainUnavailable(t('sidebar.calendar', 'Calendar')); }
           },
         }}
-      />
-      <Tab.Screen
+      />}
+      {!companyMailOnly && <Tab.Screen
         name="Contacts"
         component={ContactsScreen}
         options={{
@@ -240,11 +285,11 @@ function MainTabsNavigator({ navigation, onMailListBusyChange }: NativeStackScre
         }}
         listeners={{
           tabPress: (e) => {
-            if (!hasContacts) e.preventDefault();
+            if (!hasContacts) { e.preventDefault(); explainUnavailable(t('sidebar.contacts', 'Contacts')); }
           },
         }}
-      />
-      <Tab.Screen
+      />}
+      {!companyMailOnly && <Tab.Screen
         name="Files"
         component={FilesScreen}
         options={{
@@ -254,10 +299,10 @@ function MainTabsNavigator({ navigation, onMailListBusyChange }: NativeStackScre
         }}
         listeners={{
           tabPress: (e) => {
-            if (!hasFiles) e.preventDefault();
+            if (!hasFiles) { e.preventDefault(); explainUnavailable(t('sidebar.files', 'Files')); }
           },
         }}
-      />
+      />}
       <Tab.Screen
         name="Settings"
         options={{
@@ -321,12 +366,17 @@ function AppContent() {
   // JMAP session comes up in the background.
   const hasPersistedAccount = useAccountStore((state) => state.activeAccountId != null);
   const accounts = useAccountStore((state) => state.accounts);
+  const activeAccountId = useAuthStore((state) => state.activeAccountId);
   const [accountRegistryHydrated, setAccountRegistryHydrated] = React.useState(
     () => useAccountStore.persist.hasHydrated(),
   );
   const appLockedRef = React.useRef(appLocked);
   appLockedRef.current = appLocked;
   const pendingCompanyPushResponses = React.useRef<Notifications.NotificationResponse[]>([]);
+  const pendingAndroidPushTap = React.useRef<NotificationTapPayload | null>(null);
+  const processingAndroidPushTap = React.useRef(false);
+  const androidPushRetryCount = React.useRef(0);
+  const [pendingAndroidPushRevision, setPendingAndroidPushRevision] = React.useState(0);
   const handledCompanyPushResponses = React.useRef(new Set<string>());
   const processingCompanyPush = React.useRef(false);
   const companyPushRetryCount = React.useRef(0);
@@ -528,29 +578,64 @@ function AppContent() {
     return unsubscribe;
   }, []);
 
-  // When the user taps a notification the app lands here with an email id
-  // either stashed on the cold-start intent or delivered as a live event.
-  // Wait until auth is restored so the navigation target has credentials to
-  // load the thread.
+  // Capture native Android taps before auth or navigation is ready. The
+  // native initial-intent getter clears its slot, so keep our own pending copy
+  // until the account is restored and the optional app lock is open.
   React.useEffect(() => {
-    if (!isAuthenticated) return;
-
     let cancelled = false;
+    const capture = (payload: NotificationTapPayload | null) => {
+      if (!payload || cancelled) return;
+      pendingAndroidPushTap.current = payload;
+      androidPushRetryCount.current = 0;
+      setPendingAndroidPushRevision((revision) => revision + 1);
+    };
     void (async () => {
       const initial = await getInitialNotificationTap();
-      if (cancelled || !initial) return;
-      await navigateToNotificationTap(initial);
+      if (!pendingAndroidPushTap.current) capture(initial);
     })();
-
-    const unsubscribe = addNotificationTapListener((payload) => {
-      void navigateToNotificationTap(payload);
-    });
-
+    const unsubscribe = addNotificationTapListener(capture);
     return () => {
       cancelled = true;
       unsubscribe();
     };
-  }, [isAuthenticated]);
+  }, []);
+
+  React.useEffect(() => {
+    const payload = pendingAndroidPushTap.current;
+    if (!payload || !isAuthenticated || appLocked || !accountRegistryHydrated ||
+        !navigationReady || !navigationRef.isReady() || processingAndroidPushTap.current) return;
+    processingAndroidPushTap.current = true;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let live = true;
+    void navigateToNotificationTap(payload, () => live && !appLockedRef.current &&
+      useAuthStore.getState().isAuthenticated && pendingAndroidPushTap.current === payload).then((result) => {
+      if (!live) return;
+      if (pendingAndroidPushTap.current !== payload) return;
+      if (result === 'opened' || result === 'ignored') {
+        pendingAndroidPushTap.current = null;
+        androidPushRetryCount.current = 0;
+      } else {
+        const attempts = ++androidPushRetryCount.current;
+        if (attempts <= 4) retryTimer = setTimeout(() => {
+          setPendingAndroidPushRevision((revision) => revision + 1);
+        }, [1_000, 3_000, 10_000, 30_000][attempts - 1]);
+        else Alert.alert(
+          useLocaleStore.getState().t('error'),
+          useLocaleStore.getState().t(
+            'notification_open_retry',
+            'ZyndMail could not verify this email link. Check your connection, then tap the notification again.',
+          ),
+        );
+      }
+    }).finally(() => {
+      processingAndroidPushTap.current = false;
+      if (pendingAndroidPushTap.current && (!live || pendingAndroidPushTap.current !== payload)) {
+        setPendingAndroidPushRevision((revision) => revision + 1);
+      }
+    });
+    return () => { live = false; if (retryTimer) clearTimeout(retryTimer); };
+  }, [pendingAndroidPushRevision, isAuthenticated, appLocked, accountRegistryHydrated,
+    navigationReady, activeAccountId]);
 
   // Deep links and share-sheet payloads. The cold-start URL / share is read
   // once auth is restored so the target screen has credentials.
@@ -606,7 +691,6 @@ function AppContent() {
   const emailNotificationsEnabled = useSettingsStore(
     (s) => s.emailNotificationsEnabled,
   );
-  const activeAccountId = useAuthStore((s) => s.activeAccountId);
   React.useEffect(() => {
     if (!isAuthenticated || !client) return;
     if (isCompanyMailServer(client.serverUrl ?? '')) return;
@@ -721,6 +805,7 @@ function AppContent() {
       isCompanyMailServer,
       isCompanyPushPresentation: (content) =>
         isCompanyPushPresentation(content as Notifications.NotificationContent),
+      registeredCompanyAccountId: registeredCompanyPushAccountId,
       switchAccount: (accountId) => useAuthStore.getState().switchAccount(accountId),
       resolveDestination: resolveCompanyPush,
       navigateToEmail: (destination) => navigationRef.navigate('EmailThread', {

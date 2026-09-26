@@ -16,6 +16,7 @@ vi.mock('react-native', () => {
       BulwarkFcm: {
         getToken: vi.fn(async () => 'fcm-token-xyz'),
         deleteToken: vi.fn(async () => undefined),
+        dismissMailNotifications: vi.fn(async () => undefined),
       },
     },
     NativeEventEmitter,
@@ -294,8 +295,12 @@ describe('teardownPushNotificationsForAccount', () => {
     expect(destroyed).toContain('recorded');
     expect(destroyed).toContain('untracked');
     expect(destroyed).not.toContain('foreign');
-    const native = (NativeModules as { BulwarkFcm: { deleteToken: ReturnType<typeof vi.fn> } }).BulwarkFcm;
+    const native = (NativeModules as { BulwarkFcm: {
+      deleteToken: ReturnType<typeof vi.fn>;
+      dismissMailNotifications: ReturnType<typeof vi.fn>;
+    } }).BulwarkFcm;
     expect(native.deleteToken).not.toHaveBeenCalled();
+    expect(native.dismissMailNotifications).toHaveBeenCalledWith(ACCOUNT_ID);
     expect(await AsyncStorage.getItem(SUB_KEY)).toBeNull();
   });
 });

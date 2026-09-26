@@ -6,6 +6,8 @@ import * as Notifications from 'expo-notifications';
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 import { jmapClient } from '../api/jmap-client';
+import { getEmails } from '../api/email';
+import { useAccountStore } from '../stores/account-store';
 import { generateAccountId } from './account-utils';
 import { isCompanyMailServer, validateCompanyAccessToken, ZYNDMAIL_COMPANY } from './zyndmail-company';
 
@@ -13,6 +15,9 @@ const INSTALLATION_KEY = 'zyndmail.production.push.installation.v1';
 const REGISTRATION_KEY = 'zyndmail.production.push.registration.v1';
 const PREFERENCE_KEY = 'zyndmail.production.push.preference.v1';
 const RENEW_AFTER_MS = 30 * 60_000;
+// Foreground content is allowed only after this process has confirmed a
+// preview-capable relay and a successful preview registration.
+let previewModeActive = false;
 const RELAY_UNAVAILABLE = 'Company mail alerts are temporarily unavailable. Please try again later.';
 const OPAQUE_REFERENCE = /^[A-Za-z0-9_-]{22,256}$/;
 const storageOptions: SecureStore.SecureStoreOptions = {
@@ -90,9 +95,11 @@ async function relayFetch(path: string, bearer: string, init: RequestInit): Prom
 
 /** Probe the relay before asking for OS permission or an Expo token. Never follow
  * a redirect from the mail host to webmail with a staff bearer token. */
-async function relayReady(): Promise<boolean> {
+interface RelayHealth { ready: boolean; previewMode: boolean }
+
+async function relayHealth(): Promise<RelayHealth> {
   const origin = companyPushRelayOrigin();
-  if (!origin) return false;
+  if (!origin) return { ready: false, previewMode: false };
   const abort = new AbortController();
   const timeout = setTimeout(() => abort.abort(), 5_000);
   try {
@@ -102,14 +109,28 @@ async function relayReady(): Promise<boolean> {
       method: 'GET', redirect: 'error', signal: abort.signal,
       headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' },
     });
-    if (!response.ok) return false;
+    if (!response.ok) return { ready: false, previewMode: false };
     const body = await response.json() as Record<string, unknown>;
-    return body.status === 'ok';
+    return {
+      ready: body.status === 'ok',
+      // Visible sender/subject text crosses Expo/APNs/FCM. The mail relay
+      // must explicitly advertise that it implements this newer contract.
+      previewMode: body.previewMode === 'sender-subject-snippet-v1',
+    };
   } catch {
-    return false;
+    return { ready: false, previewMode: false };
   } finally {
     clearTimeout(timeout);
   }
+}
+
+export async function companyPushPreviewAvailable(): Promise<boolean> {
+  const health = await relayHealth();
+  return health.ready && health.previewMode;
+}
+
+export function companyPushPreviewModeActive(): boolean {
+  return previewModeActive;
 }
 
 async function installationId(): Promise<string> {
@@ -131,6 +152,19 @@ async function readRegistration(): Promise<Registration | null> {
   } catch {
     return null;
   }
+}
+
+/** The opaque push cannot name a mailbox. Match its secure installation
+ * registration to a saved staff OAuth subject before resolving a tap. */
+export async function registeredCompanyPushAccountId(): Promise<string | null> {
+  const registration = await readRegistration();
+  if (!registration) return null;
+  for (const account of useAccountStore.getState().accounts) {
+    if (!isCompanyMailServer(account.serverUrl)) continue;
+    const tokens = await jmapClient.getStoredOAuthTokens(account.id).catch(() => null);
+    if (tokens?.companyIdentity?.subject === registration.subject) return account.id;
+  }
+  return null;
 }
 
 async function preferenceSubject(): Promise<string | null> {
@@ -182,6 +216,24 @@ export function isCompanyPushPresentation(content: Notifications.NotificationCon
     !content.subtitle && parseCompanyPushPayload(content.data) !== null;
 }
 
+export function isGenericCompanyPushPresentation(content: Notifications.NotificationContent): boolean {
+  return isCompanyPushPresentation(content) && content.title === 'ZyndMail' &&
+    content.body === 'New ZyndPay Mail activity';
+}
+
+/** Remove already displayed mail text when alerts are disabled, previews are
+ * turned off, or the staff account leaves this device. */
+export async function dismissCompanyPushNotifications(): Promise<void> {
+  try {
+    const presented = await Notifications.getPresentedNotificationsAsync();
+    await Promise.all(presented
+      .filter((notification) => parseCompanyPushPayload(notification.request.content.data) !== null)
+      .map((notification) => Notifications.dismissNotificationAsync(notification.request.identifier)));
+  } catch {
+    // The relay revocation and local preference remain the safety boundary.
+  }
+}
+
 export async function companyPushStatus(accountId: string): Promise<CompanyPushStatus> {
   const problem = configurationError();
   if (problem) return { status: 'UNAVAILABLE', reason: problem };
@@ -191,7 +243,8 @@ export async function companyPushStatus(accountId: string): Promise<CompanyPushS
   if (registration && registration.subject !== session.subject) {
     return { status: 'ERROR', reason: 'An earlier staff registration must be revoked first.' };
   }
-  if (!registration && !await relayReady()) return { status: 'UNAVAILABLE', reason: RELAY_UNAVAILABLE };
+  if (!useSettingsStore.getState().emailNotificationsEnabled) return { status: 'OFF' };
+  if (!registration && !(await relayHealth()).ready) return { status: 'UNAVAILABLE', reason: RELAY_UNAVAILABLE };
   if (await preferenceSubject() !== session.subject) return { status: 'OFF' };
   const permission = await Notifications.getPermissionsAsync();
   if (permission.status === 'undetermined') return { status: 'NOT_REQUESTED' };
@@ -218,16 +271,41 @@ async function registerCompanyPushInner(accountId: string, requestPermission: bo
   if (problem) return { status: 'UNAVAILABLE', reason: problem };
   const session = await currentCompanySession(accountId);
   if (!session) return { status: 'UNAVAILABLE', reason: 'Sign in with ZyndPay Staff to enable mail alerts.' };
-  const previous = await readRegistration();
+  let previous = await readRegistration();
   if (previous && previous.subject !== session.subject) {
-    return { status: 'ERROR', reason: 'An earlier staff registration must be revoked first.' };
+    // One installation has one staff registration. Switching staff identities
+    // must retire the earlier subject before enrolling the new one.
+    const oldIds = useAccountStore.getState().accounts
+      .filter((account) => account.id !== accountId && isCompanyMailServer(account.serverUrl))
+      .map((account) => account.id);
+    let revoked = false;
+    for (const oldId of oldIds) {
+      const tokens = await jmapClient.getStoredOAuthTokens(oldId).catch(() => null);
+      if (tokens?.companyIdentity?.subject !== previous.subject) continue;
+      revoked = await revokeCompanyPush(oldId);
+      break;
+    }
+    if (!revoked) {
+      return { status: 'ERROR', reason: 'The previous staff registration could not be revoked. Retry when the mail relay is available.' };
+    }
+    previous = await readRegistration();
   }
+  if (!useSettingsStore.getState().emailNotificationsEnabled) return { status: 'OFF' };
   if (!requestPermission && await preferenceSubject() !== session.subject) return { status: 'OFF' };
-  const previews = useSettingsStore.getState().notificationPreviewsEnabled;
-  if (previous?.previews === previews && previous?.routingVersion === 3 && !force && !requestPermission && Date.now() - previous.renewedAt < RENEW_AFTER_MS) return companyPushStatus(accountId);
-  if (!await relayReady()) return { status: 'UNAVAILABLE', reason: RELAY_UNAVAILABLE };
+  const health = await relayHealth();
+  if (!health.ready) return { status: 'UNAVAILABLE', reason: RELAY_UNAVAILABLE };
+  if (!health.previewMode) previewModeActive = false;
+  const previews = health.previewMode && useSettingsStore.getState().notificationPreviewsEnabled;
+  const routingVersion = health.previewMode ? 3 : 2;
+  if (previous?.previews === previews && previous?.routingVersion === routingVersion && !force && !requestPermission && Date.now() - previous.renewedAt < RENEW_AFTER_MS) return companyPushStatus(accountId);
   if (Platform.OS === 'android') {
-    for (const channel of ['mail-messages-v2', 'mail-activity']) await Notifications.setNotificationChannelAsync(channel, {
+    await Notifications.setNotificationChannelAsync('mail-activity', {
+      name: 'Mail activity',
+      importance: Notifications.AndroidImportance.DEFAULT,
+      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PRIVATE,
+      showBadge: false,
+    });
+    if (health.previewMode) await Notifications.setNotificationChannelAsync('mail-messages-v2', {
       name: 'New mail',
       importance: Notifications.AndroidImportance.HIGH,
       lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
@@ -254,7 +332,7 @@ async function registerCompanyPushInner(accountId: string, requestPermission: bo
         appId: appId(),
         platform: Platform.OS,
         environment: 'production',
-        previews,
+        ...(health.previewMode ? { previews } : {}),
       }),
     });
     if (!response.ok) throw new Error(`Mail push registration failed (${response.status}).`);
@@ -263,7 +341,7 @@ async function registerCompanyPushInner(accountId: string, requestPermission: bo
       throw new Error('The mail relay returned an invalid registration.');
     }
     await SecureStore.setItemAsync(REGISTRATION_KEY, JSON.stringify({
-      subject: session.subject, registrationId: body.registrationId, renewedAt: Date.now(), routingVersion: 3, previews,
+      subject: session.subject, registrationId: body.registrationId, renewedAt: Date.now(), routingVersion, previews,
     }), storageOptions);
     if (generateAccountId(jmapClient.username ?? '', jmapClient.serverUrl ?? '') !== accountId) {
       // Preserve the local reference until the relay confirms revocation. A
@@ -275,6 +353,7 @@ async function registerCompanyPushInner(accountId: string, requestPermission: bo
       return { status: 'ERROR', reason: 'The active mail account changed during registration.' };
     }
     await SecureStore.setItemAsync(PREFERENCE_KEY, session.subject, storageOptions);
+    previewModeActive = previews;
     return { status: 'ACTIVE' };
   } catch (error) {
     return { status: 'ERROR', reason: error instanceof Error ? error.message : 'Mail push registration failed.' };
@@ -282,6 +361,8 @@ async function registerCompanyPushInner(accountId: string, requestPermission: bo
 }
 
 export async function revokeCompanyPush(accountId: string): Promise<boolean> {
+  previewModeActive = false;
+  await dismissCompanyPushNotifications();
   const pending = inFlight.get(accountId);
   if (pending) await pending.catch(() => undefined);
   // A failed token refresh or relay outage must not silently re-enable push
@@ -292,9 +373,9 @@ export async function revokeCompanyPush(accountId: string): Promise<boolean> {
       await preferenceSubject() === tokens.companyIdentity.subject) {
     await SecureStore.deleteItemAsync(PREFERENCE_KEY, storageOptions);
   }
-  const session = await storedCompanySession(accountId).catch(() => null);
-  if (!session) return false;
   const registration = await readRegistration();
+  const session = await storedCompanySession(accountId).catch(() => null);
+  if (!session) return registration === null;
   if (!registration || registration.subject !== session.subject) return true;
   try {
     const response = await relayFetch('v1/device-registrations/current', session.bearer, {
@@ -312,15 +393,32 @@ export type CompanyPushDestination = { target: 'INBOX' } | {
   target: 'EMAIL'; accountId: string; emailId: string; threadId: string;
 };
 
-export function parseCompanyPushDestination(value: unknown): CompanyPushDestination | null {
+export type CompanyPushReferenceTarget = { target: 'INBOX' } | {
+  target: 'ACCOUNT'; accountId: string;
+} | { target: 'MESSAGE'; accountId: string; emailId: string };
+
+function validIdentifier(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= 256;
+}
+
+/** Accept the documented relay response and the older EMAIL shape; always
+ * verify the message and thread against JMAP before navigating. */
+export function parseCompanyPushDestination(value: unknown): CompanyPushReferenceTarget | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const result = value as Record<string, unknown>;
   if (result.target === 'INBOX' && Object.keys(result).length === 1) return { target: 'INBOX' };
-  if (result.target !== 'EMAIL' || Object.keys(result).length !== 4 ||
-      !['accountId', 'emailId', 'threadId'].every((key) =>
-        typeof result[key] === 'string' && (result[key] as string).length > 0 &&
-        (result[key] as string).length <= 256)) return null;
-  return result as CompanyPushDestination;
+  if (result.target === 'ACCOUNT' && Object.keys(result).length === 2 && validIdentifier(result.accountId)) {
+    return { target: 'ACCOUNT', accountId: result.accountId };
+  }
+  if (result.target === 'MESSAGE' && Object.keys(result).length === 3 &&
+      validIdentifier(result.accountId) && validIdentifier(result.emailId)) {
+    return { target: 'MESSAGE', accountId: result.accountId, emailId: result.emailId };
+  }
+  if (result.target === 'EMAIL' && Object.keys(result).length === 4 &&
+      validIdentifier(result.accountId) && validIdentifier(result.emailId) && validIdentifier(result.threadId)) {
+    return { target: 'MESSAGE', accountId: result.accountId, emailId: result.emailId };
+  }
+  return null;
 }
 
 export async function resolveCompanyPush(accountId: string, value: unknown): Promise<CompanyPushDestination | null> {
@@ -337,7 +435,14 @@ export async function resolveCompanyPush(accountId: string, value: unknown): Pro
     if (response.status === 404 || response.status === 410) return { target: 'INBOX' };
     if (!response.ok) return null;
     const result = await response.json() as Record<string, unknown>;
-    return parseCompanyPushDestination(result);
+    const target = parseCompanyPushDestination(result);
+    if (!target) return null;
+    if (target.target !== 'MESSAGE') return { target: 'INBOX' };
+    const [email] = await getEmails([target.emailId], target.accountId);
+    if (!email) return { target: 'INBOX' };
+    return {
+      target: 'EMAIL', accountId: target.accountId, emailId: email.id, threadId: email.threadId,
+    };
   } catch {
     return null;
   }

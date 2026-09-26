@@ -3,6 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const records = vi.hoisted(() => new Map<string, string>());
 const expoToken = vi.hoisted(() => vi.fn(async () => ({ data: 'ExpoPushToken[ABCDEFGHIJKLMNOP1234567890]' })));
 const registerChannel = vi.hoisted(() => vi.fn(async () => undefined));
+const presented = vi.hoisted(() => vi.fn(async () => [] as unknown[]));
+const dismiss = vi.hoisted(() => vi.fn(async () => undefined));
+const getEmails = vi.hoisted(() => vi.fn(async () => [{ id: 'message', threadId: 'authoritative-thread' }]));
 const session = vi.hoisted(() => ({
   username: 'staff@zyndpay.io',
   serverUrl: 'https://mail.zyndpay.io',
@@ -27,13 +30,17 @@ vi.mock('expo-notifications', () => ({
   getPermissionsAsync: vi.fn(async () => ({ granted: true, status: 'granted' })),
   requestPermissionsAsync: vi.fn(async () => ({ granted: true, status: 'granted' })),
   setNotificationChannelAsync: registerChannel,
-  AndroidImportance: { HIGH: 4 },
-  AndroidNotificationVisibility: { PUBLIC: 1 },
+  getPresentedNotificationsAsync: presented,
+  dismissNotificationAsync: dismiss,
+  AndroidImportance: { DEFAULT: 3, HIGH: 4 },
+  AndroidNotificationVisibility: { PRIVATE: 0, PUBLIC: 1 },
 }));
 vi.mock('../../api/jmap-client', () => ({ jmapClient: session }));
+vi.mock('../../api/email', () => ({ getEmails }));
 
-import { isCompanyPushPresentation, parseCompanyPushDestination, companyPushRelayOrigin, companyPushStatus, parseCompanyPushPayload, registerCompanyPush, revokeCompanyPush } from '../company-push';
+import { isCompanyPushPresentation, isGenericCompanyPushPresentation, parseCompanyPushDestination, companyPushPreviewAvailable, companyPushRelayOrigin, companyPushStatus, parseCompanyPushPayload, registerCompanyPush, revokeCompanyPush, resolveCompanyPush } from '../company-push';
 import { useSettingsStore } from '../../stores/settings-store';
+import { useAccountStore } from '../../stores/account-store';
 import { ZYNDMAIL_COMPANY } from '../zyndmail-company';
 
 const accountId = 'staff@zyndpay.io@mail.zyndpay.io';
@@ -44,7 +51,8 @@ const jwt = (subject: string) => {
 
 beforeEach(() => {
   records.clear();
-  useSettingsStore.setState({ notificationPreviewsEnabled: true });
+  useAccountStore.setState({ accounts: [] });
+  useSettingsStore.setState({ notificationPreviewsEnabled: true, emailNotificationsEnabled: true });
   vi.clearAllMocks();
   process.env.EXPO_PUBLIC_MAIL_PUSH_RELAY_ORIGIN = 'https://mail.zyndpay.io';
   const accessToken = jwt('staff-subject');
@@ -67,7 +75,7 @@ describe('company Expo push boundary', () => {
     const fetchMock = vi.fn(async (url: string, init: RequestInit) => ({
       ok: true, status: 200,
       json: async () => url.includes('/v1/push-health?')
-        ? { status: 'ok' } : { registrationId: 'registration-1' },
+        ? { status: 'ok', previewMode: 'sender-subject-snippet-v1' } : { registrationId: 'registration-1' },
       request: init.body ? JSON.parse(init.body as string) : null,
     }));
     vi.stubGlobal('fetch', fetchMock);
@@ -88,8 +96,58 @@ describe('company Expo push boundary', () => {
     expect(await registerCompanyPush(accountId, false)).toEqual({ status: 'ACTIVE' });
     const lastPut = fetchMock.mock.calls.filter(([, request]) => request.method === 'PUT').at(-1)!;
     expect(JSON.parse(lastPut[1].body as string).previews).toBe(false);
+    presented.mockResolvedValueOnce([{ request: { identifier: 'visible-1', content: {
+      data: { version: 1, notificationRef: 'a'.repeat(24) },
+    } } }] as never);
     expect(await revokeCompanyPush(accountId)).toBe(true);
+    expect(dismiss).toHaveBeenCalledWith('visible-1');
     expect(fetchMock.mock.calls.at(-1)?.[1].method).toBe('DELETE');
+  });
+
+  it('keeps generic relays content-free even when an old device preference asks for previews', async () => {
+    const fetchMock = vi.fn(async (url: string, init: RequestInit) => ({
+      ok: true, status: 200,
+      json: async () => url.includes('/v1/push-health?')
+        ? { status: 'ok' } : { registrationId: 'registration-1' },
+      request: init.body ? JSON.parse(init.body as string) : null,
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await companyPushPreviewAvailable()).toBe(false);
+    expect(await registerCompanyPush(accountId, true)).toEqual({ status: 'ACTIVE' });
+    const [, request] = fetchMock.mock.calls.find(([, init]) => init.method === 'PUT')!;
+    expect(JSON.parse(request.body as string)).not.toHaveProperty('previews');
+    expect(registerChannel).toHaveBeenCalledWith('mail-activity', expect.objectContaining({
+      importance: 3, lockscreenVisibility: 0, showBadge: false,
+    }));
+    expect(registerChannel).not.toHaveBeenCalledWith('mail-messages-v2', expect.anything());
+  });
+
+  it('honors the global email notification switch before asking for permission or a token', async () => {
+    useSettingsStore.setState({ emailNotificationsEnabled: false });
+    expect(await registerCompanyPush(accountId, true)).toEqual({ status: 'OFF' });
+    expect(expoToken).not.toHaveBeenCalled();
+  });
+
+  it('revokes a different staff subject before registering this installation again', async () => {
+    const oldId = 'old@zyndpay.io@mail.zyndpay.io';
+    records.set('zyndmail.production.push.registration.v1', JSON.stringify({
+      subject: 'old-subject', registrationId: 'old-registration', renewedAt: Date.now(),
+    }));
+    useAccountStore.setState({ accounts: [{ id: oldId, serverUrl: 'https://mail.zyndpay.io' } as never] });
+    const newTokens = await session.getStoredOAuthTokens() as Record<string, unknown>;
+    session.getStoredOAuthTokens.mockImplementation(async (id?: string) => id === oldId ? {
+      ...newTokens, accessToken: jwt('old-subject'),
+      companyIdentity: { issuer: ZYNDMAIL_COMPANY.issuer, audience: 'stalwart', subject: 'old-subject' },
+    } : newTokens);
+    session.getStoredCredentials.mockResolvedValue({ serverUrl: 'https://mail.zyndpay.io' });
+    const methods: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
+      if (url.includes('/v1/push-health?')) return { ok: true, json: async () => ({ status: 'ok' }) };
+      methods.push(init.method ?? 'GET');
+      return { ok: true, status: 200, json: async () => ({ registrationId: 'new-registration' }) };
+    }));
+    expect(await registerCompanyPush(accountId, true)).toEqual({ status: 'ACTIVE' });
+    expect(methods).toEqual(['DELETE', 'PUT']);
   });
 
   it('force-renews a fresh local registration so a stale server subscription is upgraded', async () => {
@@ -101,7 +159,7 @@ describe('company Expo push boundary', () => {
     const fetchMock = vi.fn(async (url: string, init: RequestInit) => ({
       ok: true, status: 200,
       json: async () => url.includes('/v1/push-health?')
-        ? { status: 'ok' } : { registrationId: 'registration-1' },
+        ? { status: 'ok', previewMode: 'sender-subject-snippet-v1' } : { registrationId: 'registration-1' },
       request: init.body ? JSON.parse(init.body as string) : null,
     }));
     vi.stubGlobal('fetch', fetchMock);
@@ -166,15 +224,44 @@ describe('company Expo push boundary', () => {
 
 
 describe('company notification destination', () => {
-  it('preserves the exact shared account and message, not a generic inbox', () => {
-    const target = { target: 'EMAIL', accountId: 'shared', emailId: 'message', threadId: 'thread' };
-    expect(parseCompanyPushDestination(target)).toEqual(target);
+  it('accepts documented account and message targets and ignores an old thread hint', () => {
+    expect(parseCompanyPushDestination({ target: 'ACCOUNT', accountId: 'shared' })).toEqual({ target: 'ACCOUNT', accountId: 'shared' });
+    expect(parseCompanyPushDestination({ target: 'MESSAGE', accountId: 'shared', emailId: 'message' })).toEqual({ target: 'MESSAGE', accountId: 'shared', emailId: 'message' });
+    expect(parseCompanyPushDestination({ target: 'EMAIL', accountId: 'shared', emailId: 'message', threadId: 'untrusted' })).toEqual({ target: 'MESSAGE', accountId: 'shared', emailId: 'message' });
     expect(parseCompanyPushDestination({ target: 'INBOX' })).toEqual({ target: 'INBOX' });
   });
   it('rejects malformed targets and injected URLs', () => {
     expect(parseCompanyPushDestination({ target: 'EMAIL', accountId: '', emailId: 'id', threadId: 't' })).toBeNull();
     expect(parseCompanyPushDestination({ target: 'INBOX', url: 'https://example.com' })).toBeNull();
     expect(parseCompanyPushDestination(null)).toBeNull();
+  });
+
+  it('opens a resolved message using its current server thread, not the relay hint', async () => {
+    records.set('zyndmail.production.push.registration.v1', JSON.stringify({
+      subject: 'staff-subject', registrationId: 'registration-1', renewedAt: Date.now(),
+    }));
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true, status: 200,
+      json: async () => ({ target: 'EMAIL', accountId: 'shared', emailId: 'message', threadId: 'stale-thread' }),
+    })));
+    expect(await resolveCompanyPush(accountId, { version: 1, notificationRef: 'a'.repeat(24) })).toEqual({
+      target: 'EMAIL', accountId: 'shared', emailId: 'message', threadId: 'authoritative-thread',
+    });
+    expect(getEmails).toHaveBeenCalledWith(['message'], 'shared');
+  });
+
+  it('opens the new relay MESSAGE target at the exact shared-mailbox message', async () => {
+    records.set('zyndmail.production.push.registration.v1', JSON.stringify({
+      subject: 'staff-subject', registrationId: 'registration-1', renewedAt: Date.now(),
+    }));
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true, status: 200,
+      json: async () => ({ target: 'MESSAGE', accountId: 'shared', emailId: 'message' }),
+    })));
+    expect(await resolveCompanyPush(accountId, { version: 1, notificationRef: 'b'.repeat(24) })).toEqual({
+      target: 'EMAIL', accountId: 'shared', emailId: 'message', threadId: 'authoritative-thread',
+    });
+    expect(getEmails).toHaveBeenCalledWith(['message'], 'shared');
   });
 });
 
@@ -184,6 +271,8 @@ describe('mail preview presentation and routing', () => {
   it('accepts real visible previews and legacy alerts with opaque routing', () => {
     expect(isCompanyPushPresentation(content as never)).toBe(true);
     expect(isCompanyPushPresentation({ ...content, title: 'ZyndMail', body: 'New ZyndPay Mail activity' } as never)).toBe(true);
+    expect(isGenericCompanyPushPresentation(content as never)).toBe(false);
+    expect(isGenericCompanyPushPresentation({ ...content, title: 'ZyndMail', body: 'New ZyndPay Mail activity' } as never)).toBe(true);
   });
   it('rejects invisible, oversized and malformed notifications', () => {
     for (const patch of [{ title: '' }, { body: ' ' }, { body: 'x'.repeat(726) }, { title: '\u202ehidden' },

@@ -4,7 +4,7 @@ import { useSettingsStore } from '../../stores/settings-store';
 import { useAuthStore } from '../../stores/auth-store';
 import { useLocaleStore } from '../../stores/locale-store';
 import { useColors } from '../../theme/colors';
-import { companyPushStatus, registerCompanyPush, revokeCompanyPush, type CompanyPushStatus } from '../../lib/company-push';
+import { companyPushPreviewAvailable, companyPushStatus, dismissCompanyPushNotifications, registerCompanyPush, revokeCompanyPush, type CompanyPushStatus } from '../../lib/company-push';
 import { SettingItem, SettingsSection, ToggleSwitch } from './settings-section';
 
 /** Company push uses the authenticated mail-plane relay, never a user-entered URL. */
@@ -12,7 +12,9 @@ export function CompanyPushSettings(): React.ReactElement {
   const colors = useColors();
   const t = useLocaleStore((s) => s.t);
   const accountId = useAuthStore((s) => s.activeAccountId);
+  const emailEnabled = useSettingsStore((s) => s.emailNotificationsEnabled);
   const previews = useSettingsStore((s) => s.notificationPreviewsEnabled);
+  const [previewAvailable, setPreviewAvailable] = React.useState(false);
   const [status, setStatus] = React.useState<CompanyPushStatus | null>(null);
   const [busy, setBusy] = React.useState(false);
   const statusRequest = React.useRef(0);
@@ -24,12 +26,16 @@ export function CompanyPushSettings(): React.ReactElement {
       if (!accountId) return;
       const request = ++statusRequest.current;
       void (async () => {
+        const supportsPreviews = await companyPushPreviewAvailable();
         let next = await companyPushStatus(accountId);
         // Opening Notifications is an explicit opportunity to repair a stale
         // local registration. Do not show ACTIVE until the relay has accepted
         // the current preview preference for this device.
         if (next.status === 'ACTIVE') next = await registerCompanyPush(accountId, false, true);
-        if (current && request === statusRequest.current) setStatus(next);
+        if (current && request === statusRequest.current) {
+          setPreviewAvailable(supportsPreviews);
+          setStatus(next);
+        }
       })()
         .catch(() => { if (current && request === statusRequest.current) setStatus({ status: 'ERROR', reason: 'Mail notification status could not be read.' }); });
     };
@@ -38,10 +44,10 @@ export function CompanyPushSettings(): React.ReactElement {
       if (state === 'active') refresh();
     });
     return () => { current = false; statusRequest.current += 1; subscription.remove(); };
-  }, [accountId]);
+  }, [accountId, emailEnabled]);
 
   const onChange = async (enabled: boolean) => {
-    if (!accountId || busy) return;
+    if (!accountId || busy || !emailEnabled) return;
     statusRequest.current += 1;
     setBusy(true);
     try {
@@ -57,7 +63,7 @@ export function CompanyPushSettings(): React.ReactElement {
   };
 
   const changePreviews = async (enabled: boolean) => {
-    if (!accountId || busy) return;
+    if (!accountId || busy || !emailEnabled || !previewAvailable) return;
     setBusy(true);
     statusRequest.current += 1;
     useSettingsStore.getState().updateSetting('notificationPreviewsEnabled', enabled);
@@ -66,6 +72,7 @@ export function CompanyPushSettings(): React.ReactElement {
       if (result.status !== 'ACTIVE' && result.status !== 'OFF') {
         useSettingsStore.getState().updateSetting('notificationPreviewsEnabled', previews);
       }
+      if (!enabled) await dismissCompanyPushNotifications();
       setStatus(result);
     } catch {
       useSettingsStore.getState().updateSetting('notificationPreviewsEnabled', previews);
@@ -73,7 +80,9 @@ export function CompanyPushSettings(): React.ReactElement {
     } finally { setBusy(false); }
   };
 
-  const description = status?.status === 'ACTIVE'
+  const description = !emailEnabled
+    ? t('settings.notifications.company.email_disabled', 'Turn on Email notifications above to enable company mail alerts.')
+    : status?.status === 'ACTIVE'
     ? t('settings.notifications.company.active', 'This device was registered for private mail alerts. Delivery depends on server and device connectivity.')
     : status?.status === 'UNAVAILABLE' || status?.status === 'ERROR'
       ? status.reason
@@ -87,15 +96,17 @@ export function CompanyPushSettings(): React.ReactElement {
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
           {busy && <ActivityIndicator size="small" color={colors.primary} />}
           <ToggleSwitch
-            checked={status?.status === 'ACTIVE'}
+            checked={emailEnabled && status?.status === 'ACTIVE'}
             onChange={(value) => { void onChange(value); }}
-            disabled={!accountId || busy || !status}
+            disabled={!accountId || busy || !status || !emailEnabled}
           />
         </View>
       </SettingItem>
       <SettingItem label={t('settings.notifications.company.previews', 'Show message previews')}
-        description={t('settings.notifications.company.previews_description', 'Show sender, subject and a short snippet. This text passes through Expo and may appear on your lock screen, subject to your device settings. Turn off for generic alerts.')}>
-        <ToggleSwitch checked={previews} disabled={busy || !accountId || !status}
+        description={previewAvailable
+          ? t('settings.notifications.company.previews_description', 'Show sender, subject and a short snippet. This text passes through Expo and may appear on your lock screen, subject to your device settings. Turn off for generic alerts.')
+          : t('settings.notifications.company.previews_unavailable', 'This mail relay currently supports generic alerts only. Message previews require an approved relay update.')}>
+        <ToggleSwitch checked={previews && previewAvailable} disabled={busy || !accountId || !status || !emailEnabled || !previewAvailable}
           onChange={(value) => { void changePreviews(value); }} />
       </SettingItem>
     </SettingsSection>

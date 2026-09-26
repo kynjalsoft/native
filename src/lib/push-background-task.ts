@@ -50,7 +50,7 @@ async function emailNotificationsAllowed(): Promise<boolean> {
     const parsed = JSON.parse(raw) as PushPersistedSettings;
     return parsed.emailNotificationsEnabled !== false;
   } catch {
-    return true;
+    return false;
   }
 }
 
@@ -65,6 +65,7 @@ interface ShowNotificationOptions {
   threadId: string;
   subject?: string;
   accountId: string;
+  jmapAccountId: string;
   // Android notification group: one per account so the tray bundles
   // several deliveries under a "+N more" summary instead of stacking them.
   groupKey: string;
@@ -151,8 +152,8 @@ async function readAccountRegistry(): Promise<RegistryAccount[]> {
 /**
  * Pick the local account(s) a relay payload belongs to. Primary key is the
  * JMAP account id recorded at setup; the relay's `accountLabel` (= username)
- * is a weaker fallback. When neither matches - a payload from a build that
- * predates the id map - every registered account is checked.
+ * is a weaker fallback. When neither matches, ignore the payload rather than
+ * checking every account and surfacing unrelated unread messages.
  */
 export function matchAccountsForPush(
   payload: RelayPushData,
@@ -162,7 +163,15 @@ export function matchAccountsForPush(
 ): string[] {
   if (payload.jmapAccountId) {
     const byJmapId = pushAccountIds.filter((id) => jmapAccountIds[id] === payload.jmapAccountId);
-    if (byJmapId.length > 0) return byJmapId;
+    if (byJmapId.length === 1) return byJmapId;
+    if (byJmapId.length > 1 && payload.accountLabel) {
+      const label = payload.accountLabel.toLowerCase();
+      const exact = byJmapId.filter((id) => registry.find((entry) => entry.id === id)
+        ?.username?.toLowerCase() === label);
+      if (exact.length === 1) return exact;
+      return [];
+    }
+    if (byJmapId.length > 1) return [];
   }
   if (payload.accountLabel) {
     const label = payload.accountLabel.toLowerCase();
@@ -171,9 +180,11 @@ export function matchAccountsForPush(
       const username = entry?.username?.toLowerCase();
       return username === label || id.toLowerCase().startsWith(`${label}@`);
     });
-    if (byLabel.length > 0) return byLabel;
+    // The same username can exist on more than one server. A label without
+    // a unique local match cannot safely choose a mailbox.
+    if (byLabel.length === 1) return byLabel;
   }
-  return pushAccountIds;
+  return [];
 }
 
 async function readNotifiedIds(accountId: string): Promise<string[]> {
@@ -297,6 +308,17 @@ async function detachedGetEmails(
   return (body.list as Email[]) ?? [];
 }
 
+async function detachedExcludedMailboxIds(session: DetachedSession, accountId: string): Promise<Set<string>> {
+  const responses = await jmapPost(session, [
+    ['Mailbox/get', { accountId, properties: ['id', 'role'] }, '0'],
+  ]);
+  const [name, body] = responses[0] ?? [];
+  if (name !== 'Mailbox/get') throw new Error('Could not verify notification mailbox roles.');
+  return new Set(((body.list as Mailbox[]) ?? [])
+    .filter((mailbox) => ['junk', 'trash', 'drafts', 'sent'].includes(mailbox.role ?? ''))
+    .map((mailbox) => mailbox.id));
+}
+
 async function detachedNewestUnreadInboxIds(
   session: DetachedSession,
   limit: number,
@@ -364,14 +386,26 @@ export async function pushBackgroundTask(data: unknown): Promise<void> {
 }
 
 /** Messages worth a notification: unread, not junk, not shown before. */
-export function selectNotifiableEmails(emails: Email[], alreadyNotified: readonly string[]): Email[] {
+export function selectNotifiableEmails(
+  emails: Email[], alreadyNotified: readonly string[], excludedMailboxIds: ReadonlySet<string> = new Set(),
+): Email[] {
   const seen = new Set(alreadyNotified);
   return emails.filter((email) => {
     if (!email?.id || seen.has(email.id)) return false;
     const keywords = email.keywords ?? {};
     if (keywords.$seen || keywords.$junk) return false;
+    if (Object.keys(email.mailboxIds ?? {}).some((id) => excludedMailboxIds.has(id))) return false;
     return true;
   });
+}
+
+/** Include the JMAP account because shared mailboxes may reuse an Email id. */
+export function notificationIdForEmail(accountId: string, jmapAccountId: string, emailId: string): string {
+  return `mail:${JSON.stringify([accountId, jmapAccountId, emailId])}`;
+}
+
+function notifiedId(jmapAccountId: string, emailId: string): string {
+  return JSON.stringify([jmapAccountId, emailId]);
 }
 
 async function processAccountForPush(accountId: string, payload: RelayPushData): Promise<void> {
@@ -379,15 +413,19 @@ async function processAccountForPush(accountId: string, payload: RelayPushData):
   if (!session) return;
 
   const alreadyNotified = await readNotifiedIds(accountId);
+  const targetAccount = payload.emailIds.length > 0
+    ? payload.jmapAccountId ?? session.jmapAccountId : session.jmapAccountId;
+  const wasNotified = (id: string) => alreadyNotified.includes(notifiedId(targetAccount, id)) ||
+    // Honor records written by older builds only for the primary mailbox.
+    (targetAccount === session.jmapAccountId && alreadyNotified.includes(id));
   let candidates: Email[];
 
   if (payload.emailIds.length > 0) {
     // EmailPush (or a relay that forwards ids): fetch exactly the delivered
     // messages. The push may concern a shared account the user has access
     // to, in which case the ids live under that JMAP account.
-    const fresh = payload.emailIds.filter((id) => !alreadyNotified.includes(id));
+    const fresh = payload.emailIds.filter((id) => !wasNotified(id));
     if (fresh.length === 0) return;
-    const targetAccount = payload.jmapAccountId ?? session.jmapAccountId;
     candidates = await detachedGetEmails(session, targetAccount, fresh);
   } else {
     // Legacy `jmap-state-change` payload without ids: look at the newest
@@ -395,12 +433,13 @@ async function processAccountForPush(accountId: string, payload: RelayPushData):
     // of notified ids (rather than a single "last" id) is what keeps a
     // message read elsewhere from surfacing the next older one.
     const ids = await detachedNewestUnreadInboxIds(session, LEGACY_QUERY_LIMIT);
-    const fresh = ids.filter((id) => !alreadyNotified.includes(id));
+    const fresh = ids.filter((id) => !wasNotified(id));
     if (fresh.length === 0) return;
     candidates = await detachedGetEmails(session, session.jmapAccountId, fresh);
   }
 
-  const toNotify = selectNotifiableEmails(candidates, alreadyNotified);
+  const excludedMailboxIds = await detachedExcludedMailboxIds(session, targetAccount);
+  const toNotify = selectNotifiableEmails(candidates, candidates.filter((email) => wasNotified(email.id)).map((email) => email.id), excludedMailboxIds);
   if (toNotify.length === 0) return;
 
   const native = NativeModules.BulwarkFcm as BulwarkFcmNative | undefined;
@@ -414,6 +453,7 @@ async function processAccountForPush(accountId: string, payload: RelayPushData):
     (a, b) => new Date(a.receivedAt ?? 0).getTime() - new Date(b.receivedAt ?? 0).getTime(),
   );
   for (const email of ordered) {
+    if (!(await emailNotificationsAllowed())) return;
     const from = email.from?.[0];
     const name = from?.name ?? '';
     const address = from?.email ?? '';
@@ -425,7 +465,7 @@ async function processAccountForPush(accountId: string, payload: RelayPushData):
     const iconUrl = faviconDomain ? getFaviconUrl(faviconDomain) : undefined;
 
     await native.showNotification({
-      notificationId: `mail:${email.id}`,
+      notificationId: notificationIdForEmail(accountId, targetAccount, email.id),
       title,
       body,
       initials,
@@ -435,12 +475,14 @@ async function processAccountForPush(accountId: string, payload: RelayPushData):
       threadId: email.threadId,
       subject: email.subject ?? undefined,
       accountId,
+      jmapAccountId: targetAccount,
       groupKey,
       groupTitle,
     });
+    // Persist after each successful native post. If a later post fails, a
+    // redelivery must not display the earlier messages a second time.
+    await rememberNotifiedIds(accountId, [notifiedId(targetAccount, email.id)]);
   }
-
-  await rememberNotifiedIds(accountId, ordered.map((e) => e.id).reverse());
 }
 
 function hslToHex(hsl: string): string {

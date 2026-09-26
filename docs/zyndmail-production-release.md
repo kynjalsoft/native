@@ -12,6 +12,14 @@ Release evidence to record before broad availability:
 2. Exact-build TestFlight processing for the existing App Store Connect app and installable Android production APK. The Play AAB remains unsubmitted unless separately authorized.
 3. Physical-device company Keycloak login, account and shared-mailbox visibility, draft/send/recovery, attachment/keyboard/safe-area flows, Face ID/passcode lock, and no lock loop.
 4. Matching `0.3.0` production OTA publication and automatic application on signed iOS and Android builds while idle; compose and active mail actions must defer reload.
-5. Live Stalwart-to-relay-to-Expo subscription, provider receipt, and foreground/background/terminated device presentation for iOS and Android. Verify revocation, logout, account switching, relay outage, and content-free payloads. A provider ticket is not device presentation.
+5. Live Stalwart-to-relay-to-Expo subscription, provider receipt, and foreground/background/terminated device presentation for iOS and Android. Verify revocation, logout, account switching, relay outage, and opaque routing payloads. Draft `zyndpay` PR #2585 implements sender/subject/snippet previews and exact-message references; its compatibility patch must make health advertise `previewMode: "sender-subject-snippet-v1"` and resolve return `MESSAGE`. Deploy and qualify that relay before expecting visible previews or exact taps. A provider ticket is not device presentation. Follow the full matrix in `docs/notification-lifecycle-audit-2026-09-26.md`.
+6. Staff scope: company accounts show mail and settings; Calendar, Contacts and Files apps stay hidden until each has approved scope and physical-device acceptance. Verify non-company accounts still see supported apps.
+7. Staff help: confirm the deployed Keycloak recovery copy, name the incident owner and the existing support route in the rollout notice, then exercise a locked-out and an uncertain-send handoff without including message content or verification codes.
 
-The fork retains the Bulwark Native attribution and AGPL-3.0-only source link in Settings. Paid public access needs its own entitlement/onboarding and licensing review; it is not part of company mailbox authorization.
+Android native files are checked in. Changes to `app.config.js` that affect the manifest, icons, permissions or config plugins require a matching Android native review before the next build; EAS will not regenerate those files. The iOS native project is generated during its build.
+
+Before distributing a replacement build, send staff this notice through the established company channel and include its actual help contact:
+
+> ZyndMail 0.3.0 replaces the previous mobile client. Save or send any unsaved draft in the old app before installing; local drafts and account sessions do not migrate. Sign in again after installation. Server-saved Drafts and Sent mail remain available. If sign-in fails or a send result is uncertain, contact [company support route] with your app version and the time of the problem. Do not share your password, verification code, or message content.
+
+The repository retains the Bulwark Native attribution and AGPL-3.0-only license. The app's About screen does not contain source or license links. Paid public access needs its own entitlement/onboarding and licensing review; it is not part of company mailbox authorization.

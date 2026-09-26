@@ -22,4 +22,4 @@ EAS Build produces the signed [iOS TestFlight and Android artifacts](docs/ios-re
 
 ## License and upstream
 
-ZyndMail is based on Bulwark Native. Source attribution and the license link are available in the app's About screen. See [LICENSE](LICENSE) for the AGPL-3.0-only terms.
+ZyndMail is based on Bulwark Native. Source attribution is recorded here; see [LICENSE](LICENSE) for the AGPL-3.0-only terms.

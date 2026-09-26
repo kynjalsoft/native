@@ -428,7 +428,7 @@ export function hasRemoteContent(html: string): boolean {
 // Emails are authored for light mode; we render them true-to-life and apply a
 // filter inversion trick for dark mode (unless the email has native dark
 // support via @media (prefers-color-scheme: dark)).
-function baseStyles(bodyPadding: string): string {
+function baseStyles(bodyPadding: string, fontSize: number): string {
   return `
 html { background: #ffffff; height: auto !important; }
 /* The injected reporter lays wide content out at its natural width and scales
@@ -442,19 +442,26 @@ body {
   padding: ${bodyPadding};
   height: auto !important;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  font-size: 14px;
+  font-size: ${fontSize}px;
   line-height: 1.6;
   color: #1a1a1a;
   background: #ffffff;
   word-wrap: break-word;
   overflow-wrap: break-word;
 }
+
 img { max-width: 100% !important; height: auto !important; }
 a { color: #1a73e8; }
 table { max-width: 100% !important; table-layout: auto; overflow-wrap: break-word; }
 td, th { overflow-wrap: break-word; }
 pre { white-space: pre-wrap; word-wrap: break-word; }
 `;
+}
+
+function safeBodyFontSize(size?: number): number {
+  return typeof size === 'number' && Number.isFinite(size)
+    ? Math.min(30, Math.max(10, Math.round(size)))
+    : 14;
 }
 
 // Word emails rely on empty <p class=MsoNormal>&nbsp;</p> spacers for vertical
@@ -559,6 +566,8 @@ export interface WrapOptions {
    *  the email already has native dark-mode CSS. */
   isDark?: boolean;
   messageSpacing?: MessageSpacing;
+  /** Base text size. Author-specified HTML sizes still take precedence. */
+  fontSize?: number;
 }
 
 export interface PreparedEmailHtml {
@@ -602,6 +611,7 @@ function buildCsp(strict: boolean): string {
  */
 export function prepareEmailHtml(innerHtml: string, options: WrapOptions = {}): PreparedEmailHtml {
   const { blockRemoteImages = false, cidMap, isDark = true, messageSpacing = 'auto' } = options;
+  const fontSize = safeBodyFontSize(options.fontSize);
   const cleaned = stripDangerousTags(innerHtml);
   const withCids = cidMap ? replaceCidRefs(cleaned, cidMap) : cleaned;
   let processed = withCids;
@@ -630,7 +640,7 @@ export function prepareEmailHtml(innerHtml: string, options: WrapOptions = {}): 
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <meta http-equiv="Content-Security-Policy" content="${buildCsp(blockRemoteImages)}">
 <meta name="referrer" content="no-referrer">
-<style>${baseStyles(bodyPadding)}${word ? WORD_HTML_CSS : ''}${darkCss}</style>
+<style>${baseStyles(bodyPadding, fontSize)}${word ? WORD_HTML_CSS : ''}${darkCss}</style>
 </head>
 <body>${processed}<style>html,body{height:auto!important;min-height:0!important;max-height:none!important}</style></body>
 </html>`;
@@ -650,9 +660,10 @@ export type PlainTextFont = 'sans' | 'mono';
 // (no filter inversion), and a dark-mode-appropriate link colour.
 export function wrapPlainTextEmail(
   innerHtml: string,
-  options: { isDark?: boolean; font?: PlainTextFont } = {},
+  options: { isDark?: boolean; font?: PlainTextFont; fontSize?: number } = {},
 ): string {
   const { isDark = true, font = 'sans' } = options;
+  const fontSize = safeBodyFontSize(options.fontSize);
   const cleaned = stripDangerousTags(innerHtml);
 
   const bg = isDark ? '#09090b' : '#ffffff';
@@ -671,7 +682,7 @@ body {
   margin: 0;
   padding: 16px;
   font-family: ${fontFamily};
-  font-size: 14px;
+  font-size: ${fontSize}px;
   line-height: 1.6;
   color: ${fg};
   white-space: pre-wrap;

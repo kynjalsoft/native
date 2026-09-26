@@ -83,6 +83,25 @@ describe('company push tap routing', () => {
     expect(deps.clearLastNotificationResponse).toHaveBeenCalledOnce();
   });
 
+  it('uses the registration owner when multiple staff accounts are saved', async () => {
+    let active = 'staff-one';
+    const deps = dependencies({
+      readReadiness: () => ({
+        authenticated: true, locked: false, accountRegistryHydrated: true, navigationReady: true,
+        activeAccountId: active,
+        accounts: [
+          { id: 'staff-one', serverUrl: 'https://mail.zyndpay.io' },
+          { id: 'staff-two', serverUrl: 'https://mail.zyndpay.io' },
+        ],
+      }),
+      registeredCompanyAccountId: vi.fn(async () => 'staff-two'),
+      switchAccount: vi.fn(async (id) => { active = id; }),
+    });
+    await expect(openCompanyPushIntent(deps)).resolves.toBe('opened');
+    expect(deps.switchAccount).toHaveBeenCalledWith('staff-two');
+    expect(deps.resolveDestination).toHaveBeenCalledWith('staff-two', response.notification.request.content.data);
+  });
+
   it('keeps a transient relay failure retryable and does not navigate to the inbox', async () => {
     const deps = dependencies({ resolveDestination: vi.fn(async () => null) });
 

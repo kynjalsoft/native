@@ -789,6 +789,7 @@ async function clearAccountPushKeys(accountId: string): Promise<void> {
 export async function teardownPushNotificationsForAccount(
   accountId: string,
 ): Promise<void> {
+  await dismissAndroidMailNotifications(accountId);
   await migrateLegacyPushKeys();
 
   const storedSubId = await AsyncStorage.getItem(subscriptionIdKey(accountId));
@@ -817,6 +818,7 @@ export async function teardownPushNotificationsForAccount(
 
   const remaining = (await readPushAccountIds()).filter((id) => id !== accountId);
   await writePushAccountIds(remaining);
+  await dismissAndroidMailNotifications(accountId);
 }
 
 /**
@@ -826,6 +828,7 @@ export async function teardownPushNotificationsForAccount(
  * FCM token is always deleted so no push gets through regardless.
  */
 export async function teardownPushNotifications(): Promise<void> {
+  await dismissAndroidMailNotifications();
   await migrateLegacyPushKeys();
 
   const accountIds = await readPushAccountIds();
@@ -853,6 +856,7 @@ export async function teardownPushNotifications(): Promise<void> {
   if (native) {
     await native.deleteToken().catch(() => undefined);
   }
+  await dismissAndroidMailNotifications();
 }
 
 export interface PushDevice {
@@ -945,13 +949,26 @@ export function addTokenRefreshListener(listener: FcmTokenListener): () => void 
 }
 
 export interface NotificationTapPayload {
-  emailId: string;
-  threadId: string;
+  // Group-summary notifications carry only accountId and open its inbox.
+  emailId?: string;
+  threadId?: string;
   subject?: string;
   // Identifies which logged-in account the notification was generated for.
-  // Optional for back-compat: older notifications already on the system tray
-  // won't carry this and will fall back to the active account on tap.
+  // Optional only for old notifications already on the system tray. Those
+  // cannot safely select an account and are ignored on tap.
   accountId?: string;
+  /** Exact JMAP account that owns a shared-mailbox message. */
+  jmapAccountId?: string;
+}
+
+/** Remove delivered non-company mail cards from the Android tray when the
+ * account is disabled or removed. Older installed binaries lack this bridge. */
+export async function dismissAndroidMailNotifications(accountId?: string): Promise<void> {
+  if (Platform.OS !== 'android') return;
+  const native = (NativeModules as Record<string, unknown>).BulwarkFcm as
+    | { dismissMailNotifications?: (id: string | null) => Promise<void> }
+    | undefined;
+  await native?.dismissMailNotifications?.(accountId ?? null).catch(() => undefined);
 }
 
 // Returns - and clears - any pending "notification tap" that launched the app

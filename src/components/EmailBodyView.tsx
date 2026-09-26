@@ -17,6 +17,7 @@ import { useContactsStore } from '../stores/contacts-store';
 import { useLocaleStore } from '../stores/locale-store';
 import { spacing, typography, type ThemePalette } from '../theme/tokens';
 import { useColors, useResolvedTheme } from '../theme/colors';
+import { useTypography } from '../theme/dynamic';
 import type { RootStackParamList } from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
@@ -506,6 +507,7 @@ export default function EmailBodyView({
   email, senderEmail, jmapAccountId, onSwipe, onZoomChange, themeOverride, bodyOverride,
 }: EmailBodyViewProps) {
   const c = useColors();
+  const fontSize = useTypography().body.fontSize;
   const styles = React.useMemo(() => makeStyles(c), [c]);
   const t = useLocaleStore((s) => s.t);
   const navigation = useNavigation<Nav>();
@@ -638,6 +640,7 @@ export default function EmailBodyView({
         cidMap,
         isDark: renderAsDark,
         messageSpacing,
+        fontSize,
       });
       return { ...res, isHtml: true };
     }
@@ -645,19 +648,19 @@ export default function EmailBodyView({
     if (!fallbackText) {
       const res = prepareEmailHtml(
         `<em style="color:#71717a">${t('email_viewer.no_body_content', '(No body content available)')}</em>`,
-        { isDark: renderAsDark },
+        { isDark: renderAsDark, fontSize },
       );
       return { ...res, isHtml: true };
     }
     const safe = collapsePlainTextQuotes(plainTextToSafeHtml(fallbackText), quoteLabels);
     return {
-      html: wrapPlainTextEmail(safe, { isDark: renderAsDark, font: plainTextFont }),
+      html: wrapPlainTextEmail(safe, { isDark: renderAsDark, font: plainTextFont, fontSize }),
       applyInversion: false,
       hasNativeDark: false,
       blockedExternal: false,
       isHtml: false,
     };
-  }, [rawHtml, text, email.preview, shouldBlock, cidMap, renderAsDark, messageSpacing, plainTextFont, quoteLabels, t]);
+  }, [rawHtml, text, email.preview, shouldBlock, cidMap, renderAsDark, messageSpacing, plainTextFont, fontSize, quoteLabels, t]);
 
   const source = React.useMemo(() => ({ html: prepared.html }), [prepared.html]);
   const showBanner = shouldBlock && prepared.blockedExternal;

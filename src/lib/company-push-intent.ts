@@ -33,6 +33,7 @@ export interface CompanyPushIntentDependencies {
   readReadiness: () => CompanyPushNavigationReadiness;
   isCompanyMailServer: (serverUrl: string) => boolean;
   isCompanyPushPresentation: (content: CompanyPushResponseLike['notification']['request']['content']) => boolean;
+  registeredCompanyAccountId?: () => Promise<string | null>;
   switchAccount: (accountId: string) => Promise<void>;
   resolveDestination: (accountId: string, data: unknown) => Promise<CompanyPushDestination | null>;
   navigateToEmail: (destination: Extract<CompanyPushDestination, { target: 'EMAIL' }>) => void;
@@ -63,9 +64,16 @@ export async function openCompanyPushIntent(
   let readiness = dependencies.readReadiness();
   if (!readyToOpen(readiness)) return 'deferred';
 
-  const companyAccount = readiness.accounts.find((account) =>
-    dependencies.isCompanyMailServer(account.serverUrl));
-  if (!companyAccount) return 'deferred';
+  const registeredId = dependencies.registeredCompanyAccountId
+    ? await dependencies.registeredCompanyAccountId() : null;
+  const companyAccount = registeredId
+    ? readiness.accounts.find((account) => account.id === registeredId &&
+      dependencies.isCompanyMailServer(account.serverUrl))
+    : dependencies.registeredCompanyAccountId
+      ? null
+      : readiness.accounts.find((account) => dependencies.isCompanyMailServer(account.serverUrl));
+  if (!companyAccount) return readiness.accounts.some((account) =>
+    dependencies.isCompanyMailServer(account.serverUrl)) ? 'retry' : 'deferred';
 
   try {
     if (readiness.activeAccountId !== companyAccount.id) {

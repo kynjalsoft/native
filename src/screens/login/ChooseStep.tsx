@@ -155,6 +155,9 @@ export default function ChooseStep({
         <Server size={14} color={c.textMuted} />
         <Text style={styles.manualText}>{t('login.mobile.manual', 'Enter server details manually')}</Text>
       </Pressable>
+      <Text style={styles.supportText}>
+        {t('support.staff_help', 'Need help signing in or using your mailbox? Contact your workspace administrator through your usual company support channel. Never share a password or verification code.')}
+      </Text>
     </View>
   );
 }
@@ -189,5 +192,6 @@ function makeStyles(c: ThemePalette) {
       paddingVertical: spacing.sm,
     },
     manualText: { ...typography.body, color: c.textSecondary },
+    supportText: { ...typography.caption, color: c.textMuted, lineHeight: 18 },
   });
 }

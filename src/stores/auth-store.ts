@@ -23,6 +23,7 @@ import {
   teardownPushNotificationsForAccount,
 } from '../lib/push-notifications';
 import { revokeCompanyPush } from '../lib/company-push';
+import { clearCalendarNotifications } from '../lib/calendar-notifications';
 
 // Persist middleware hydrates asynchronously on cold start. Without this
 // guard, restoreSession() can read the account-store before AsyncStorage has
@@ -117,13 +118,17 @@ function refetchFeatureStores(): void {
   if (emailStore.currentMailboxId) {
     void emailStore.refreshEmails();
   }
-  void useContactsStore.getState().fetchContacts();
-  const calendarStore = useCalendarStore.getState();
-  void calendarStore.fetchCalendars();
-  // Refresh the event range cached from last session (if any) so recurring
-  // events reflect new invitations / cancellations without the user swiping.
-  if (calendarStore.loadedRange) {
-    void calendarStore.refresh();
+  // Staff release is mail-only; avoid syncing unqualified app modules in the
+  // background while their top-level destinations are hidden.
+  if (!jmapClient.hasCompanyNoDeletePolicy) {
+    void useContactsStore.getState().fetchContacts();
+    const calendarStore = useCalendarStore.getState();
+    void calendarStore.fetchCalendars();
+    // Refresh the event range cached from last session (if any) so recurring
+    // events reflect new invitations / cancellations without the user swiping.
+    if (calendarStore.loadedRange) {
+      void calendarStore.refresh();
+    }
   }
 }
 
@@ -485,6 +490,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   logout: async () => {
     const accountStore = useAccountStore.getState();
     const currentId = get().activeAccountId;
+    await clearCalendarNotifications();
 
     // Best-effort: revoke this account's JMAP PushSubscription and drop its
     // relay mapping before we lose credentials. Other logged-in accounts'
@@ -511,6 +517,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
     jmapClient.reset();
     clearAccountFeatureStores(currentId);
+    await clearCalendarNotifications();
 
     // Switch to next remaining account, if any
     const remaining = accountStore.accounts;
@@ -540,6 +547,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   logoutAll: async () => {
     const accountStore = useAccountStore.getState();
+    await clearCalendarNotifications();
     const ids = accountStore.accounts.map((a) => a.id);
     for (const account of accountStore.accounts) {
       if (isCompanyMailServer(account.serverUrl)) {
@@ -551,6 +559,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     await jmapClient.clearAllCredentials(ids);
     jmapClient.reset();
     clearAllFeatureStores();
+    await clearCalendarNotifications();
 
     for (const id of ids) accountStore.removeAccount(id);
 
@@ -650,6 +659,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       return;
     }
 
+    await clearCalendarNotifications();
     applyConnectedState(set, session, target.serverUrl, target.username, accountId);
     refetchFeatureStores();
     void syncAccountDisplayName(accountId);

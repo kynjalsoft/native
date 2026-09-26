@@ -14,6 +14,7 @@ import {
   matchAccountsForPush,
   parseRelayPushData,
   selectNotifiableEmails,
+  notificationIdForEmail,
 } from '../push-background-task';
 import type { Email } from '../../api/types';
 
@@ -70,10 +71,24 @@ describe('matchAccountsForPush', () => {
     expect(matchAccountsForPush(payload, accounts, {}, registry)).toEqual(['alice@mail.example.com']);
   });
 
-  it('checks every account when nothing matches', () => {
+  it('does not wake unrelated accounts when nothing matches', () => {
     const payload = parseRelayPushData({ accountId: 'unknown', accountLabel: 'carol' });
-    expect(matchAccountsForPush(payload, accounts, {}, registry)).toEqual(accounts);
+    expect(matchAccountsForPush(payload, accounts, {}, registry)).toEqual([]);
   });
+
+  it('ignores an ambiguous relay label shared by accounts on different servers', () => {
+    const payload = parseRelayPushData({ accountLabel: 'alice' });
+    const sameName = ['alice@mail.one.test', 'alice@mail.two.test'];
+    expect(matchAccountsForPush(payload, sameName, {}, sameName.map((id) => ({ id, username: 'alice' }))))
+      .toEqual([]);
+  });
+});
+
+it('uses separate notification tags across local and shared JMAP accounts', () => {
+  expect(notificationIdForEmail('alice@mail.example.com', 'primary', 'm1'))
+    .not.toBe(notificationIdForEmail('bob@mail.example.com', 'primary', 'm1'));
+  expect(notificationIdForEmail('alice@mail.example.com', 'primary', 'm1'))
+    .not.toBe(notificationIdForEmail('alice@mail.example.com', 'shared', 'm1'));
 });
 
 describe('selectNotifiableEmails', () => {
@@ -86,5 +101,11 @@ describe('selectNotifiableEmails', () => {
       ['d'],
     );
     expect(out.map((e) => e.id)).toEqual(['a']);
+  });
+
+  it('drops mail moved into junk, trash, drafts or sent before the push is processed', () => {
+    const moved = { ...email('moved'), mailboxIds: { junkMailbox: true } } as Email;
+    expect(selectNotifiableEmails([moved, email('allowed')], [], new Set(['junkMailbox'])).map((item) => item.id))
+      .toEqual(['allowed']);
   });
 });

@@ -19,10 +19,9 @@ object NotificationTapStore {
 
     // The activity is exported (required by the LAUNCHER intent filter), so
     // any third-party app on the device can craft a starting intent that
-    // includes these extras. Reject anything that doesn't look like the IDs
-    // our notification builder writes — preventing other apps from
-    // navigating us to a forged email/thread.
-    private val ID_PATTERN = Regex("^[A-Za-z0-9_-]{1,128}$")
+    // includes these extras. Reject malformed IDs and incomplete message
+    // links before JS verifies the account and message against JMAP.
+    private val ID_PATTERN = Regex("^[\\x21-\\x7E]{1,255}$")
     // accountId is `username@host` (see generateAccountId), so it needs `.`,
     // `@`, `+` etc. — cap length and restrict charset to what that helper can
     // emit. accountId is optional: notifications created before this field
@@ -32,35 +31,41 @@ object NotificationTapStore {
     fun captureFromIntent(intent: Intent?): TapPayload? {
         val extras = intent?.extras ?: return null
         val emailId = extras.getString(EXTRA_EMAIL_ID)?.takeIf { ID_PATTERN.matches(it) }
-            ?: return null
         val threadId = extras.getString(EXTRA_THREAD_ID)?.takeIf { ID_PATTERN.matches(it) }
-            ?: return null
         // Subject is human-readable text and may legitimately contain anything;
         // cap its length so a hostile launcher can't ship a 1MB string into
         // the navigation payload.
         val subject = extras.getString(EXTRA_SUBJECT)?.take(512)
         val accountId = extras.getString(EXTRA_ACCOUNT_ID)?.takeIf { ACCOUNT_ID_PATTERN.matches(it) }
-        val payload = TapPayload(emailId, threadId, subject, accountId)
+        // A per-message tap needs both ids. A group-summary tap intentionally
+        // has neither and needs the local account to open the right inbox.
+        if ((emailId == null) != (threadId == null)) return null
+        if (emailId == null && accountId == null) return null
+        val jmapAccountId = extras.getString(EXTRA_JMAP_ACCOUNT_ID)?.takeIf { ID_PATTERN.matches(it) }
+        val payload = TapPayload(emailId, threadId, subject, accountId, jmapAccountId)
         pending = payload
         // Clear so a subsequent activity lifecycle event doesn't replay this.
         extras.remove(EXTRA_EMAIL_ID)
         extras.remove(EXTRA_THREAD_ID)
         extras.remove(EXTRA_SUBJECT)
         extras.remove(EXTRA_ACCOUNT_ID)
+        extras.remove(EXTRA_JMAP_ACCOUNT_ID)
         return payload
     }
 
     data class TapPayload(
-        val emailId: String,
-        val threadId: String,
+        val emailId: String?,
+        val threadId: String?,
         val subject: String?,
         val accountId: String?,
+        val jmapAccountId: String?,
     ) {
         fun toMap(): WritableMap = Arguments.createMap().apply {
-            putString("emailId", emailId)
-            putString("threadId", threadId)
+            if (emailId != null) putString("emailId", emailId)
+            if (threadId != null) putString("threadId", threadId)
             if (subject != null) putString("subject", subject)
             if (accountId != null) putString("accountId", accountId)
+            if (jmapAccountId != null) putString("jmapAccountId", jmapAccountId)
         }
     }
 
@@ -68,4 +73,5 @@ object NotificationTapStore {
     const val EXTRA_THREAD_ID = "bulwark.notification.threadId"
     const val EXTRA_SUBJECT = "bulwark.notification.subject"
     const val EXTRA_ACCOUNT_ID = "bulwark.notification.accountId"
+    const val EXTRA_JMAP_ACCOUNT_ID = "bulwark.notification.jmapAccountId"
 }
