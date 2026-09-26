@@ -351,6 +351,39 @@ describe('company Expo push boundary', () => {
     expect(savedConsentIds()).toEqual([]);
   });
 
+  it('restores mapped consent after global email alerts resume without a registration', async () => {
+    const preferenceKey = 'zyndmail.production.push.preference.v1';
+    useAccountStore.setState({ accounts: [{ id: accountId, serverUrl: 'https://mail.zyndpay.io' } as never] });
+    records.set(preferenceKey, JSON.stringify({ version: 3, accountIds: [accountId] }));
+    records.set('zyndmail.production.push.account-subjects.v1', JSON.stringify([
+      { accountId, subject: 'staff-subject' },
+    ]));
+    useSettingsStore.setState({ emailNotificationsEnabled: false });
+    expect(await companyPushStatus(accountId)).toEqual({ status: 'OFF' });
+    const methods: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
+      if (init.method === 'PUT' || init.method === 'DELETE') methods.push(init.method);
+      return { ok: true, status: 200,
+        json: async () => url.includes('/v1/push-health?')
+          ? { status: 'ok', previewMode: 'sender-subject-snippet-v1' }
+          : { registrationId: 'restored-registration' },
+      };
+    }));
+    useSettingsStore.setState({ emailNotificationsEnabled: true });
+
+    expect(await registerCompanyPush(accountId, false)).toEqual({ status: 'ACTIVE' });
+    expect(JSON.parse(records.get(preferenceKey)!)).toEqual({
+      version: 4, accounts: [{ accountId, subject: 'staff-subject' }],
+    });
+    session.getStoredOAuthTokens.mockResolvedValue({
+      accessToken: jwt('replacement-subject'), clientId: ZYNDMAIL_COMPANY.clientId,
+      companyIdentity: { issuer: ZYNDMAIL_COMPANY.issuer, audience: 'stalwart', subject: 'replacement-subject' },
+    });
+    expect(await registerCompanyPush(accountId, false)).toEqual({ status: 'OFF' });
+    expect(savedConsentIds()).toEqual([]);
+    expect(methods).toEqual(['PUT', 'DELETE']);
+  });
+
   it('does not restore migrated legacy consent after an overlapping opt-out', async () => {
     const preferenceKey = 'zyndmail.production.push.preference.v1';
     records.set(preferenceKey, JSON.stringify({ version: 2, subjects: ['staff-subject'] }));

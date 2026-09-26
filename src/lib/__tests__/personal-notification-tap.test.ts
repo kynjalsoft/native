@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { openFetchedPersonalNotification, ownsPersonalNotificationTap, resolveLegacyPersonalNotification } from '../personal-notification-tap';
 
 describe('personal notification tap', () => {
-  it('discards an email fetched after the active account switches', async () => {
+  it('retries an email fetched after the active account switches', async () => {
     let finishFetch!: (message: { id: string; threadId: string }) => void;
     const fetchMessage = vi.fn(() => new Promise<{ id: string; threadId: string }>((resolve) => {
       finishFetch = resolve;
@@ -20,7 +20,7 @@ describe('personal notification tap', () => {
     owner.sessionUsername = 'bob';
     finishFetch({ id: 'message-a', threadId: 'thread-a' });
 
-    expect(await opening).toBe('ignored');
+    expect(await opening).toBe('retry');
     expect(navigate).not.toHaveBeenCalled();
   });
 
@@ -34,7 +34,7 @@ describe('personal notification tap', () => {
 
     expect(await openFetchedPersonalNotification(
       'alice@mail.example.com', () => getMessage('u1'), () => owner, () => true, navigate,
-    )).toBe('ignored');
+    )).toBe('retry');
     expect(navigate).not.toHaveBeenCalled();
 
     owner.sessionUsername = 'alice';
@@ -55,8 +55,13 @@ describe('personal notification tap', () => {
       () => new Promise((resolve) => { finish = resolve; }), () => owner, () => true, navigate);
     owner.switching = true;
     finish({ id: 'message-a' });
-    await expect(opening).resolves.toBe('ignored');
+    await expect(opening).resolves.toBe('retry');
     expect(navigate).not.toHaveBeenCalled();
+
+    owner.switching = false;
+    await expect(openFetchedPersonalNotification('alice@mail.example.com',
+      async () => ({ id: 'message-a' }), () => owner, () => true, navigate)).resolves.toBe('opened');
+    expect(navigate).toHaveBeenCalledWith({ id: 'message-a' });
   });
 
   it('opens a prior-build message only in its unique authorized JMAP account', async () => {

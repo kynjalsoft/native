@@ -281,7 +281,7 @@ async function preferredAccountsInner(): Promise<PushConsent[]> {
       const subject = registration?.accountId === accountId ||
         (registration && !registration.accountId && saved.length === 1 && saved[0].id === accountId)
         ? registration.subject
-        : registration ? mappings.find((entry) => entry.accountId === accountId)?.subject : undefined;
+        : mappings.find((entry) => entry.accountId === accountId)?.subject;
       return subject ? [{ accountId, subject }] : [];
     });
     await SecureStore.setItemAsync(PREFERENCE_KEY, JSON.stringify({ version: 4, accounts }), storageOptions);
@@ -357,6 +357,7 @@ async function accountSubjects(): Promise<AccountSubject[]> {
 async function rememberAccountSubject(accountId: string, subject: string): Promise<void> {
   const entries = await accountSubjects();
   if (entries.some((entry) => entry.accountId === accountId && entry.subject === subject)) return;
+  await preferredAccounts();
   if (entries.some((entry) => entry.accountId === accountId && entry.subject !== subject)) {
     await setPushPreference(accountId, false);
   }

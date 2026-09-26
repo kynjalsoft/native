@@ -34,7 +34,7 @@ export async function openFetchedPersonalNotification<T>(
     const message = await fetchMessage();
     if (!isReady()) return 'retry';
     const owner = readOwner();
-    if (!ownsPersonalNotificationTap(accountId, owner)) return 'ignored';
+    if (!ownsPersonalNotificationTap(accountId, owner)) return 'retry';
     if (message === undefined) return 'retry';
     navigate(message);
     return 'opened';
