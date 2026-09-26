@@ -33,16 +33,16 @@ Notifications.setNotificationHandler({
         currentAuth.isAuthenticated && !currentAuth.isLoading && currentAuth.activeAccountId === accountId &&
         generateAccountId(jmapClient.username ?? '', jmapClient.serverUrl ?? '') === accountId;
     };
-    const rich = current() && !generic && !!accountId && !!payload?.registrationId &&
-      useSettingsStore.getState().notificationPreviewsEnabled &&
-      await companyPushRegistrationIdActive(accountId, payload.registrationId, true) && current();
-    if (current() && !generic && !rich) {
+    const registrationActive = current() && !!accountId && !!payload?.registrationId &&
+      await companyPushRegistrationIdActive(accountId, payload.registrationId, !generic) && current();
+    const rich = registrationActive && !generic && useSettingsStore.getState().notificationPreviewsEnabled;
+    if (current() && !generic && !payload?.registrationId) {
       await Notifications.scheduleNotificationAsync({
         content: { title: 'ZyndMail', body: 'New ZyndPay Mail activity', data: content.data },
         trigger: null,
       }).catch(() => undefined);
     }
-    const visible = !!calendar || (current() && (generic || rich));
+    const visible = !!calendar || (current() && ((generic && (!payload?.registrationId || registrationActive)) || rich));
     return {
       shouldShowBanner: visible,
       shouldShowList: visible,
