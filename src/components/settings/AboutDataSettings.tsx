@@ -4,7 +4,7 @@ import Constants from 'expo-constants';
 import * as DocumentPicker from 'expo-document-picker';
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
-import { CloudDownload, ExternalLink } from 'lucide-react-native';
+import { CloudDownload } from 'lucide-react-native';
 import { SettingsSection, SettingItem, Select, ToggleSwitch } from './settings-section';
 import Button from '../Button';
 import Dialog from '../Dialog';
@@ -23,9 +23,6 @@ import { UPDATE_REPO } from '../../api/updates';
 const APP_VERSION = Constants.expoConfig?.version ?? '0.0.0';
 const GIT_COMMIT = (Constants.expoConfig?.extra as { commit?: string } | undefined)?.commit ?? 'dev';
 const APP_STORE_URL = `https://github.com/${UPDATE_REPO}/releases`;
-const SOURCE_REF = /^[0-9a-f]{7,40}$/i.test(GIT_COMMIT) ? GIT_COMMIT : 'main';
-const SOURCE_URL = `https://github.com/${UPDATE_REPO}/tree/${SOURCE_REF}`;
-const LICENSE_URL = `https://github.com/${UPDATE_REPO}/blob/${SOURCE_REF}/LICENSE`;
 
 export function AboutDataSettings() {
   const c = useColors();
@@ -207,13 +204,17 @@ export function AboutDataSettings() {
               </Pressable>
             )}
           </View>
-          
-        </View>
-        <View style={styles.sourceNotice}>
-         
-         
         </View>
       </View>
+
+      <SettingsSection
+        title={t('support.title', 'Help with ZyndMail')}
+        description={t('support.staff_help', 'Need help signing in or using your mailbox? Contact your workspace administrator through your usual company support channel. Never share a password or verification code.')}
+      >
+        <Text style={styles.supportDetail}>
+          {t('support.diagnostic_hint', 'When reporting an issue, include the app version and when it happened. Do not include message content or sign-in codes.')}
+        </Text>
+      </SettingsSection>
 
       <SettingsSection
         title={t('settings.offline.title', 'Offline mail')}
@@ -434,15 +435,7 @@ function makeStyles(c: ThemePalette) {
   updatePillSecurity: { backgroundColor: c.errorBg },
   updatePillText: { ...typography.caption, color: c.primary },
   updatePillTextSecurity: { color: c.error },
-  ghLink: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  ghText: { ...typography.caption, color: c.mutedForeground },
-  sourceNotice: { marginTop: spacing.md, gap: spacing.xs },
-  sourceNoticeText: { ...typography.caption, color: c.mutedForeground },
-  sourceNoticeLink: { ...typography.caption, color: c.primary },
+  supportDetail: { ...typography.body, color: c.textSecondary },
   debugCategoriesBox: {
     marginStart: spacing.lg,
     paddingStart: spacing.lg,

@@ -43,6 +43,7 @@ import {
   collapseThreads, groupByThread, expandThreadSelection, getThreadTagIds, threadKeyOf,
 } from '../lib/thread-utils';
 import { isPermanentDelete, confirmPermanentDelete } from '../lib/delete-confirm';
+import { canOfferEmptyFolder } from '../lib/zyndmail-mail-policy';
 import { draftContextFromEmail, isDraftEmail } from '../lib/draft-context';
 import { getThreads, getEmails, getFullEmail, emptyMailbox as apiEmptyMailbox } from '../api/email';
 import type { RootStackParamList } from '../navigation/types';
@@ -910,10 +911,14 @@ export default function EmailListScreen({ onEmailPress, onComposePress, onIntera
     onInteractionStateChange?.(interactionBusy);
   }, [onInteractionStateChange, interactionBusy]);
   React.useEffect(() => () => onInteractionStateChange?.(true), [onInteractionStateChange]);
-  const canEmptyFolder =
-    (currentRole === 'trash' || inJunk) && !!currentMailbox && (currentMailbox.totalEmails > 0 || emails.length > 0);
+  const canEmptyFolder = canOfferEmptyFolder(
+    companyNoDelete,
+    currentRole,
+    inJunk,
+    !!currentMailbox && (currentMailbox.totalEmails > 0 || emails.length > 0),
+  );
   const handleEmptyFolder = () => {
-    if (!currentMailbox || emptying) return;
+    if (!canEmptyFolder || !currentMailbox || emptying) return;
     Alert.alert(
       t('email_list.empty_folder.confirm_title', 'Empty folder'),
       t('email_list.empty_folder.confirm_message', 'All emails in this folder will be permanently deleted. This action cannot be undone.'),

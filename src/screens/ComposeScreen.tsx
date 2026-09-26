@@ -22,6 +22,7 @@ import * as Sharing from 'expo-sharing';
 import * as Clipboard from 'expo-clipboard';
 import { spacing, radius, typography, componentSizes, type ThemePalette } from '../theme/tokens';
 import { useColors } from '../theme/colors';
+import { useTypography } from '../theme/dynamic';
 import { Button, IdentitySheet } from '../components';
 import { TemplateSheet } from '../components/TemplateSheet';
 import RichTextEditor, {
@@ -185,7 +186,8 @@ function RecipientChip({
   onLongPress?: () => void;
 }) {
   const c = useColors();
-  const styles = React.useMemo(() => makeStyles(c), [c]);
+  const type = useTypography();
+  const styles = React.useMemo(() => makeStyles(c, type), [c, type]);
   const label = recipient.group
     ? `${recipient.name || 'Group'} (${recipient.group.members.length})`
     : recipient.name || recipient.email;
@@ -218,7 +220,8 @@ function SuggestionList({
   onPressIn?: () => void;
 }) {
   const c = useColors();
-  const styles = React.useMemo(() => makeStyles(c), [c]);
+  const type = useTypography();
+  const styles = React.useMemo(() => makeStyles(c, type), [c, type]);
   return (
     <View style={styles.suggestionBox}>
       {suggestions.map((s, i) => (
@@ -259,7 +262,8 @@ function AttachmentChip({
   cancelLabel: string;
 }) {
   const c = useColors();
-  const styles = React.useMemo(() => makeStyles(c), [c]);
+  const type = useTypography();
+  const styles = React.useMemo(() => makeStyles(c, type), [c, type]);
   const pct = attachment.progress != null ? Math.round(attachment.progress * 100) : null;
   return (
     <Pressable onPress={onPress} style={styles.attachmentChip} disabled={attachment.uploading}>
@@ -310,7 +314,8 @@ function ToolbarButton({
   disabled?: boolean;
 }) {
   const c = useColors();
-  const styles = React.useMemo(() => makeStyles(c), [c]);
+  const type = useTypography();
+  const styles = React.useMemo(() => makeStyles(c, type), [c, type]);
   return (
     <Pressable
       onPress={onPress}
@@ -340,7 +345,8 @@ function OptionsSheet({
   cancelLabel: string;
 }) {
   const c = useColors();
-  const styles = React.useMemo(() => makeStyles(c), [c]);
+  const type = useTypography();
+  const styles = React.useMemo(() => makeStyles(c, type), [c, type]);
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <Pressable style={styles.modalBackdrop} onPress={onClose}>
@@ -366,7 +372,8 @@ function OptionsSheet({
 
 export default function ComposeScreen({ route, navigation }: Props) {
   const c = useColors();
-  const styles = React.useMemo(() => makeStyles(c), [c]);
+  const type = useTypography();
+  const styles = React.useMemo(() => makeStyles(c, type), [c, type]);
   const t = useLocaleStore((s) => s.t);
   const locale = useLocaleStore((s) => s.locale);
   const timeFormat = useSettingsStore((s) => s.timeFormat);
@@ -2696,7 +2703,7 @@ export default function ComposeScreen({ route, navigation }: Props) {
   );
 }
 
-function makeStyles(c: ThemePalette) {
+function makeStyles(c: ThemePalette, type: ReturnType<typeof useTypography>) {
   return StyleSheet.create({
   container: { flex: 1, backgroundColor: c.background },
   flex: { flex: 1 },
@@ -2720,8 +2727,8 @@ function makeStyles(c: ThemePalette) {
     borderRadius: radius.full,
   },
   headerTitleWrap: { flex: 1, minWidth: 0 },
-  headerTitle: { ...typography.h3, color: c.text },
-  headerSubtitle: { ...typography.caption, color: c.textMuted, marginTop: -2 },
+  headerTitle: { ...type.h3, color: c.text },
+  headerSubtitle: { ...type.caption, color: c.textMuted, marginTop: -2 },
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   sendButtonDisabled: { opacity: 0.5 },
   sendReviewBanner: {
@@ -2729,7 +2736,7 @@ function makeStyles(c: ThemePalette) {
     paddingVertical: spacing.md,
     backgroundColor: c.warningBg,
   },
-  sendReviewText: { ...typography.bodyMedium, color: c.text },
+  sendReviewText: { ...type.bodyMedium, color: c.text },
 
   fieldRow: {
     flexDirection: 'row',
@@ -2742,9 +2749,9 @@ function makeStyles(c: ThemePalette) {
     position: 'relative',
   },
   fieldLabel: {
-    ...typography.body,
+    ...type.body,
     color: c.textMuted,
-    width: 56,
+    width: 64,
     paddingTop: 10,
   },
   fieldContent: {
@@ -2754,7 +2761,7 @@ function makeStyles(c: ThemePalette) {
     paddingVertical: 10,
     gap: spacing.sm,
   },
-  fromText: { ...typography.body, color: c.text, flexShrink: 1 },
+  fromText: { ...type.body, color: c.text, flexShrink: 1 },
   fromTextOverride: { fontStyle: 'italic' },
   fromOptionsBtn: { paddingTop: 10, paddingHorizontal: 4 },
   recipientField: {
@@ -2776,12 +2783,12 @@ function makeStyles(c: ThemePalette) {
     maxWidth: 220,
   },
   chipInvalid: { backgroundColor: c.errorBg, borderWidth: 1, borderColor: c.error },
-  chipText: { ...typography.caption, color: c.text, flexShrink: 1 },
+  chipText: { ...type.caption, color: c.text, flexShrink: 1 },
   chipTextInvalid: { color: c.error },
   recipientInput: {
     flexGrow: 1,
     minWidth: 100,
-    ...typography.body,
+    ...type.body,
     color: c.text,
     paddingVertical: 6,
   },
@@ -2789,7 +2796,7 @@ function makeStyles(c: ThemePalette) {
   suggestionBox: {
     position: 'absolute',
     top: '100%',
-    left: spacing.lg + 56 + spacing.md,
+    left: spacing.lg + 64 + spacing.md,
     right: spacing.lg,
     borderWidth: 1,
     borderColor: c.borderLight,
@@ -2814,28 +2821,28 @@ function makeStyles(c: ThemePalette) {
     alignItems: 'center',
     justifyContent: 'center',
   },
-  suggestionAvatarText: { ...typography.captionMedium, color: c.primary },
+  suggestionAvatarText: { ...type.captionMedium, color: c.primary },
   suggestionText: { flex: 1 },
-  suggestionName: { ...typography.bodyMedium, color: c.text },
-  suggestionEmail: { ...typography.caption, color: c.textSecondary },
+  suggestionName: { ...type.bodyMedium, color: c.text },
+  suggestionEmail: { ...type.caption, color: c.textSecondary },
   ccToggle: {
     paddingHorizontal: spacing.sm,
     paddingVertical: 6,
   },
-  ccToggleText: { ...typography.caption, color: c.primary },
+  ccToggleText: { ...type.caption, color: c.primary },
   subjectInput: {
     flex: 1,
-    ...typography.body,
+    ...type.body,
     color: c.text,
     paddingVertical: 10,
   },
   plainEditor: {
-    ...typography.body,
+    ...type.body,
     color: c.text,
     minHeight: 220,
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,
-    lineHeight: 22,
+    lineHeight: type.body.lineHeight,
   },
 
   attachmentList: {
@@ -2855,8 +2862,8 @@ function makeStyles(c: ThemePalette) {
     backgroundColor: c.surfaceActive,
   },
   attachmentMeta: { flex: 1, minWidth: 0 },
-  attachmentName: { ...typography.bodyMedium, color: c.text },
-  attachmentSize: { ...typography.caption, color: c.textMuted },
+  attachmentName: { ...type.bodyMedium, color: c.text },
+  attachmentSize: { ...type.caption, color: c.textMuted },
   attachmentRemove: { padding: 4 },
   progressTrack: { height: 3, borderRadius: 2, backgroundColor: c.borderLight, marginTop: 4, overflow: 'hidden' },
   progressFill: { height: 3, backgroundColor: c.primary },
@@ -2909,10 +2916,10 @@ function makeStyles(c: ThemePalette) {
     padding: spacing.lg,
     gap: spacing.md,
   },
-  modalTitle: { ...typography.h3, color: c.text },
-  modalLabel: { ...typography.caption, color: c.textSecondary },
+  modalTitle: { ...type.h3, color: c.text },
+  modalLabel: { ...type.caption, color: c.textSecondary },
   modalInput: {
-    ...typography.body,
+    ...type.body,
     color: c.text,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
@@ -2931,16 +2938,16 @@ function makeStyles(c: ThemePalette) {
     paddingVertical: spacing.sm,
     borderRadius: radius.sm,
   },
-  modalCancelText: { ...typography.bodyMedium, color: c.textSecondary },
+  modalCancelText: { ...type.bodyMedium, color: c.textSecondary },
   modalConfirm: {
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     borderRadius: radius.sm,
     backgroundColor: c.primary,
   },
-  modalConfirmText: { ...typography.bodyMedium, color: c.primaryForeground },
+  modalConfirmText: { ...type.bodyMedium, color: c.primaryForeground },
   switchRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  switchLabel: { ...typography.body, color: c.text },
+  switchLabel: { ...type.body, color: c.text },
   tagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   tagChip: {
     paddingHorizontal: spacing.sm,
@@ -2948,7 +2955,7 @@ function makeStyles(c: ThemePalette) {
     borderRadius: radius.full,
     backgroundColor: c.surfaceActive,
   },
-  tagChipText: { ...typography.caption, color: c.text },
+  tagChipText: { ...type.caption, color: c.text },
   swatchRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, paddingVertical: spacing.sm },
   swatch: { width: 36, height: 36, borderRadius: 18, borderWidth: 1, borderColor: c.border },
   scheduleCard: {
@@ -2962,7 +2969,7 @@ function makeStyles(c: ThemePalette) {
     gap: spacing.xs,
   },
   scheduleWarning: {
-    ...typography.caption,
+    ...type.caption,
     color: c.error,
     marginBottom: spacing.xs,
   },
@@ -2973,8 +2980,8 @@ function makeStyles(c: ThemePalette) {
     paddingVertical: spacing.sm + 2,
     minHeight: 44,
   },
-  scheduleRowLabel: { ...typography.body, color: c.text, flex: 1 },
-  scheduleRowTime: { ...typography.caption, color: c.textMuted },
+  scheduleRowLabel: { ...type.body, color: c.text, flex: 1 },
+  scheduleRowTime: { ...type.caption, color: c.textMuted },
   scheduleCancel: {
     alignItems: 'center',
     paddingVertical: spacing.sm,

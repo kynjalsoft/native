@@ -19,10 +19,13 @@ import {
   validateCompanyTokenEndpoint,
 } from '../lib/zyndmail-company';
 import {
+  disableAndroidMailAccount,
+  suspendPersonalPushSetupForAccount,
   teardownPushNotifications,
   teardownPushNotificationsForAccount,
 } from '../lib/push-notifications';
-import { revokeCompanyPush } from '../lib/company-push';
+import { dismissCompanyPushNotifications, reconcileCompanyPush, revokeCompanyPush, revokeEvictedCompanyPush } from '../lib/company-push';
+import { clearCalendarNotifications, resumeCalendarNotifications, suspendCalendarNotifications } from '../lib/calendar-notifications';
 
 // Persist middleware hydrates asynchronously on cold start. Without this
 // guard, restoreSession() can read the account-store before AsyncStorage has
@@ -117,13 +120,17 @@ function refetchFeatureStores(): void {
   if (emailStore.currentMailboxId) {
     void emailStore.refreshEmails();
   }
-  void useContactsStore.getState().fetchContacts();
-  const calendarStore = useCalendarStore.getState();
-  void calendarStore.fetchCalendars();
-  // Refresh the event range cached from last session (if any) so recurring
-  // events reflect new invitations / cancellations without the user swiping.
-  if (calendarStore.loadedRange) {
-    void calendarStore.refresh();
+  // Staff release is mail-only; avoid syncing unqualified app modules in the
+  // background while their top-level destinations are hidden.
+  if (!jmapClient.hasCompanyNoDeletePolicy) {
+    void useContactsStore.getState().fetchContacts();
+    const calendarStore = useCalendarStore.getState();
+    void calendarStore.fetchCalendars();
+    // Refresh the event range cached from last session (if any) so recurring
+    // events reflect new invitations / cancellations without the user swiping.
+    if (calendarStore.loadedRange) {
+      void calendarStore.refresh();
+    }
   }
 }
 
@@ -172,6 +179,15 @@ async function syncAccountDisplayName(accountId: string): Promise<void> {
   }
 }
 
+async function retirePreviousCompanyPush(
+  previousAccountId: string | null, previousServerUrl: string | null, nextAccountId: string,
+): Promise<void> {
+  if (!previousAccountId || previousAccountId === nextAccountId ||
+      !isCompanyMailServer(previousServerUrl ?? '')) return;
+  await revokeCompanyPush(previousAccountId, true).catch(() => undefined);
+  await dismissCompanyPushNotifications().catch(() => undefined);
+}
+
 // Shared tail of the OAuth sign-in flows (browser handoff and cross-device QR
 // pairing both end here). Bootstraps a JMAP session from the token bundle,
 // registers the account, and flips the store to connected. Throws on failure
@@ -204,13 +220,20 @@ async function completeOAuthHandoff(
   const previous = opts?.addAccount && get().isAuthenticated ? jmapClient.snapshot() : null;
 
   let connected: { session: JMAPSession; username: string; accountId: string };
+  const previousAccountId = get().isAuthenticated ? get().activeAccountId : null;
+  const previousServerUrl = get().serverUrl;
+  const resumePersonalPushSetup = previousAccountId && !isCompanyMailServer(jmapClient.serverUrl ?? '')
+    ? await suspendPersonalPushSetupForAccount(previousAccountId) : () => undefined;
   try {
     connected = await jmapClient.connectWithOAuth(result.serverUrl, result.tokens);
   } catch (err) {
     if (previous) jmapClient.restoreSnapshot(previous);
     throw err;
+  } finally {
+    resumePersonalPushSetup();
   }
   const { session, username, accountId } = connected;
+  await retirePreviousCompanyPush(previousAccountId, previousServerUrl, accountId);
   if (previous) {
     useContactsStore.getState().reset();
     useCalendarStore.getState().reset();
@@ -228,6 +251,10 @@ async function completeOAuthHandoff(
   });
   accountStore.setActiveAccount(accountId);
   useEmailStore.getState().setActiveAccount(accountId);
+
+  if (isCompanyMailServer(result.serverUrl)) {
+    await reconcileCompanyPush(accountId).catch(() => undefined);
+  }
 
   applyConnectedState(set, session, result.serverUrl.replace(/\/+$/, ''), username, accountId);
   void syncAccountDisplayName(accountId);
@@ -255,6 +282,7 @@ function applyConnectedState(
     activeAccountId: accountId,
     client: jmapClient,
   });
+  resumeCalendarNotifications();
 }
 
 export const useAuthStore = create<AuthState>((set, get) => ({
@@ -282,11 +310,17 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     const previous = opts?.addAccount && get().isAuthenticated ? jmapClient.snapshot() : null;
     try {
       let session: JMAPSession;
+      const previousAccountId = get().isAuthenticated ? get().activeAccountId : null;
+      const previousServerUrl = get().serverUrl;
+      const resumePersonalPushSetup = previousAccountId && !isCompanyMailServer(jmapClient.serverUrl ?? '')
+        ? await suspendPersonalPushSetupForAccount(previousAccountId) : () => undefined;
       try {
         session = await jmapClient.connect(serverUrl, username, password, opts?.totp);
       } catch (err) {
         if (previous) jmapClient.restoreSnapshot(previous);
         throw err;
+      } finally {
+        resumePersonalPushSetup();
       }
       // Contacts/calendar are still single-bucket, so wipe those now that
       // the new account is the one the client serves.
@@ -295,6 +329,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         useCalendarStore.getState().reset();
       }
       const accountId = generateAccountId(username, serverUrl.replace(/\/+$/, ''));
+      await retirePreviousCompanyPush(previousAccountId, previousServerUrl, accountId);
 
       const accountStore = useAccountStore.getState();
       accountStore.addAccount({
@@ -485,6 +520,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   logout: async () => {
     const accountStore = useAccountStore.getState();
     const currentId = get().activeAccountId;
+    suspendCalendarNotifications();
+    if (currentId) await disableAndroidMailAccount(currentId).catch(() => undefined);
+    await clearCalendarNotifications();
 
     // Best-effort: revoke this account's JMAP PushSubscription and drop its
     // relay mapping before we lose credentials. Other logged-in accounts'
@@ -492,7 +530,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     if (currentId) {
       const current = accountStore.getAccountById(currentId);
       if (current && isCompanyMailServer(current.serverUrl)) {
-        await revokeCompanyPush(currentId).catch(() => undefined);
+        await revokeCompanyPush(currentId, false, true).catch(() => undefined);
       } else {
         await teardownPushNotificationsForAccount(currentId).catch(() => undefined);
       }
@@ -511,6 +549,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
     jmapClient.reset();
     clearAccountFeatureStores(currentId);
+    await clearCalendarNotifications();
 
     // Switch to next remaining account, if any
     const remaining = accountStore.accounts;
@@ -541,9 +580,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   logoutAll: async () => {
     const accountStore = useAccountStore.getState();
     const ids = accountStore.accounts.map((a) => a.id);
+    suspendCalendarNotifications();
+    await Promise.all(ids.map((id) => disableAndroidMailAccount(id).catch(() => undefined)));
+    await clearCalendarNotifications();
     for (const account of accountStore.accounts) {
       if (isCompanyMailServer(account.serverUrl)) {
-        await revokeCompanyPush(account.id).catch(() => undefined);
+        await revokeCompanyPush(account.id, false, true).catch(() => undefined);
       }
     }
     await teardownPushNotifications().catch(() => undefined);
@@ -551,6 +593,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     await jmapClient.clearAllCredentials(ids);
     jmapClient.reset();
     clearAllFeatureStores();
+    await clearCalendarNotifications();
 
     for (const id of ids) accountStore.removeAccount(id);
 
@@ -595,6 +638,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     // jmapClient first. If it fails, restore the previous active account
     // so we don't leave the user stranded on a half-switched state.
     const previousActive = get().activeAccountId;
+    const previousServerUrl = get().serverUrl;
     // loadAccount overwrites the client's credentials/session; keep the live
     // connection around so a failed switch can put it back instead of
     // leaving the previous account dead until relaunch.
@@ -603,10 +647,14 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       jmapClient.restoreSnapshot(previousClient);
       if (previousActive) useEmailStore.getState().setActiveAccount(previousActive);
     };
+    const resumePersonalPushSetup = previousActive && !isCompanyMailServer(jmapClient.serverUrl ?? '')
+      ? await suspendPersonalPushSetupForAccount(previousActive) : () => undefined;
     try {
       const ok = await jmapClient.loadAccount(accountId);
       if (!ok) {
         // Credentials missing - evict stale entry and surface error
+        if (isCompanyMailServer(target.serverUrl)) await revokeEvictedCompanyPush(accountId).catch(() => undefined);
+        await disableAndroidMailAccount(accountId).catch(() => undefined);
         accountStore.removeAccount(accountId);
         useEmailStore.getState().removeAccount(accountId);
         restorePrevious();
@@ -615,6 +663,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       }
     } catch (err) {
       if (err instanceof AuthenticationError) {
+        if (isCompanyMailServer(target.serverUrl)) await revokeEvictedCompanyPush(accountId).catch(() => undefined);
+        await disableAndroidMailAccount(accountId).catch(() => undefined);
         await jmapClient.clearAccountCredentials(accountId).catch(() => undefined);
         accountStore.removeAccount(accountId);
         useEmailStore.getState().removeAccount(accountId);
@@ -634,8 +684,17 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         error: err instanceof Error ? err.message : 'Failed to switch account',
       });
       return;
+    } finally {
+      resumePersonalPushSetup();
     }
 
+    const session = jmapClient.currentSession;
+    if (!session) {
+      set({ isLoading: false, error: 'Failed to load session' });
+      return;
+    }
+
+    await retirePreviousCompanyPush(previousActive, previousServerUrl, accountId);
     accountStore.setActiveAccount(accountId);
     accountStore.updateAccount(accountId, {
       isConnected: true,
@@ -644,12 +703,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       lastLoginAt: Date.now(),
     });
 
-    const session = jmapClient.currentSession;
-    if (!session) {
-      set({ isLoading: false, error: 'Failed to load session' });
-      return;
-    }
-
+    await clearCalendarNotifications();
     applyConnectedState(set, session, target.serverUrl, target.username, accountId);
     refetchFeatureStores();
     void syncAccountDisplayName(accountId);
@@ -663,8 +717,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     const accountStore = useAccountStore.getState();
     const account = accountStore.getAccountById(accountId);
     if (!account) return;
+    await disableAndroidMailAccount(accountId).catch(() => undefined);
     if (isCompanyMailServer(account.serverUrl)) {
-      await revokeCompanyPush(accountId).catch(() => undefined);
+      await revokeCompanyPush(accountId, false, true).catch(() => undefined);
     } else {
       await teardownPushNotificationsForAccount(accountId).catch(() => undefined);
     }
@@ -726,6 +781,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         const ok = await jmapClient.loadAccount(target.id);
         if (!ok) {
           // No stored credentials (or corrupt) — genuine logout.
+          if (isCompanyMailServer(target.serverUrl)) await revokeEvictedCompanyPush(target.id).catch(() => undefined);
+          await disableAndroidMailAccount(target.id).catch(() => undefined);
           accountStore.removeAccount(target.id);
           useEmailStore.getState().removeAccount(target.id);
           set({ isLoading: false, hasRestoredSession: true });
@@ -759,6 +816,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         }
         if (err instanceof AuthenticationError) {
           // Server reachable but credentials rejected — drop them.
+          if (isCompanyMailServer(target.serverUrl)) await revokeEvictedCompanyPush(target.id).catch(() => undefined);
+          await disableAndroidMailAccount(target.id).catch(() => undefined);
           await jmapClient.clearAccountCredentials(target.id).catch(() => undefined);
           accountStore.removeAccount(target.id);
           useEmailStore.getState().removeAccount(target.id);
@@ -815,6 +874,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     } catch (err) {
       if (err instanceof AuthenticationError) {
         // Now we know the credentials are bad — fall back to logout flow.
+        if (isCompanyMailServer(target.serverUrl)) await revokeEvictedCompanyPush(activeAccountId).catch(() => undefined);
+        await disableAndroidMailAccount(activeAccountId).catch(() => undefined);
         await jmapClient.clearAccountCredentials(activeAccountId).catch(() => undefined);
         accountStore.removeAccount(activeAccountId);
         set({

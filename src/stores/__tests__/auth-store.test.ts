@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('../../api/jmap-client', () => ({
   jmapClient: {
     connect: vi.fn(),
+    connectWithOAuth: vi.fn(),
     logout: vi.fn(),
     restoreSession: vi.fn(),
     loadAccount: vi.fn(),
@@ -31,11 +32,39 @@ vi.mock('../../api/jmap-client', () => ({
 }));
 
 vi.mock('../../lib/push-notifications', () => ({
+  activateAndroidMailAccount: vi.fn(async () => undefined),
+  disableAndroidMailAccount: vi.fn(async () => undefined),
+  suspendPersonalPushSetupForAccount: vi.fn(async () => () => undefined),
   teardownPushNotifications: vi.fn(async () => undefined),
   teardownPushNotificationsForAccount: vi.fn(async () => undefined),
 }));
 
+vi.mock('../../lib/company-push', () => ({
+  dismissCompanyPushNotifications: vi.fn(async () => undefined),
+  reconcileCompanyPush: vi.fn(async () => ({ status: 'OFF' })),
+  revokeCompanyPush: vi.fn(async () => true),
+  revokeEvictedCompanyPush: vi.fn(async () => undefined),
+}));
+
+vi.mock('../../lib/oauth-native', () => ({
+  discoverOAuthMetadata: vi.fn(async () => ({})),
+  loginWithPkce: vi.fn(),
+  probeWebmail: vi.fn(),
+  revokeRefreshToken: vi.fn(async () => undefined),
+}));
+
+vi.mock('../../lib/calendar-notifications', () => ({
+  suspendCalendarNotifications: vi.fn(),
+  resumeCalendarNotifications: vi.fn(),
+  clearCalendarNotifications: vi.fn(async () => undefined),
+}));
+
 import { jmapClient } from '../../api/jmap-client';
+import { dismissCompanyPushNotifications, reconcileCompanyPush, revokeCompanyPush, revokeEvictedCompanyPush } from '../../lib/company-push';
+import { loginWithPkce } from '../../lib/oauth-native';
+import { ZYNDMAIL_COMPANY } from '../../lib/zyndmail-company';
+import { suspendCalendarNotifications, resumeCalendarNotifications, clearCalendarNotifications } from '../../lib/calendar-notifications';
+import { disableAndroidMailAccount, suspendPersonalPushSetupForAccount, teardownPushNotificationsForAccount } from '../../lib/push-notifications';
 import { useAuthStore } from '../auth-store';
 import { useAccountStore } from '../account-store';
 
@@ -70,6 +99,35 @@ beforeEach(() => {
 
 describe('auth-store', () => {
   describe('login', () => {
+    it('retires the previous staff registration on successful personal add-account sign-in', async () => {
+      const staffId = 'staff@zyndpay.io@mail.zyndpay.io';
+      useAuthStore.setState({ isAuthenticated: true, activeAccountId: staffId,
+        serverUrl: ZYNDMAIL_COMPANY.mailOrigin });
+      mockConnect.mockResolvedValueOnce({ apiUrl: 'https://mail.example.com/jmap/' });
+
+      await useAuthStore.getState().login('https://mail.example.com', 'user', 'secret', { addAccount: true });
+
+      expect(revokeCompanyPush).toHaveBeenCalledExactlyOnceWith(staffId, true);
+      expect(dismissCompanyPushNotifications).toHaveBeenCalledOnce();
+    });
+
+    it('drains the current account push setup before password sign-in replaces the client', async () => {
+      useAuthStore.setState({ isAuthenticated: true, activeAccountId: 'acc-1' });
+      let release!: () => void;
+      const resume = vi.fn();
+      vi.mocked(suspendPersonalPushSetupForAccount).mockImplementationOnce(
+        () => new Promise<() => void>((resolve) => { release = () => resolve(resume); }),
+      );
+      mockConnect.mockResolvedValueOnce({ apiUrl: 'https://other.example.com/jmap/' });
+      const login = useAuthStore.getState().login('https://other.example.com', 'other', 'secret', { addAccount: true });
+      await vi.waitFor(() => expect(suspendPersonalPushSetupForAccount).toHaveBeenCalledWith('acc-1'));
+      expect(mockConnect).not.toHaveBeenCalled();
+      release();
+      await login;
+      expect(mockConnect).toHaveBeenCalledOnce();
+      expect(resume).toHaveBeenCalledOnce();
+    });
+
     it('should set authenticated state on success', async () => {
       const session = { apiUrl: 'https://mail.example.com/jmap/' };
       mockConnect.mockResolvedValue(session);
@@ -110,6 +168,71 @@ describe('auth-store', () => {
     });
   });
 
+  it('reconciles a staff identity before completing OAuth reauthentication', async () => {
+    const accountId = 'staff@zyndpay.io@mail.zyndpay.io';
+    const payload = { iss: ZYNDMAIL_COMPANY.issuer, aud: ['stalwart'],
+      sub: 'replacement-subject', exp: Date.now() / 1000 + 3600 };
+    vi.mocked(loginWithPkce).mockResolvedValueOnce({
+      accessToken: `header.${Buffer.from(JSON.stringify(payload)).toString('base64url')}.signature`,
+      clientId: ZYNDMAIL_COMPANY.clientId,
+      tokenEndpoint: ZYNDMAIL_COMPANY.tokenEndpoint,
+    } as never);
+    vi.mocked(jmapClient.connectWithOAuth).mockResolvedValueOnce({
+      session: { apiUrl: 'https://mail.zyndpay.io/jmap/' },
+      username: 'staff@zyndpay.io', accountId,
+    } as never);
+    useAccountStore.setState({ accounts: [{ id: accountId, username: 'staff@zyndpay.io',
+      serverUrl: ZYNDMAIL_COMPANY.mailOrigin } as never], activeAccountId: accountId });
+    useAuthStore.setState({ isAuthenticated: true, activeAccountId: accountId });
+    let loadingDuringReconciliation: boolean | null = null;
+    vi.mocked(reconcileCompanyPush).mockImplementationOnce(async () => {
+      loadingDuringReconciliation = useAuthStore.getState().isLoading;
+      return { status: 'OFF' };
+    });
+
+    await useAuthStore.getState().loginViaCompany();
+    expect(reconcileCompanyPush).toHaveBeenCalledWith(accountId);
+    expect(loadingDuringReconciliation).toBe(true);
+    expect(useAuthStore.getState().isLoading).toBe(false);
+  });
+
+  it('drains the current account push setup before OAuth sign-in replaces the client', async () => {
+    useAuthStore.setState({ isAuthenticated: true, activeAccountId: 'acc-1' });
+    let release!: () => void;
+    const resume = vi.fn();
+    vi.mocked(suspendPersonalPushSetupForAccount).mockImplementationOnce(
+      () => new Promise<() => void>((resolve) => { release = () => resolve(resume); }),
+    );
+    vi.mocked(loginWithPkce).mockResolvedValueOnce({ accessToken: 'token' } as never);
+    vi.mocked(jmapClient.connectWithOAuth).mockResolvedValueOnce({
+      session: { apiUrl: 'https://other.example.com/jmap/' },
+      username: 'other', accountId: 'other@other.example.com',
+    } as never);
+    const login = useAuthStore.getState().loginViaOAuth('https://other.example.com', { addAccount: true });
+    await vi.waitFor(() => expect(suspendPersonalPushSetupForAccount).toHaveBeenCalledWith('acc-1'));
+    expect(jmapClient.connectWithOAuth).not.toHaveBeenCalled();
+    release();
+    await login;
+    expect(jmapClient.connectWithOAuth).toHaveBeenCalledOnce();
+    expect(resume).toHaveBeenCalledOnce();
+  });
+
+  it('retires the previous staff registration on successful OAuth add-account sign-in', async () => {
+    const staffId = 'staff@zyndpay.io@mail.zyndpay.io';
+    useAuthStore.setState({ isAuthenticated: true, activeAccountId: staffId,
+      serverUrl: ZYNDMAIL_COMPANY.mailOrigin });
+    vi.mocked(loginWithPkce).mockResolvedValueOnce({ accessToken: 'token' } as never);
+    vi.mocked(jmapClient.connectWithOAuth).mockResolvedValueOnce({
+      session: { apiUrl: 'https://mail.example.com/jmap/' },
+      username: 'user', accountId: 'user@mail.example.com',
+    } as never);
+
+    await useAuthStore.getState().loginViaOAuth('https://mail.example.com', { addAccount: true });
+
+    expect(revokeCompanyPush).toHaveBeenCalledExactlyOnceWith(staffId, true);
+    expect(dismissCompanyPushNotifications).toHaveBeenCalledOnce();
+  });
+
   describe('logout', () => {
     it('should reset all state when no other accounts remain', async () => {
       useAuthStore.setState({ isAuthenticated: true, serverUrl: 'x', username: 'y' });
@@ -121,6 +244,28 @@ describe('auth-store', () => {
       expect(state.isAuthenticated).toBe(false);
       expect(state.serverUrl).toBeNull();
       expect(state.username).toBeNull();
+    });
+
+    it('holds calendar scheduling until account removal has finished', async () => {
+      let releaseTeardown!: () => void;
+      const teardown = new Promise<void>((resolve) => { releaseTeardown = resolve; });
+      vi.mocked(teardownPushNotificationsForAccount).mockReturnValueOnce(teardown);
+      useAccountStore.setState({ accounts: [{
+        id: 'acc-1', username: 'user', serverUrl: 'https://mail.example.com',
+      } as never] });
+      useAuthStore.setState({ isAuthenticated: true, activeAccountId: 'acc-1' });
+
+      const loggingOut = useAuthStore.getState().logout();
+      await vi.waitFor(() => expect(teardownPushNotificationsForAccount).toHaveBeenCalledWith('acc-1'));
+      expect(suspendCalendarNotifications).toHaveBeenCalledOnce();
+      expect(disableAndroidMailAccount).toHaveBeenCalledWith('acc-1');
+      expect(clearCalendarNotifications).toHaveBeenCalledOnce();
+      expect(resumeCalendarNotifications).not.toHaveBeenCalled();
+      releaseTeardown();
+      await loggingOut;
+      expect(useAccountStore.getState().accounts).toEqual([]);
+      expect(clearCalendarNotifications).toHaveBeenCalledTimes(2);
+      expect(resumeCalendarNotifications).not.toHaveBeenCalled();
     });
   });
 
@@ -158,6 +303,110 @@ describe('auth-store', () => {
 
       expect(restored).toBe(true);
       expect(useAuthStore.getState().isAuthenticated).toBe(true);
+    });
+
+    it('retires an invalid staff registration before removing restore credentials', async () => {
+      const id = 'staff@zyndpay.io@mail.zyndpay.io';
+      useAccountStore.setState({ accounts: [{
+        id, serverUrl: 'https://mail.zyndpay.io', username: 'staff@zyndpay.io',
+      } as never], activeAccountId: id, defaultAccountId: id });
+      const { AuthenticationError } = await import('../../api/jmap-client');
+      mockLoadAccount.mockRejectedValue(new AuthenticationError('Expired'));
+      (jmapClient.clearAccountCredentials as ReturnType<typeof vi.fn>).mockImplementationOnce(async () => {
+        expect(revokeEvictedCompanyPush).toHaveBeenCalledWith(id);
+      });
+
+      expect(await useAuthStore.getState().restoreSession()).toBe(false);
+      expect(revokeEvictedCompanyPush).toHaveBeenCalledWith(id);
+      expect(useAccountStore.getState().getAccountById(id)).toBeUndefined();
+    });
+  });
+
+  describe('switchAccount', () => {
+    it('retires staff push before completing a switch to personal mail even when remote revocation fails', async () => {
+      const staffId = 'staff@zyndpay.io@mail.zyndpay.io';
+      const personalId = 'user@mail.example.com';
+      useAccountStore.setState({ accounts: [
+        { id: staffId, serverUrl: ZYNDMAIL_COMPANY.mailOrigin, username: 'staff@zyndpay.io' } as never,
+        { id: personalId, serverUrl: 'https://mail.example.com', username: 'user' } as never,
+      ], activeAccountId: staffId, defaultAccountId: staffId });
+      useAuthStore.setState({ isAuthenticated: true, activeAccountId: staffId,
+        serverUrl: ZYNDMAIL_COMPANY.mailOrigin });
+      mockLoadAccount.mockResolvedValueOnce(true);
+      vi.mocked(revokeCompanyPush).mockResolvedValueOnce(false);
+      vi.mocked(dismissCompanyPushNotifications).mockImplementationOnce(async () => {
+        expect(useAuthStore.getState().activeAccountId).toBe(staffId);
+      });
+
+      await useAuthStore.getState().switchAccount(personalId);
+
+      expect(revokeCompanyPush).toHaveBeenCalledExactlyOnceWith(staffId, true);
+      expect(dismissCompanyPushNotifications).toHaveBeenCalledOnce();
+      expect(useAuthStore.getState().activeAccountId).toBe(personalId);
+    });
+
+    it('keeps staff push on a failed switch and leaves personal push untouched when entering staff mail', async () => {
+      const staffId = 'staff@zyndpay.io@mail.zyndpay.io';
+      const personalId = 'user@mail.example.com';
+      useAccountStore.setState({ accounts: [
+        { id: staffId, serverUrl: ZYNDMAIL_COMPANY.mailOrigin, username: 'staff@zyndpay.io' } as never,
+        { id: personalId, serverUrl: 'https://mail.example.com', username: 'user' } as never,
+      ], activeAccountId: staffId, defaultAccountId: staffId });
+      useAuthStore.setState({ isAuthenticated: true, activeAccountId: staffId,
+        serverUrl: ZYNDMAIL_COMPANY.mailOrigin });
+      mockLoadAccount.mockRejectedValueOnce(new Error('Offline'));
+
+      await useAuthStore.getState().switchAccount(personalId);
+      expect(revokeCompanyPush).not.toHaveBeenCalled();
+      expect(dismissCompanyPushNotifications).not.toHaveBeenCalled();
+      expect(useAuthStore.getState().activeAccountId).toBe(staffId);
+
+      useAuthStore.setState({ activeAccountId: personalId, serverUrl: 'https://mail.example.com' });
+      mockLoadAccount.mockResolvedValueOnce(true);
+      await useAuthStore.getState().switchAccount(staffId);
+      expect(revokeCompanyPush).not.toHaveBeenCalled();
+      expect(useAuthStore.getState().activeAccountId).toBe(staffId);
+    });
+
+    it('waits for the previous push setup before replacing the JMAP session', async () => {
+      const nextId = 'other@mail.example.com';
+      useAccountStore.setState({ accounts: [
+        { id: 'acc-1', serverUrl: 'https://mail.example.com', username: 'user' } as never,
+        { id: nextId, serverUrl: 'https://mail.example.com', username: 'other' } as never,
+      ], activeAccountId: 'acc-1', defaultAccountId: 'acc-1' });
+      useAuthStore.setState({ activeAccountId: 'acc-1', isAuthenticated: true });
+      let release!: () => void;
+      const resume = vi.fn();
+      (suspendPersonalPushSetupForAccount as ReturnType<typeof vi.fn>).mockImplementationOnce(
+        () => new Promise<() => void>((resolve) => { release = () => resolve(resume); }),
+      );
+      mockLoadAccount.mockResolvedValueOnce(true);
+      const switching = useAuthStore.getState().switchAccount(nextId);
+      expect(suspendPersonalPushSetupForAccount).toHaveBeenCalledWith('acc-1');
+      expect(mockLoadAccount).not.toHaveBeenCalled();
+      release();
+      await switching;
+      expect(mockLoadAccount).toHaveBeenCalledWith(nextId);
+      expect(resume).toHaveBeenCalledOnce();
+    });
+
+    it('retires only the invalid staff account before evicting it', async () => {
+      const id = 'staff@zyndpay.io@mail.zyndpay.io';
+      useAccountStore.setState({ accounts: [
+        { id: 'acc-1', serverUrl: 'https://mail.example.com', username: 'user' } as never,
+        { id, serverUrl: 'https://mail.zyndpay.io', username: 'staff@zyndpay.io' } as never,
+      ], activeAccountId: 'acc-1', defaultAccountId: 'acc-1' });
+      useAuthStore.setState({ activeAccountId: 'acc-1', isAuthenticated: true });
+      const { AuthenticationError } = await import('../../api/jmap-client');
+      mockLoadAccount.mockRejectedValue(new AuthenticationError('Expired'));
+      (jmapClient.clearAccountCredentials as ReturnType<typeof vi.fn>).mockImplementationOnce(async () => {
+        expect(revokeEvictedCompanyPush).toHaveBeenCalledWith(id);
+      });
+
+      await useAuthStore.getState().switchAccount(id);
+      expect(revokeEvictedCompanyPush).toHaveBeenCalledExactlyOnceWith(id);
+      expect(useAccountStore.getState().getAccountById(id)).toBeUndefined();
+      expect(useAccountStore.getState().getAccountById('acc-1')).toBeDefined();
     });
   });
 

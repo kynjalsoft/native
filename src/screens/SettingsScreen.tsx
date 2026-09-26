@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, Pressable, BackHandler } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Pressable, BackHandler, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   ArrowLeft, LogOut, Settings, ChevronRight,
@@ -40,6 +40,9 @@ import { useLocaleStore } from '../stores/locale-store';
 import { useHasCalendar, useHasContacts, useHasFiles, useHasSieve, useHasVacation } from '../lib/capabilities';
 import { supportsSideloadUpdates } from '../lib/platform-capabilities';
 import { usePendingSettingsTab } from '../navigation/pending-settings-tab';
+import { useAuthStore } from '../stores/auth-store';
+import { jmapClient } from '../api/jmap-client';
+import { isCompanyMailServer } from '../lib/zyndmail-company';
 
 type Tab =
   | 'account' | 'language' | 'notifications'
@@ -150,11 +153,11 @@ const AVAILABLE_TABS: TabDef[] = TABS.filter(
   (t) => !t.hidden && (t.id !== 'updates' || supportsSideloadUpdates),
 );
 
-function groupTabs() {
+function groupTabs(companyMailOnly: boolean) {
   return GROUP_ORDER.map(group => ({
     group,
     label: GROUP_LABELS[group],
-    items: AVAILABLE_TABS.filter(t => t.group === group),
+    items: AVAILABLE_TABS.filter(t => t.group === group && !(companyMailOnly && t.group === 'apps')),
   })).filter(g => g.items.length > 0);
 }
 
@@ -167,6 +170,8 @@ interface SettingsScreenProps {
 export default function SettingsScreen({ onLogout, onBack, onTabSelect }: SettingsScreenProps) {
   const c = useColors();
   const styles = React.useMemo(() => makeStyles(c), [c]);
+  const serverUrl = useAuthStore((s) => s.serverUrl);
+  const companyMailOnly = isCompanyMailServer(serverUrl ?? '') || jmapClient.hasCompanyNoDeletePolicy;
   const [selectedTab, setSelectedTab] = useState<Tab | null>(null);
   // Subscribe to locale so labels re-render when the user picks a different language.
   const locale = useLocaleStore((s) => s.locale);
@@ -190,11 +195,14 @@ export default function SettingsScreen({ onLogout, onBack, onTabSelect }: Settin
   useEffect(() => {
     if (!pendingTab) return;
     const tab = usePendingSettingsTab.getState().consume();
-    if (tab && TABS.some((t) => t.id === tab && t.implemented)) setSelectedTab(tab as Tab);
-  }, [pendingTab]);
+    if (tab && TABS.some((t) => t.id === tab && t.implemented && !(companyMailOnly && t.group === 'apps'))) setSelectedTab(tab as Tab);
+  }, [pendingTab, companyMailOnly]);
+  useEffect(() => {
+    if (companyMailOnly && TABS.some((tab) => tab.id === selectedTab && tab.group === 'apps')) setSelectedTab(null);
+  }, [companyMailOnly, selectedTab]);
   const groupedTabs = React.useMemo(() => {
     void locale; // dependency: re-translate on locale change
-    return groupTabs().map((g) => ({
+    return groupTabs(companyMailOnly).map((g) => ({
       ...g,
       label: t(`settings.tab_groups.${g.group}`, g.label),
       items: g.items.map((tab) => ({
@@ -202,7 +210,7 @@ export default function SettingsScreen({ onLogout, onBack, onTabSelect }: Settin
         label: t(`settings.tabs.${tab.id}`, tab.label),
       })),
     }));
-  }, [locale, t]);
+  }, [companyMailOnly, locale, t]);
 
   useEffect(() => {
     if (!selectedTab) return;
@@ -215,7 +223,15 @@ export default function SettingsScreen({ onLogout, onBack, onTabSelect }: Settin
 
   const handleTabPress = (tab: TabDef) => {
     if (!tab.implemented) return;
-    if (unavailableTabs.has(tab.id)) return;
+    if (companyMailOnly && tab.group === 'apps') return;
+    if (unavailableTabs.has(tab.id)) {
+      const feature = t(`settings.tabs.${tab.id}`, tab.label);
+      Alert.alert(
+        t('navigation.feature_unavailable.title', '{feature} is unavailable', { feature }),
+        t('navigation.feature_unavailable.body', 'This server or account does not offer {feature}. Contact your workspace administrator if you need access.', { feature }),
+      );
+      return;
+    }
     setSelectedTab(tab.id);
     onTabSelect?.(tab.id);
   };
@@ -298,7 +314,11 @@ export default function SettingsScreen({ onLogout, onBack, onTabSelect }: Settin
                   <Pressable
                     key={tab.id}
                     onPress={() => handleTabPress(tab)}
-                    disabled={disabled}
+                    disabled={!tab.implemented}
+                    accessibilityRole="button"
+                    accessibilityLabel={tab.label}
+                    accessibilityHint={unavailable ? t('settings.badges.unavailable', 'Unavailable') : undefined}
+                    accessibilityState={{ disabled: !tab.implemented }}
                     style={({ pressed }) => [
                       styles.tabItem,
                       disabled && styles.tabItemDisabled,

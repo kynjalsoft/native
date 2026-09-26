@@ -15,6 +15,7 @@ import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
+import com.facebook.react.bridge.ReadableArray
 import com.facebook.react.bridge.ReadableMap
 import com.facebook.react.bridge.WritableMap
 import com.facebook.react.modules.core.DeviceEventManagerModule.RCTDeviceEventEmitter
@@ -23,6 +24,12 @@ import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import kotlin.concurrent.thread
+
+internal fun mailTapIntent(context: Context, kind: String, id: String): Intent =
+    Intent(context, MainActivity::class.java).apply {
+        action = "${context.packageName}.notification.$kind:$id"
+        flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+    }
 
 class BulwarkFcmModule(reactContext: ReactApplicationContext)
     : ReactContextBaseJavaModule(reactContext) {
@@ -59,29 +66,65 @@ class BulwarkFcmModule(reactContext: ReactApplicationContext)
         }
         val title = options.getString("title") ?: "New mail"
         val body = options.getString("body") ?: ""
+        val previews = options.hasKey("previews") && options.getBoolean("previews")
         val initials = options.getString("initials") ?: "?"
         val bgColorHex = options.getString("bgColorHex") ?: "#2563eb"
         val iconUrl = options.takeIf { it.hasKey("iconUrl") }?.getString("iconUrl")
         val emailId = options.getString("emailId")
         val threadId = options.getString("threadId")
-        val subject = options.takeIf { it.hasKey("subject") }?.getString("subject")
         val accountId = options.takeIf { it.hasKey("accountId") }?.getString("accountId")
+        if (accountId.isNullOrBlank()) {
+            promise.reject("bad_args", "accountId is required")
+            return
+        }
+        val jmapAccountId = options.takeIf { it.hasKey("jmapAccountId") }?.getString("jmapAccountId")
         val groupKey = options.takeIf { it.hasKey("groupKey") }?.getString("groupKey")
             ?: accountId?.let { "bulwark-mail:$it" }
         val groupTitle = options.takeIf { it.hasKey("groupTitle") }?.getString("groupTitle")
             ?: accountId ?: "ZyndMail"
+        val generation = mailPreviewGate.snapshot(accountId)
 
         // Bitmap fetch + draw off the bridge thread so the caller doesn't
         // block waiting for the favicon request.
         thread(name = "bulwark-notification") {
-            val largeIcon = iconUrl?.let { fetchBitmap(it) }
-                ?: makeLetterAvatar(initials, bgColorHex)
-            postNotification(
-                notificationId, title, body, largeIcon, bgColorHex,
-                emailId, threadId, subject, accountId, groupKey,
-            )
-            if (groupKey != null) postGroupSummary(groupKey, groupTitle, bgColorHex, accountId)
+            try {
+                val largeIcon = iconUrl?.let { fetchBitmap(it) }
+                    ?: makeLetterAvatar(initials, bgColorHex)
+                val posted = mailPreviewGate.postIfCurrent(generation, previews, {
+                    reactApplicationContext.getSharedPreferences(MAIL_PREVIEW_PREFERENCES, Context.MODE_PRIVATE)
+                        .getBoolean("enabled", false)
+                }, {
+                    reactApplicationContext.getSharedPreferences(MAIL_ACCOUNT_PREFERENCES, Context.MODE_PRIVATE)
+                        .getBoolean("disabled:$accountId", true)
+                }) {
+                    postNotification(
+                        notificationId, title, body, largeIcon, bgColorHex,
+                        emailId, threadId, accountId, jmapAccountId, groupKey, previews,
+                    )
+                    if (groupKey != null) postGroupSummary(groupKey, groupTitle, bgColorHex, accountId, previews)
+                }
+                if (posted) promise.resolve(null)
+                else promise.reject("mail_preview_changed", "Mail preview preference changed before posting")
+            } catch (error: Exception) {
+                promise.reject("mail_post_failed", error)
+            }
+        }
+    }
+
+    @ReactMethod
+    fun setMailPreviewEnabled(enabled: Boolean, promise: Promise) {
+        try {
+            val preferences = reactApplicationContext.getSharedPreferences(MAIL_PREVIEW_PREFERENCES, Context.MODE_PRIVATE)
+            mailPreviewGate.update(enabled, {
+                if (preferences.contains("enabled")) preferences.getBoolean("enabled", false) else null
+            }, { value ->
+                preferences.edit().putBoolean("enabled", value).commit()
+            }) {
+                cancelMailNotifications(null)
+            }
             promise.resolve(null)
+        } catch (error: Exception) {
+            promise.reject("mail_preview_update_failed", error)
         }
     }
 
@@ -89,6 +132,81 @@ class BulwarkFcmModule(reactContext: ReactApplicationContext)
     fun getInitialNotification(promise: Promise) {
         val payload = NotificationTapStore.consume()
         promise.resolve(payload?.toMap())
+    }
+
+    @ReactMethod
+    fun dismissMailNotifications(accountId: String?, promise: Promise) {
+        try {
+            mailPreviewGate.dismiss(accountId) { cancelMailNotifications(accountId) }
+            promise.resolve(null)
+        } catch (error: Exception) {
+            promise.reject("dismiss_mail_failed", error)
+        }
+    }
+
+    @ReactMethod
+    fun disableMailAccount(accountId: String, promise: Promise) {
+        if (accountId.isBlank()) {
+            promise.reject("bad_args", "accountId is required")
+            return
+        }
+        try {
+            mailPreviewGate.dismiss(accountId, true, {
+                reactApplicationContext.getSharedPreferences(MAIL_ACCOUNT_PREFERENCES, Context.MODE_PRIVATE)
+                    .edit().putBoolean("disabled:$accountId", true).commit()
+            }) { cancelMailNotifications(accountId) }
+            promise.resolve(null)
+        } catch (error: Exception) {
+            promise.reject("mail_account_disable_failed", error)
+        }
+    }
+
+    @ReactMethod
+    fun disableMailAccounts(accountIds: ReadableArray, promise: Promise) {
+        val ids = (0 until accountIds.size()).mapNotNull { accountIds.getString(it) }
+        if (ids.size != accountIds.size() || ids.any { it.isBlank() }) {
+            promise.reject("bad_args", "accountIds must contain account IDs")
+            return
+        }
+        try {
+            mailPreviewGate.disableAccounts(ids, {
+                val editor = reactApplicationContext.getSharedPreferences(MAIL_ACCOUNT_PREFERENCES, Context.MODE_PRIVATE).edit()
+                ids.forEach { editor.putBoolean("disabled:$it", true) }
+                editor.commit()
+            }) { ids.forEach { cancelMailNotifications(it) } }
+            promise.resolve(null)
+        } catch (error: Exception) {
+            promise.reject("mail_account_disable_failed", error)
+        }
+    }
+
+    @ReactMethod
+    fun activateMailAccount(accountId: String, promise: Promise) {
+        if (accountId.isBlank()) {
+            promise.reject("bad_args", "accountId is required")
+            return
+        }
+        try {
+            mailPreviewGate.activate(accountId) {
+                reactApplicationContext.getSharedPreferences(MAIL_ACCOUNT_PREFERENCES, Context.MODE_PRIVATE)
+                    .edit().putBoolean("disabled:$accountId", false).commit()
+            }
+            promise.resolve(null)
+        } catch (error: Exception) {
+            promise.reject("mail_account_activation_failed", error)
+        }
+    }
+
+    private fun cancelMailNotifications(accountId: String?) {
+        val manager = reactApplicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val expectedGroup = accountId?.let { "bulwark-mail:$it" }
+        manager.activeNotifications.forEach { item ->
+            val group = item.notification.group
+            if (group?.startsWith("bulwark-mail:") == true &&
+                (expectedGroup == null || group == expectedGroup)) {
+                manager.cancel(item.tag, item.id)
+            }
+        }
     }
 
     @ReactMethod
@@ -105,21 +223,21 @@ class BulwarkFcmModule(reactContext: ReactApplicationContext)
         colorHex: String,
         emailId: String?,
         threadId: String?,
-        subject: String?,
         accountId: String?,
+        jmapAccountId: String?,
         groupKey: String?,
+        previews: Boolean,
     ) {
         val ctx = reactApplicationContext
-        val intent = Intent(ctx, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        val intent = mailTapIntent(ctx, "message", notificationId).apply {
             if (emailId != null) putExtra(NotificationTapStore.EXTRA_EMAIL_ID, emailId)
             if (threadId != null) putExtra(NotificationTapStore.EXTRA_THREAD_ID, threadId)
-            if (subject != null) putExtra(NotificationTapStore.EXTRA_SUBJECT, subject)
             if (accountId != null) putExtra(NotificationTapStore.EXTRA_ACCOUNT_ID, accountId)
+            if (jmapAccountId != null) putExtra(NotificationTapStore.EXTRA_JMAP_ACCOUNT_ID, jmapAccountId)
         }
         val pending = PendingIntent.getActivity(
             ctx,
-            notificationId.hashCode(),
+            0,
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
@@ -130,6 +248,7 @@ class BulwarkFcmModule(reactContext: ReactApplicationContext)
             .setContentTitle(title)
             .setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .setVisibility(if (previews) NotificationCompat.VISIBILITY_PUBLIC else NotificationCompat.VISIBILITY_PRIVATE)
             .setColor(parseColor(colorHex, fallback = Color.parseColor("#2563eb")))
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
@@ -147,7 +266,7 @@ class BulwarkFcmModule(reactContext: ReactApplicationContext)
     // single "N new messages" entry (Android renders the "+N more" itself
     // from the children). Tapping the summary opens the app on the inbox;
     // the per-message children carry the deep link.
-    private fun postGroupSummary(groupKey: String, groupTitle: String, colorHex: String, accountId: String?) {
+    private fun postGroupSummary(groupKey: String, groupTitle: String, colorHex: String, accountId: String?, previews: Boolean) {
         val ctx = reactApplicationContext
         val manager = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val children = manager.activeNotifications.filter {
@@ -167,13 +286,12 @@ class BulwarkFcmModule(reactContext: ReactApplicationContext)
         inbox.setBigContentTitle(groupTitle)
         inbox.setSummaryText(if (count == 1) "1 new message" else "$count new messages")
 
-        val intent = Intent(ctx, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        val intent = mailTapIntent(ctx, "summary", groupKey).apply {
             if (accountId != null) putExtra(NotificationTapStore.EXTRA_ACCOUNT_ID, accountId)
         }
         val pending = PendingIntent.getActivity(
             ctx,
-            groupKey.hashCode(),
+            0,
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
@@ -182,6 +300,7 @@ class BulwarkFcmModule(reactContext: ReactApplicationContext)
             .setContentTitle(groupTitle)
             .setContentText(if (count == 1) "1 new message" else "$count new messages")
             .setStyle(inbox)
+            .setVisibility(if (previews) NotificationCompat.VISIBILITY_PUBLIC else NotificationCompat.VISIBILITY_PRIVATE)
             .setColor(parseColor(colorHex, fallback = Color.parseColor("#2563eb")))
             .setGroup(groupKey)
             .setGroupSummary(true)
@@ -267,6 +386,9 @@ class BulwarkFcmModule(reactContext: ReactApplicationContext)
     companion object {
         // 1 MiB is plenty for a favicon; anything bigger is a sign of trouble.
         private const val MAX_FAVICON_BYTES = 1 * 1024 * 1024
+        private const val MAIL_PREVIEW_PREFERENCES = "bulwark-mail-preview"
+        private const val MAIL_ACCOUNT_PREFERENCES = "bulwark-mail-accounts"
+        private val mailPreviewGate = MailPreviewGate()
 
         @Volatile private var currentInstance: BulwarkFcmModule? = null
 

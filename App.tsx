@@ -25,7 +25,10 @@ import {
   getInitialNotificationTap,
   getStoredRelayBaseUrl,
   setupPushNotifications,
-  teardownPushNotificationsForAccount,
+  isPersonalPushOptedOut,
+  disableGlobalEmailNotifications,
+  restoreRegisteredAndroidMailAccounts,
+  setAndroidMailPreviewEnabled,
   type NotificationTapPayload,
 } from './src/lib/push-notifications';
 import type { MainTabsParamList, RootStackParamList } from './src/navigation/types';
@@ -73,18 +76,36 @@ import { canAutoReloadMailUpdate } from './src/lib/auto-ota';
 import { AppUnlockGate, shouldHideMailForAppState, requiresMailboxUnlock } from './src/lib/app-unlock-gate';
 import {
   isCompanyPushPresentation,
-  registerCompanyPush,
+  reconcileCompanyPush,
+  reconcileDisabledCompanyPush,
+  reconcilePendingCompanyPushRevocation,
+  companyPushRevocationPendingStatus,
+  registeredCompanyPushAccountId,
   resolveCompanyPush,
-  revokeCompanyPush,
 } from './src/lib/company-push';
 import { openCompanyPushIntent } from './src/lib/company-push-intent';
+import { openFetchedPersonalNotification, ownsPersonalNotificationTap, resolveLegacyPersonalNotification } from './src/lib/personal-notification-tap';
+import { generateAccountId } from './src/lib/account-utils';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<MainTabsParamList>();
 const navigationRef = createNavigationContainerRef<RootStackParamList>();
 
-async function navigateToNotificationTap(payload: NotificationTapPayload): Promise<void> {
-  if (!navigationRef.isReady()) return;
+async function navigateToNotificationTap(
+  payload: NotificationTapPayload, stillReady: () => boolean,
+): Promise<'opened' | 'retry' | 'ignored'> {
+  if (!navigationRef.isReady() || !stillReady()) return 'retry';
+  // Older notifications lack an account identity. Opening one against a
+  // different currently active account can show the wrong conversation.
+  if (!payload.accountId) return 'ignored';
+  const target = useAccountStore.getState().getAccountById(payload.accountId);
+  if (!target || isCompanyMailServer(target.serverUrl)) return 'ignored';
+  const currentOwner = () => ownsPersonalNotificationTap(payload.accountId!, {
+    activeAccountId: useAuthStore.getState().activeAccountId,
+    sessionUsername: jmapClient.username,
+    sessionServerUrl: jmapClient.serverUrl,
+    switching: useAuthStore.getState().isLoading,
+  });
 
   // The notification carries the account it was generated for. If the user
   // has since switched to a different account (or had a different one active
@@ -92,17 +113,55 @@ async function navigateToNotificationTap(payload: NotificationTapPayload): Promi
   // account would fetch the email from the wrong server and fail.
   const auth = useAuthStore.getState();
   if (payload.accountId && payload.accountId !== auth.activeAccountId) {
-    const account = useAccountStore.getState().getAccountById(payload.accountId);
-    if (!account) return; // account was logged out — nothing safe to open.
-    await auth.switchAccount(payload.accountId);
-    if (useAuthStore.getState().activeAccountId !== payload.accountId) return;
+    try { await auth.switchAccount(payload.accountId); } catch { return 'retry'; }
+    if (!currentOwner()) return 'retry';
   }
 
-  navigationRef.navigate('EmailThread', {
-    emailId: payload.emailId,
-    threadId: payload.threadId,
-    subject: payload.subject,
-  });
+  if (!navigationRef.isReady() || !stillReady()) return 'retry';
+  if (!currentOwner()) return 'retry';
+  try {
+    if (payload.emailId && payload.threadId) {
+      const emailId = payload.emailId;
+      const jmapAccountId = payload.jmapAccountId;
+      return openFetchedPersonalNotification(
+        payload.accountId,
+        async () => {
+          if (jmapAccountId) {
+            const email = (await getEmails([emailId], jmapAccountId))[0];
+            return email?.id === emailId ? { email, jmapAccountId } : undefined;
+          }
+          return resolveLegacyPersonalNotification(
+            emailId,
+            [jmapClient.accountId, ...jmapClient.getSharedMailAccounts().map((account) => account.id)],
+            async (accountId) => (await getEmails([emailId], accountId))[0],
+          );
+        },
+        () => ({
+          activeAccountId: useAuthStore.getState().activeAccountId,
+          sessionUsername: jmapClient.username,
+          sessionServerUrl: jmapClient.serverUrl,
+          switching: useAuthStore.getState().isLoading,
+        }),
+        () => navigationRef.isReady() && stillReady(),
+        ({ email, jmapAccountId }) => {
+          navigationRef.navigate('EmailThread', {
+            emailId: email.id,
+            threadId: email.threadId,
+            subject: email.subject ?? payload.subject,
+            jmapAccountId,
+            emailIds: [email.id],
+          });
+        },
+      );
+    } else if (!payload.emailId && !payload.threadId) {
+      navigationRef.navigate('UnifiedInbox');
+    } else {
+      return 'ignored';
+    }
+    return 'opened';
+  } catch {
+    return 'retry';
+  }
 }
 
   // Deep links (zyndmail://, webmail https permalinks, mailto:) and
@@ -142,6 +201,9 @@ function MainTabsNavigator({ navigation, onMailListBusyChange }: NativeStackScre
   onMailListBusyChange: (busy: boolean) => void;
 }) {
   const c = useColors();
+  const t = useLocaleStore((state) => state.t);
+  const serverUrl = useAuthStore((state) => state.serverUrl);
+  const companyMailOnly = isCompanyMailServer(serverUrl ?? '') || jmapClient.hasCompanyNoDeletePolicy;
   const mailboxes = useEmailStore((state) => state.mailboxes);
   const logout = useAuthStore((state) => state.logout);
   const inboxUnreadCount = mailboxes.find((mailbox) => mailbox.role === 'inbox')?.unreadEmails ?? 0;
@@ -149,6 +211,10 @@ function MainTabsNavigator({ navigation, onMailListBusyChange }: NativeStackScre
   const hasContacts = useHasContacts();
   const hasFiles = useHasFiles();
   const disabledTabStyle = { opacity: 0.4 } as const;
+  const explainUnavailable = (feature: string) => Alert.alert(
+    t('navigation.feature_unavailable.title', '{feature} is unavailable', { feature }),
+    t('navigation.feature_unavailable.body', 'This server or account does not offer {feature}. Contact your workspace administrator if you need access.', { feature }),
+  );
 
   return (
     <View style={{ flex: 1, backgroundColor: c.background }}>
@@ -216,7 +282,7 @@ function MainTabsNavigator({ navigation, onMailListBusyChange }: NativeStackScre
           />
         )}
       </Tab.Screen>
-      <Tab.Screen
+      {!companyMailOnly && <Tab.Screen
         name="Calendar"
         component={CalendarScreen}
         options={{
@@ -226,11 +292,11 @@ function MainTabsNavigator({ navigation, onMailListBusyChange }: NativeStackScre
         }}
         listeners={{
           tabPress: (e) => {
-            if (!hasCalendar) e.preventDefault();
+            if (!hasCalendar) { e.preventDefault(); explainUnavailable(t('sidebar.calendar', 'Calendar')); }
           },
         }}
-      />
-      <Tab.Screen
+      />}
+      {!companyMailOnly && <Tab.Screen
         name="Contacts"
         component={ContactsScreen}
         options={{
@@ -240,11 +306,11 @@ function MainTabsNavigator({ navigation, onMailListBusyChange }: NativeStackScre
         }}
         listeners={{
           tabPress: (e) => {
-            if (!hasContacts) e.preventDefault();
+            if (!hasContacts) { e.preventDefault(); explainUnavailable(t('sidebar.contacts', 'Contacts')); }
           },
         }}
-      />
-      <Tab.Screen
+      />}
+      {!companyMailOnly && <Tab.Screen
         name="Files"
         component={FilesScreen}
         options={{
@@ -254,10 +320,10 @@ function MainTabsNavigator({ navigation, onMailListBusyChange }: NativeStackScre
         }}
         listeners={{
           tabPress: (e) => {
-            if (!hasFiles) e.preventDefault();
+            if (!hasFiles) { e.preventDefault(); explainUnavailable(t('sidebar.files', 'Files')); }
           },
         }}
-      />
+      />}
       <Tab.Screen
         name="Settings"
         options={{
@@ -285,6 +351,11 @@ function AppContent() {
   const [gateLocked, setAppLocked] = React.useState(true);
   const lockEnabled = useSettingsStore((state) => state.appLockEnabled);
   const settingsHydrated = useSettingsStore((state) => state.hydrated);
+  React.useEffect(() => {
+    if (!settingsHydrated) return;
+    void setAndroidMailPreviewEnabled(useSettingsStore.getState().notificationPreviewsEnabled)
+      .catch(() => undefined);
+  }, [settingsHydrated]);
   const appLocked = requiresMailboxUnlock(settingsHydrated, lockEnabled, gateLocked);
   const [unlockBusy, setUnlockBusy] = React.useState(false);
   const [unlockError, setUnlockError] = React.useState<string | null>(null);
@@ -321,16 +392,22 @@ function AppContent() {
   // JMAP session comes up in the background.
   const hasPersistedAccount = useAccountStore((state) => state.activeAccountId != null);
   const accounts = useAccountStore((state) => state.accounts);
+  const activeAccountId = useAuthStore((state) => state.activeAccountId);
   const [accountRegistryHydrated, setAccountRegistryHydrated] = React.useState(
     () => useAccountStore.persist.hasHydrated(),
   );
   const appLockedRef = React.useRef(appLocked);
   appLockedRef.current = appLocked;
   const pendingCompanyPushResponses = React.useRef<Notifications.NotificationResponse[]>([]);
+  const pendingAndroidPushTap = React.useRef<NotificationTapPayload | null>(null);
+  const processingAndroidPushTap = React.useRef(false);
+  const androidPushRetryCount = React.useRef(0);
+  const [pendingAndroidPushRevision, setPendingAndroidPushRevision] = React.useState(0);
   const handledCompanyPushResponses = React.useRef(new Set<string>());
   const processingCompanyPush = React.useRef(false);
   const companyPushRetryCount = React.useRef(0);
   const [pendingCompanyPushRevision, setPendingCompanyPushRevision] = React.useState(0);
+  const [companyRevocationPending, setCompanyRevocationPending] = React.useState(false);
   React.useEffect(() => {
     if (useAccountStore.persist.hasHydrated()) {
       setAccountRegistryHydrated(true);
@@ -528,29 +605,64 @@ function AppContent() {
     return unsubscribe;
   }, []);
 
-  // When the user taps a notification the app lands here with an email id
-  // either stashed on the cold-start intent or delivered as a live event.
-  // Wait until auth is restored so the navigation target has credentials to
-  // load the thread.
+  // Capture native Android taps before auth or navigation is ready. The
+  // native initial-intent getter clears its slot, so keep our own pending copy
+  // until the account is restored and the optional app lock is open.
   React.useEffect(() => {
-    if (!isAuthenticated) return;
-
     let cancelled = false;
+    const capture = (payload: NotificationTapPayload | null) => {
+      if (!payload || cancelled) return;
+      pendingAndroidPushTap.current = payload;
+      androidPushRetryCount.current = 0;
+      setPendingAndroidPushRevision((revision) => revision + 1);
+    };
     void (async () => {
       const initial = await getInitialNotificationTap();
-      if (cancelled || !initial) return;
-      await navigateToNotificationTap(initial);
+      if (!pendingAndroidPushTap.current) capture(initial);
     })();
-
-    const unsubscribe = addNotificationTapListener((payload) => {
-      void navigateToNotificationTap(payload);
-    });
-
+    const unsubscribe = addNotificationTapListener(capture);
     return () => {
       cancelled = true;
       unsubscribe();
     };
-  }, [isAuthenticated]);
+  }, []);
+
+  React.useEffect(() => {
+    const payload = pendingAndroidPushTap.current;
+    if (!payload || !isAuthenticated || appLocked || !accountRegistryHydrated ||
+        !navigationReady || !navigationRef.isReady() || processingAndroidPushTap.current) return;
+    processingAndroidPushTap.current = true;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let live = true;
+    void navigateToNotificationTap(payload, () => live && !appLockedRef.current &&
+      useAuthStore.getState().isAuthenticated && pendingAndroidPushTap.current === payload).then((result) => {
+      if (!live) return;
+      if (pendingAndroidPushTap.current !== payload) return;
+      if (result === 'opened' || result === 'ignored') {
+        pendingAndroidPushTap.current = null;
+        androidPushRetryCount.current = 0;
+      } else {
+        const attempts = ++androidPushRetryCount.current;
+        if (attempts <= 4) retryTimer = setTimeout(() => {
+          setPendingAndroidPushRevision((revision) => revision + 1);
+        }, [1_000, 3_000, 10_000, 30_000][attempts - 1]);
+        else Alert.alert(
+          useLocaleStore.getState().t('error'),
+          useLocaleStore.getState().t(
+            'notification_open_retry',
+            'ZyndMail could not verify this email link. Check your connection, then tap the notification again.',
+          ),
+        );
+      }
+    }).finally(() => {
+      processingAndroidPushTap.current = false;
+      if (pendingAndroidPushTap.current && (!live || pendingAndroidPushTap.current !== payload)) {
+        setPendingAndroidPushRevision((revision) => revision + 1);
+      }
+    });
+    return () => { live = false; if (retryTimer) clearTimeout(retryTimer); };
+  }, [pendingAndroidPushRevision, isAuthenticated, appLocked, accountRegistryHydrated,
+    navigationReady, activeAccountId]);
 
   // Deep links and share-sheet payloads. The cold-start URL / share is read
   // once auth is restored so the target screen has credentials.
@@ -606,21 +718,26 @@ function AppContent() {
   const emailNotificationsEnabled = useSettingsStore(
     (s) => s.emailNotificationsEnabled,
   );
-  const activeAccountId = useAuthStore((s) => s.activeAccountId);
   React.useEffect(() => {
-    if (!isAuthenticated || !client) return;
+    if (!settingsHydrated || emailNotificationsEnabled) return;
+    const close = async () => {
+      await disableGlobalEmailNotifications(isAuthenticated && client ? activeAccountId ?? undefined : undefined);
+    };
+    void close().catch((error) => console.warn('[push] email opt-out failed:', error));
+  }, [settingsHydrated, emailNotificationsEnabled, isAuthenticated, activeAccountId, client]);
+  React.useEffect(() => {
+    if (!settingsHydrated || !accountRegistryHydrated || !emailNotificationsEnabled) return;
+    void restoreRegisteredAndroidMailAccounts().catch((error) =>
+      console.warn('[push] email re-enable failed:', error));
+  }, [settingsHydrated, accountRegistryHydrated, emailNotificationsEnabled]);
+  React.useEffect(() => {
+    if (!settingsHydrated || !accountRegistryHydrated || !isAuthenticated || !client) return;
     if (isCompanyMailServer(client.serverUrl ?? '')) return;
 
     let cancelled = false;
     const doSetup = async () => {
-      if (!emailNotificationsEnabled) {
-        if (activeAccountId) {
-          await teardownPushNotificationsForAccount(activeAccountId).catch(
-            () => undefined,
-          );
-        }
-        return;
-      }
+      if (!emailNotificationsEnabled) return;
+      if (activeAccountId && await isPersonalPushOptedOut(activeAccountId)) return;
       const relayBaseUrl = await getStoredRelayBaseUrl();
       if (!relayBaseUrl) return;
       try {
@@ -646,33 +763,82 @@ function AppContent() {
       cancelled = true;
       unsubscribe();
     };
-  }, [client, isAuthenticated, emailNotificationsEnabled, activeAccountId]);
+  }, [client, isAuthenticated, settingsHydrated, accountRegistryHydrated, emailNotificationsEnabled, activeAccountId]);
 
   // The company relay owns its JMAP subscription. The fork must never also
   // register the same company mailbox with Bulwark's public FCM relay.
   React.useEffect(() => {
-    if (!isAuthenticated || !client || !activeAccountId || !isCompanyMailServer(client.serverUrl ?? '')) return;
-    if (!emailNotificationsEnabled) {
-      void revokeCompanyPush(activeAccountId).catch(() => undefined);
-      return;
-    }
-    const refresh = (force = false) => { void registerCompanyPush(activeAccountId, false, force); };
-    // Reconcile the server on every cold start. A local cache can say that
-    // previews are enabled while Stalwart still has an older generic
-    // subscription (for example after an OTA or a relay-side migration).
-    // The relay's PUT is idempotent for an unchanged mode and renews its lease.
-    refresh(true);
+    if (!activeAccountId) return;
+    const account = useAccountStore.getState().getAccountById(activeAccountId);
+    if (!settingsHydrated || !accountRegistryHydrated || !isAuthenticated || !account || !isCompanyMailServer(account.serverUrl)) return;
+    let live = true;
+    let running = false;
+    let rerun = false;
+    const refresh = () => {
+      if (running) { rerun = true; return; }
+      running = true;
+      void (async () => {
+        do {
+          rerun = false;
+          try {
+            await reconcileCompanyPush(activeAccountId);
+          } catch {}
+        } while (live && rerun);
+      })().finally(() => { running = false; });
+    };
+    refresh();
     const stateSubscription = AppState.addEventListener('change', (state) => {
-      if (state === 'active') refresh(true);
+      if (state === 'active') refresh();
     });
-    const tokenSubscription = Notifications.addPushTokenListener(() => refresh(true));
-    const nativeTokenSubscription = addTokenRefreshListener(() => refresh(true));
+    const networkSubscription = useNetworkStore.subscribe((state, previous) => {
+      if (state.online && !previous.online) refresh();
+    });
+    const tokenSubscription = Notifications.addPushTokenListener(refresh);
+    const nativeTokenSubscription = addTokenRefreshListener(refresh);
     return () => {
+      live = false;
       stateSubscription.remove();
+      networkSubscription();
       tokenSubscription.remove();
       nativeTokenSubscription();
     };
-  }, [client, isAuthenticated, activeAccountId, emailNotificationsEnabled]);
+  }, [isAuthenticated, activeAccountId, accountRegistryHydrated, emailNotificationsEnabled, settingsHydrated]);
+
+  React.useEffect(() => {
+    if (!accountRegistryHydrated || !settingsHydrated) return;
+    let live = true;
+    let running = false;
+    let rerun = false;
+    const refresh = () => {
+      if (running) { rerun = true; return; }
+      running = true;
+      void (async () => {
+        do {
+          rerun = false;
+          try {
+            const pending = emailNotificationsEnabled
+              ? await reconcilePendingCompanyPushRevocation()
+              : await reconcileDisabledCompanyPush();
+            if (live) setCompanyRevocationPending(pending);
+          } catch {
+            if (live) setCompanyRevocationPending(true);
+          }
+        } while (live && rerun);
+      })().finally(() => { running = false; });
+    };
+    refresh();
+    const stateSubscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') refresh();
+    });
+    const networkSubscription = useNetworkStore.subscribe((state, previous) => {
+      if (state.online && !previous.online) refresh();
+    });
+    return () => {
+      live = false;
+      stateSubscription.remove();
+      networkSubscription();
+    };
+  }, [accountRegistryHydrated, settingsHydrated, isAuthenticated, activeAccountId, emailNotificationsEnabled]);
 
   // Capture notification taps independently of auth and the optional app
   // lock. Expo retains the cold-start response until it is explicitly cleared,
@@ -713,6 +879,9 @@ function AppContent() {
       readReadiness: () => ({
         authenticated: useAuthStore.getState().isAuthenticated,
         locked: appLockedRef.current,
+        switching: useAuthStore.getState().isLoading,
+        sessionAccountId: jmapClient.username && jmapClient.serverUrl
+          ? generateAccountId(jmapClient.username, jmapClient.serverUrl) : null,
         accountRegistryHydrated: useAccountStore.persist.hasHydrated(),
         navigationReady: navigationRef.isReady(),
         activeAccountId: useAuthStore.getState().activeAccountId,
@@ -721,6 +890,7 @@ function AppContent() {
       isCompanyMailServer,
       isCompanyPushPresentation: (content) =>
         isCompanyPushPresentation(content as Notifications.NotificationContent),
+      registeredCompanyAccountId: registeredCompanyPushAccountId,
       switchAccount: (accountId) => useAuthStore.getState().switchAccount(accountId),
       resolveDestination: resolveCompanyPush,
       navigateToEmail: (destination) => navigationRef.navigate('EmailThread', {
@@ -729,14 +899,6 @@ function AppContent() {
         jmapAccountId: destination.accountId,
         emailIds: [destination.emailId],
       }),
-      navigateToInbox: () => navigationRef.navigate('UnifiedInbox'),
-      showInboxFallback: () => Alert.alert(
-        useLocaleStore.getState().t('error'),
-        useLocaleStore.getState().t(
-          'notification_link_unavailable',
-          'This notification cannot open a single email. Search your inbox to find the message.',
-        ),
-      ),
       clearLastNotificationResponse: Notifications.clearLastNotificationResponseAsync,
     }).then((result) => {
       if (result === 'opened' || result === 'ignored') {
@@ -757,6 +919,9 @@ function AppContent() {
           }, [1_000, 3_000, 10_000, 30_000][attempts - 1]);
         } else {
           companyPushRetryCount.current = 0;
+          pendingCompanyPushResponses.current = pendingCompanyPushResponses.current
+            .filter((item) => item.notification.request.identifier !== identifier);
+          setPendingCompanyPushRevision((revision) => revision + 1);
           Alert.alert(
             useLocaleStore.getState().t('error'),
             useLocaleStore.getState().t(
@@ -908,6 +1073,10 @@ function AppContent() {
   // have a persisted active account, render the main UI immediately with
   // whatever the email-store hydrated from cache. restoreSession still runs
   // in the background and swaps in fresh data once it completes.
+  const revocationBanner = companyRevocationPending ? <Text style={[
+    styles.revocationBanner, { backgroundColor: appColors.warningBg, color: appColors.text },
+  ]}>{companyPushRevocationPendingStatus.reason}</Text> : null;
+
   if (!settingsHydrated || (!hasRestoredSession && !hasPersistedAccount)) {
     return (
       <>
@@ -919,15 +1088,17 @@ function AppContent() {
 
   if (hasRestoredSession && !isAuthenticated) {
     return (
-      <>
+      <View style={{ flex: 1 }}>
         <StatusBar style={statusBarStyle} />
+        {revocationBanner}
         <LoginScreen />
-      </>
+      </View>
     );
   }
 
   return (
     <View style={{ flex: 1 }}>
+    {revocationBanner}
     <NavigationContainer
       ref={navigationRef}
       onReady={() => {
@@ -1004,6 +1175,7 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
+  revocationBanner: { paddingHorizontal: spacing.md, paddingVertical: spacing.sm, ...typography.body },
   privacyCover: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, zIndex: 101 },
   loadingContainer: {
     flex: 1,

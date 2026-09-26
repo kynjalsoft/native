@@ -16,6 +16,7 @@ import {
 } from 'lucide-react-native';
 import { spacing, radius, typography, componentSizes, type ThemePalette } from '../theme/tokens';
 import { useColors, useResolvedTheme } from '../theme/colors';
+import { useTypography } from '../theme/dynamic';
 import { MoveSheet } from '../components/MoveSheet';
 import { MessageContent } from '../components/email/MessageContent';
 import { ThreadMessageCard } from '../components/email/ThreadMessageCard';
@@ -56,7 +57,8 @@ function KeyboardAwareThreadLayout({ children, style }: {
 export default function EmailThreadScreen({ route, navigation }: Props) {
   const companyNoDelete = jmapClient.hasCompanyNoDeletePolicy;
   const c = useColors();
-  const styles = React.useMemo(() => makeStyles(c), [c]);
+  const type = useTypography();
+  const styles = React.useMemo(() => makeStyles(c, type), [c, type]);
   const { t } = useLocaleStore();
   const { jmapAccountId } = route.params;
   // The displayed email is tracked in local state (not a route param) so that
@@ -1104,7 +1106,8 @@ function MoreMenuSheet({
   onForwardAsAttachment, onViewSource, onExport,
 }: MoreMenuSheetProps) {
   const c = useColors();
-  const styles = React.useMemo(() => makeStyles(c), [c]);
+  const type = useTypography();
+  const styles = React.useMemo(() => makeStyles(c, type), [c, type]);
   const t = useLocaleStore((s) => s.t);
   const insets = useSafeAreaInsets();
   const slideY = React.useRef(new Animated.Value(600)).current;
@@ -1247,7 +1250,8 @@ interface TagMenuSheetProps {
 
 function TagMenuSheet({ visible, onClose, keywords, activeKeywords, onToggle }: TagMenuSheetProps) {
   const c = useColors();
-  const styles = React.useMemo(() => makeStyles(c), [c]);
+  const type = useTypography();
+  const styles = React.useMemo(() => makeStyles(c, type), [c, type]);
   const t = useLocaleStore((s) => s.t);
   const insets = useSafeAreaInsets();
   const slideY = React.useRef(new Animated.Value(500)).current;
@@ -1319,7 +1323,8 @@ function MoreMenuItem({
   icon, label, onPress, trailing,
 }: { icon: React.ReactNode; label: string; onPress?: () => void; trailing?: React.ReactNode }) {
   const c = useColors();
-  const styles = React.useMemo(() => makeStyles(c), [c]);
+  const type = useTypography();
+  const styles = React.useMemo(() => makeStyles(c, type), [c, type]);
   return (
     <Pressable
       onPress={onPress}
@@ -1336,7 +1341,8 @@ function ToolbarButton({
   icon, label, onPress,
 }: { icon: React.ReactNode; label: string; onPress?: () => void }) {
   const c = useColors();
-  const styles = React.useMemo(() => makeStyles(c), [c]);
+  const type = useTypography();
+  const styles = React.useMemo(() => makeStyles(c, type), [c, type]);
   const showLabels = useSettingsStore((s) => s.showToolbarLabels);
   return (
     <Pressable
@@ -1355,7 +1361,8 @@ function BottomBarButton({
   icon, label, onPress, disabled,
 }: { icon: React.ReactNode; label: string; onPress?: () => void; disabled?: boolean }) {
   const c = useColors();
-  const styles = React.useMemo(() => makeStyles(c), [c]);
+  const type = useTypography();
+  const styles = React.useMemo(() => makeStyles(c, type), [c, type]);
   const showLabels = useSettingsStore((s) => s.showToolbarLabels);
   return (
     <Pressable
@@ -1374,7 +1381,7 @@ function BottomBarButton({
   );
 }
 
-function makeStyles(c: ThemePalette) {
+function makeStyles(c: ThemePalette, type: ReturnType<typeof useTypography>) {
   return StyleSheet.create({
   container: { flex: 1, backgroundColor: c.background },
 
@@ -1410,7 +1417,7 @@ function makeStyles(c: ThemePalette) {
     minHeight: 44,
   },
   toolbarActionLabel: {
-    ...typography.small,
+    ...type.small,
     color: c.textSecondary,
   },
 
@@ -1421,7 +1428,7 @@ function makeStyles(c: ThemePalette) {
     justifyContent: 'center',
     padding: spacing.lg,
   },
-  errorText: { ...typography.body, color: c.error, textAlign: 'center' },
+  errorText: { ...type.body, color: c.error, textAlign: 'center' },
   pagerViewport: { flex: 1, backgroundColor: c.background },
   scroll: { flex: 1, backgroundColor: c.background },
 
@@ -1449,7 +1456,7 @@ function makeStyles(c: ThemePalette) {
     color: c.text,
     letterSpacing: -0.2,
   },
-  conversationSummary: { ...typography.caption, color: c.textMuted, marginTop: spacing.xs },
+  conversationSummary: { ...type.caption, color: c.textMuted, marginTop: spacing.xs },
   threadLoading: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1457,7 +1464,7 @@ function makeStyles(c: ThemePalette) {
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,
   },
-  threadLoadingText: { ...typography.caption, color: c.textMuted },
+  threadLoadingText: { ...type.caption, color: c.textMuted },
 
   // Loading skeleton
   skeletonBone: {
@@ -1504,7 +1511,7 @@ function makeStyles(c: ThemePalette) {
     opacity: 0.4,
   },
   bottomBarLabel: {
-    ...typography.small,
+    ...type.small,
     color: c.textSecondary,
   },
   bottomBarLabelDisabled: {
@@ -1552,7 +1559,7 @@ function makeStyles(c: ThemePalette) {
     borderBottomColor: c.border,
   },
   sheetTitle: {
-    ...typography.bodySemibold,
+    ...type.bodySemibold,
     color: c.text,
   },
   sheetClose: {
@@ -1579,7 +1586,7 @@ function makeStyles(c: ThemePalette) {
     justifyContent: 'center',
   },
   moreItemLabel: {
-    ...typography.body,
+    ...type.body,
     color: c.text,
     flex: 1,
   },

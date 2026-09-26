@@ -335,13 +335,19 @@
       "your_server": "your server"
     }
   },
+  "navigation": {
+    "feature_unavailable": {
+      "body": "This server or account does not offer {feature}. Contact your workspace administrator if you need access.",
+      "title": "{feature} is unavailable"
+    }
+  },
   "offline": {
     "banner": "You are offline",
     "queued_changes": "{count, plural, one {# change} other {# changes}} will sync when you reconnect"
   },
   "push_prompt": {
     "body": "Turn on background notifications so new messages reach you while the app is closed.",
-    "company_body": "Get new-mail alerts with sender, subject and a short preview. You can turn previews off in notification settings.",
+    "company_body": "Get private new-mail alerts. Message previews can be enabled in notification settings when your mail relay supports them.",
     "dismiss": "Not now",
     "enable": "Enable",
     "title": "Get notified about new mail"
@@ -543,8 +549,10 @@
         "active": "This device was registered for private mail alerts. Delivery depends on server and device connectivity.",
         "denied": "Allow notifications for ZyndMail in your device settings.",
         "description": "Get private new-mail alerts on this device.",
+        "email_disabled": "Turn on Email notifications above to enable company mail alerts.",
         "previews": "Show message previews",
         "previews_description": "Show sender, subject and a short snippet. This text passes through Expo and may appear on your lock screen, subject to your device settings. Turn off for generic alerts.",
+        "previews_unavailable": "An available, approved relay is required to turn on previews. You can turn them off on this device at any time.",
         "section": "New-mail alerts for authorized personal and shared mailboxes.",
         "title": "Company mail alerts",
         "toggle": "Push notifications"
@@ -730,6 +738,11 @@
     "remove_account_message": "Sign out of {account} on this device. Your mail stays on the server.",
     "remove_account_title": "Remove account?",
     "show_unread": "Show unread"
+  },
+  "support": {
+    "diagnostic_hint": "When reporting an issue, include the app version and when it happened. Do not include message content or sign-in codes.",
+    "staff_help": "Need help signing in or using your mailbox? Contact your workspace administrator through your usual company support channel. Never share a password or verification code.",
+    "title": "Help with ZyndMail"
   },
   "unified_mailbox": {
     "accounts_failed": "{count} account(s) could not be loaded",

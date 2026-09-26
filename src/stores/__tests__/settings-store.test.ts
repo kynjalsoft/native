@@ -22,6 +22,7 @@ describe('settings-store', () => {
       expect(s.includeGroupInUnified).toBe(true);
       expect(s.autoSelectReplyIdentity).toBe(false);
       expect(s.showBirthdayCalendar).toBe(false);
+      expect(s.notificationPreviewsEnabled).toBe(true);
       expect(s.attachmentReminderKeywords).toContain('anhang');
       expect(s.attachmentReminderKeywords).toContain('添付');
     });

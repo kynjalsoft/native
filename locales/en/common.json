@@ -976,7 +976,7 @@
         "unsupported_note": "Your mail server does not support ordering by read state, stars or tags. Those levels are ignored and the list stays chronological."
       },
       "title": "Appearance",
-      "description": "Customize the look and feel of your webmail",
+      "description": "Choose how ZyndMail looks on this device",
       "theme": {
         "label": "Theme",
         "description": "Choose your preferred color scheme",
@@ -989,15 +989,15 @@
         "description": "Choose your preferred language"
       },
       "font_size": {
-        "label": "Font Size",
-        "description": "Adjust text size for better readability",
+        "label": "Mail text size",
+        "description": "Adjust text in the inbox, messages, and composer. Device text size also affects other screens.",
         "small": "Small",
         "medium": "Medium",
         "large": "Large"
       },
       "list_density": {
         "label": "Density",
-        "description": "Control spacing and padding across the UI",
+        "description": "Choose how much space each inbox row uses",
         "extra_compact": "Extra Compact",
         "compact": "Compact",
         "regular": "Regular",

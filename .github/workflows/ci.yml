@@ -22,8 +22,14 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Translation key coverage
+        run: npm run i18n:check
+
       - name: Unit tests
         run: npm test
+
+      - name: Export iOS and Android bundles
+        run: npx expo export --platform ios --platform android --output-dir /tmp/zyndmail-ci-export
 
   android-native:
     runs-on: ubuntu-latest

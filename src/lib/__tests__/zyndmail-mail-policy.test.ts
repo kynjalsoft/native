@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assertMailDeletionAllowed, hasCompanyNoDeletePolicy } from '../zyndmail-mail-policy';
+import { assertMailDeletionAllowed, canOfferEmptyFolder, hasCompanyNoDeletePolicy } from '../zyndmail-mail-policy';
 import type { JMAPMethodCall } from '../../api/types';
 
 const call = (name: string, args: Record<string, unknown>): JMAPMethodCall => [name, args, '0'];
@@ -27,5 +27,14 @@ describe('company no-delete mail policy', () => {
 
   it('leaves generic Bulwark behavior unchanged when company mode is off', () => {
     expect(() => assertMailDeletionAllowed([call('Email/set', { destroy: ['e'] })], false)).not.toThrow();
+  });
+
+  it('offers Empty folder only when deletion is allowed and the folder has messages', () => {
+    expect(canOfferEmptyFolder(true, 'trash', false, true)).toBe(false);
+    expect(canOfferEmptyFolder(true, 'junk', true, true)).toBe(false);
+    expect(canOfferEmptyFolder(false, 'trash', false, true)).toBe(true);
+    expect(canOfferEmptyFolder(false, 'junk', true, true)).toBe(true);
+    expect(canOfferEmptyFolder(false, 'inbox', false, true)).toBe(false);
+    expect(canOfferEmptyFolder(false, 'trash', false, false)).toBe(false);
   });
 });

@@ -30,6 +30,7 @@ import {
   revokePushDevice,
   setStoredRelayBaseUrl,
   setupPushNotifications,
+  setPersonalPushOptedOut,
   teardownPushNotificationsForAccount,
   type PushDevice,
   type PushSetupPhase,
@@ -144,6 +145,7 @@ export function NotificationSettings() {
     });
     try {
       await setStoredRelayBaseUrl(trimmed);
+      if (activeAccountId) await setPersonalPushOptedOut(activeAccountId, false);
       await setupPushNotifications({
         relayBaseUrl: trimmed,
         accountLabel: username ?? undefined,
@@ -166,6 +168,7 @@ export function NotificationSettings() {
     });
     try {
       if (activeAccountId) {
+        await setPersonalPushOptedOut(activeAccountId, true);
         await teardownPushNotificationsForAccount(activeAccountId);
       }
       // The relay base URL is a device-wide setting shared with any other
@@ -220,6 +223,26 @@ export function NotificationSettings() {
 
   return (
     <View style={styles.container}>
+      <SettingsSection
+        title={t('settings.notifications.email.title', 'Email Notifications')}
+        description={t('settings.notifications.email.description', 'Configure notifications for incoming emails')}
+      >
+        <SettingItem
+          label={t('settings.notifications.email.enabled', 'Email notifications')}
+          description={t('settings.notifications.email.enabled_desc', 'Show notifications when new emails arrive')}
+        >
+          <ToggleSwitch checked={emailEnabled} onChange={(v) => update('emailNotificationsEnabled', v)} />
+        </SettingItem>
+        {Platform.OS === 'android' && (
+          <Text style={styles.fieldDescription}>
+            {t(
+              'settings.notifications.email.sound_channel_hint',
+              'Sound and vibration for mail alerts are controlled by the Android notification channel: long-press a notification or open the system app settings.',
+            )}
+          </Text>
+        )}
+      </SettingsSection>
+
       {company ? <CompanyPushSettings /> : <>
       <SettingsSection
         title={t('settings.notifications.push.title', 'Background Notifications')}
@@ -355,27 +378,7 @@ export function NotificationSettings() {
       )}
       </>}
 
-      <SettingsSection
-        title={t('settings.notifications.email.title', 'Email Notifications')}
-        description={t('settings.notifications.email.description', 'Configure notifications for incoming emails')}
-      >
-        <SettingItem
-          label={t('settings.notifications.email.enabled', 'Email notifications')}
-          description={t('settings.notifications.email.enabled_desc', 'Show notifications when new emails arrive')}
-        >
-          <ToggleSwitch checked={emailEnabled} onChange={(v) => update('emailNotificationsEnabled', v)} />
-        </SettingItem>
-        {Platform.OS === 'android' && (
-          <Text style={styles.fieldDescription}>
-            {t(
-              'settings.notifications.email.sound_channel_hint',
-              'Sound and vibration for mail alerts are controlled by the Android notification channel: long-press a notification or open the system app settings.',
-            )}
-          </Text>
-        )}
-      </SettingsSection>
-
-      <SettingsSection
+      {!company && <SettingsSection
         title={t('settings.notifications.calendar.title', 'Calendar Notifications')}
         description={t('settings.notifications.calendar.description', 'Configure notifications for calendar events')}
       >
@@ -397,7 +400,7 @@ export function NotificationSettings() {
             onChange={(v) => update('calendarInvitationParsingEnabled', v)}
           />
         </SettingItem>
-      </SettingsSection>
+      </SettingsSection>}
 
       <Dialog
         visible={confirmDisable}

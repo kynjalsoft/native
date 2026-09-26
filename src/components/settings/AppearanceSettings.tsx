@@ -103,7 +103,7 @@ export function AppearanceSettings() {
   return (
     <SettingsSection
       title={t('settings.appearance.title', "Appearance")}
-      description={t('settings.appearance.description', "Customize the look and feel of your webmail")}
+      description={t('settings.appearance.description', "Choose how ZyndMail looks on this device")}
     >
       <SettingItem label={t('settings.appearance.theme.label', "Theme")} description={t('settings.appearance.theme.description', "Choose your preferred color scheme")}>
         <RadioGroup
@@ -117,7 +117,7 @@ export function AppearanceSettings() {
         />
       </SettingItem>
 
-      <SettingItem label={t('settings.appearance.font_size.label', "Font Size")} description={t('settings.appearance.font_size.description', "Adjust text size for better readability")}>
+      <SettingItem label={t('settings.appearance.font_size.label', "Mail text size")} description={t('settings.appearance.font_size.description', "Adjust text in the inbox, messages, and composer. Device text size also affects other screens.")}>
         <RadioGroup
           value={fontSize}
           onChange={(v) => setFontSize(v as FontSize)}
@@ -130,7 +130,7 @@ export function AppearanceSettings() {
       </SettingItem>
 
       <View>
-        <SettingItem label={t('settings.appearance.list_density.label', "Density")} description={t('settings.appearance.list_density.description', "Control spacing and padding across the UI")} noBorder />
+        <SettingItem label={t('settings.appearance.list_density.label', "Density")} description={t('settings.appearance.list_density.description', "Choose how much space each inbox row uses")} noBorder />
         <RadioGroup
           value={density}
           onChange={(v) => setDensity(v as Density)}
