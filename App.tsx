@@ -26,6 +26,7 @@ import {
   getStoredRelayBaseUrl,
   setupPushNotifications,
   disableAllRegisteredAndroidMailAccounts,
+  restoreRegisteredAndroidMailAccounts,
   setAndroidMailPreviewEnabled,
   teardownPushNotificationsForAccount,
   type NotificationTapPayload,
@@ -721,14 +722,20 @@ function AppContent() {
     if (!settingsHydrated || emailNotificationsEnabled) return;
     const close = async () => {
       await disableAllRegisteredAndroidMailAccounts();
-      if (isAuthenticated && activeAccountId && client && !isCompanyMailServer(client.serverUrl ?? '')) {
+      if (!useSettingsStore.getState().emailNotificationsEnabled &&
+          isAuthenticated && activeAccountId && client && !isCompanyMailServer(client.serverUrl ?? '')) {
         await teardownPushNotificationsForAccount(activeAccountId);
       }
     };
     void close().catch((error) => console.warn('[push] email opt-out failed:', error));
   }, [settingsHydrated, emailNotificationsEnabled, isAuthenticated, activeAccountId, client]);
   React.useEffect(() => {
-    if (!isAuthenticated || !client) return;
+    if (!settingsHydrated || !accountRegistryHydrated || !emailNotificationsEnabled) return;
+    void restoreRegisteredAndroidMailAccounts().catch((error) =>
+      console.warn('[push] email re-enable failed:', error));
+  }, [settingsHydrated, accountRegistryHydrated, emailNotificationsEnabled]);
+  React.useEffect(() => {
+    if (!settingsHydrated || !accountRegistryHydrated || !isAuthenticated || !client) return;
     if (isCompanyMailServer(client.serverUrl ?? '')) return;
 
     let cancelled = false;
@@ -759,7 +766,7 @@ function AppContent() {
       cancelled = true;
       unsubscribe();
     };
-  }, [client, isAuthenticated, emailNotificationsEnabled, activeAccountId]);
+  }, [client, isAuthenticated, settingsHydrated, accountRegistryHydrated, emailNotificationsEnabled, activeAccountId]);
 
   // The company relay owns its JMAP subscription. The fork must never also
   // register the same company mailbox with Bulwark's public FCM relay.

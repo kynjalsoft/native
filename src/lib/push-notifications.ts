@@ -11,6 +11,9 @@ import { getMailboxes, getSharedMailboxes } from '../api/email';
 import { jmapClient } from '../api/jmap-client';
 import type { EmailPushConfig, Mailbox } from '../api/types';
 import { generateAccountId } from './account-utils';
+import { isCompanyMailServer } from './zyndmail-company';
+import { useAccountStore } from '../stores/account-store';
+import { useSettingsStore } from '../stores/settings-store';
 
 // Persist identifiers across launches so we reuse the same JMAP subscription
 // after app restarts. Each account gets its own deviceClientId so the hosted
@@ -28,6 +31,7 @@ export const LAST_NOTIFIED_EMAIL_ID_PREFIX = 'push:lastNotifiedEmailId:v2:';
 // lastNotified id, which could not tell "already shown" from "older mail").
 const NOTIFIED_IDS_PREFIX = 'push:notifiedIds:v1:';
 const PROMPT_DISMISSED_PREFIX = 'push:promptDismissed:v1:';
+const ACCOUNT_DISABLED_INTENT_PREFIX = 'push:disabledIntent:v1:';
 
 // Legacy single-account keys (pre-multi-account). Migrated lazily on the next
 // setupPushNotifications / pushBackgroundTask call, then deleted.
@@ -542,9 +546,66 @@ async function pollVerificationCode(
 // resulting swarm starves Stalwart's one-PushVerification-per-60s slot so none
 // of them ever verifies (the symptom is a perpetual "Timed out waiting for
 // PushVerification"). Callers share the first in-flight run instead.
-const inFlightSetups = new Map<string, Promise<PushSetupResult>>();
+const inFlightSetups = new Map<string, {
+  identity: PersonalSetupIdentity;
+  promise: Promise<PushSetupResult>;
+}>();
 const accountGateGenerations = new Map<string, number>();
 const accountGateOperations = new Map<string, Promise<void>>();
+const revokingAccounts = new Map<string, number>();
+const locallyDisabledAccounts = new Set<string>();
+
+interface PersonalSetupIdentity {
+  accountId: string;
+  username: string;
+  serverUrl: string;
+  jmapAccountId: string;
+  generation: number;
+}
+
+function capturePersonalSetupIdentity(): PersonalSetupIdentity {
+  const username = jmapClient.username;
+  const serverUrl = jmapClient.serverUrl;
+  if (!username || !serverUrl || !jmapClient.currentSession || isCompanyMailServer(serverUrl)) {
+    throw new PushSetupError('account', 'No personal mail account is connected for push setup.');
+  }
+  const accountId = generateAccountId(username, serverUrl);
+  const registry = useAccountStore.getState();
+  const account = registry.getAccountById(accountId);
+  const settings = useSettingsStore.getState();
+  if (!account || isCompanyMailServer(account.serverUrl) ||
+      registry.activeAccountId !== accountId ||
+      !settings.hydrated || !settings.emailNotificationsEnabled) {
+    throw new PushSetupError('account', 'Personal mail alerts are not enabled for this account.');
+  }
+  return { accountId, username, serverUrl, jmapAccountId: jmapClient.accountId,
+    generation: gateGeneration(accountId) };
+}
+
+function isPersonalSetupCurrent(identity: PersonalSetupIdentity): boolean {
+  const registry = useAccountStore.getState();
+  const account = registry.getAccountById(identity.accountId);
+  const settings = useSettingsStore.getState();
+  if (gateGeneration(identity.accountId) !== identity.generation ||
+      !settings.hydrated || !settings.emailNotificationsEnabled ||
+      !account || isCompanyMailServer(account.serverUrl) ||
+      registry.activeAccountId !== identity.accountId ||
+      !jmapClient.currentSession ||
+      jmapClient.username !== identity.username ||
+      jmapClient.serverUrl !== identity.serverUrl ||
+      isCompanyMailServer(jmapClient.serverUrl ?? '')) return false;
+  try {
+    return jmapClient.accountId === identity.jmapAccountId;
+  } catch {
+    return false;
+  }
+}
+
+function assertPersonalSetupCurrent(identity: PersonalSetupIdentity): void {
+  if (!isPersonalSetupCurrent(identity)) {
+    throw new PushSetupError('account', 'Personal mail push setup was interrupted.');
+  }
+}
 
 function gateGeneration(accountId: string): number {
   return accountGateGenerations.get(accountId) ?? 0;
@@ -574,15 +635,22 @@ export function setupPushNotifications(
   params: PushSetupParams,
 ): Promise<PushSetupResult> {
   const key = `${jmapClient.username ?? ''}@${jmapClient.serverUrl ?? ''}`;
+  let identity: PersonalSetupIdentity;
+  try {
+    identity = capturePersonalSetupIdentity();
+  } catch (error) {
+    return Promise.reject(error);
+  }
   const existing = inFlightSetups.get(key);
-  if (existing) return existing;
-  const accountId = jmapClient.username && jmapClient.serverUrl
-    ? generateAccountId(jmapClient.username, jmapClient.serverUrl) : null;
-  const generation = accountId ? gateGeneration(accountId) : 0;
-  const run = setupPushNotificationsInner(params, generation).finally(() => {
+  if (existing) {
+    if (existing.identity.generation === identity.generation &&
+        existing.identity.jmapAccountId === identity.jmapAccountId) return existing.promise;
+    return existing.promise.catch(() => undefined).then(() => setupPushNotifications(params));
+  }
+  const run = setupPushNotificationsInner(params, identity).finally(() => {
     inFlightSetups.delete(key);
   });
-  inFlightSetups.set(key, run);
+  inFlightSetups.set(key, { identity, promise: run });
   return run;
 }
 
@@ -592,7 +660,7 @@ function logPhase(phase: string, detail?: string): void {
 
 async function setupPushNotificationsInner(
   params: PushSetupParams,
-  generation: number,
+  identity: PersonalSetupIdentity,
 ): Promise<PushSetupResult> {
   const native = getNative();
   if (!native) {
@@ -605,131 +673,188 @@ async function setupPushNotificationsInner(
     throw new PushSetupError('relay', 'The relay URL must use https://.');
   }
 
-  logPhase('permission');
-  const granted = await requestNotificationPermission();
-  if (!granted) {
-    throw new PushSetupError('permission', 'Notification permission was not granted.');
-  }
-
-  logPhase('token');
-  const fcmToken = await getFcmTokenOrThrow(native);
-
-  // setupPushNotifications operates on the currently-loaded jmapClient. We
-  // need its username/serverUrl up-front so we can key per-account state.
-  const username = jmapClient.username;
-  const serverUrl = jmapClient.serverUrl;
-  if (!username || !serverUrl) {
-    throw new PushSetupError('account', 'No account loaded - cannot set up push.');
-  }
-  const accountId = generateAccountId(username, serverUrl);
-
-  await migrateLegacyPushKeys();
-
-  const deviceClientId = await getOrCreateDeviceClientId(accountId);
-  await setStoredRelayBaseUrl(relayBaseUrl);
-
-  // Register this account's device-client-id with the relay. Multiple
-  // accounts on the same device end up as separate registrations sharing
-  // one fcmToken - the relay forwards each push individually and tags it
-  // with the JMAP account id so the headless task can route it.
-  logPhase('relay', relayBaseUrl);
-  await registerWithRelay({
-    relayBaseUrl,
-    subscriptionId: deviceClientId,
-    fcmToken,
-    accountLabel: params.accountLabel,
-  });
-
-  // Reuse the previous JMAP subscription when the server still has it, but
-  // push the expiry forward so it doesn't time out before the next app start.
-  // With forceRecreate we skip the reuse and destroy it instead (#841).
-  logPhase('jmap');
-  const existingSubs = await listPushSubscriptions().catch(() => []);
-  const emailPush = serverSupportsEmailPush() ? await buildEmailPushConfig() : null;
+  const accountId = identity.accountId;
   const subKey = subscriptionIdKey(accountId);
-  const storedServerId = await AsyncStorage.getItem(subKey);
-  let jmapAccountId: string | null = null;
+  let relayStarted = false;
+  let createdSubscriptionId: string | null = null;
+  let deviceClientId = '';
   try {
-    jmapAccountId = jmapClient.accountId;
-  } catch {
-    jmapAccountId = null;
-  }
-  if (storedServerId) {
-    const match = existingSubs.find((s) => s.id === storedServerId);
-    if (match) {
-      if (!params.forceRecreate) {
-        const refreshed = await refreshSubscriptionExpires(match, emailPush);
-        if (refreshed) {
-          await addPushAccountId(accountId);
-          await writePushJmapAccountId(accountId, jmapAccountId);
-          await activateSetupAccount(accountId, generation);
-          logPhase('done', 'reused existing subscription');
-          return { subscriptionId: storedServerId, verified: true };
+    assertPersonalSetupCurrent(identity);
+    logPhase('permission');
+    const granted = await requestNotificationPermission();
+    assertPersonalSetupCurrent(identity);
+    if (!granted) {
+      throw new PushSetupError('permission', 'Notification permission was not granted.');
+    }
+
+    logPhase('token');
+    const fcmToken = await getFcmTokenOrThrow(native);
+    assertPersonalSetupCurrent(identity);
+
+    await migrateLegacyPushKeys();
+    assertPersonalSetupCurrent(identity);
+
+    deviceClientId = await getOrCreateDeviceClientId(accountId);
+    assertPersonalSetupCurrent(identity);
+    await setStoredRelayBaseUrl(relayBaseUrl);
+    assertPersonalSetupCurrent(identity);
+
+    // Register this account's device-client-id with the relay. Multiple
+    // accounts on the same device end up as separate registrations sharing
+    // one fcmToken - the relay forwards each push individually and tags it
+    // with the JMAP account id so the headless task can route it.
+    logPhase('relay', relayBaseUrl);
+    relayStarted = true;
+    await registerWithRelay({
+      relayBaseUrl,
+      subscriptionId: deviceClientId,
+      fcmToken,
+      accountLabel: params.accountLabel,
+    });
+    assertPersonalSetupCurrent(identity);
+
+    // Reuse the previous JMAP subscription when the server still has it, but
+    // push the expiry forward so it doesn't time out before the next app start.
+    // With forceRecreate we skip the reuse and destroy it instead (#841).
+    logPhase('jmap');
+    const existingSubs = await listPushSubscriptions().catch(() => []);
+    assertPersonalSetupCurrent(identity);
+    const emailPush = serverSupportsEmailPush() ? await buildEmailPushConfig() : null;
+    assertPersonalSetupCurrent(identity);
+    const storedServerId = await AsyncStorage.getItem(subKey);
+    assertPersonalSetupCurrent(identity);
+    if (storedServerId) {
+      const match = existingSubs.find((s) => s.id === storedServerId);
+      if (match) {
+        if (!params.forceRecreate) {
+          const refreshed = await refreshSubscriptionExpires(match, emailPush);
+          assertPersonalSetupCurrent(identity);
+          if (refreshed) {
+            await commitPersonalSetup(identity, storedServerId, false);
+            logPhase('done', 'reused existing subscription');
+            return { subscriptionId: storedServerId, verified: true };
+          }
+        }
+        // Server rejected the refresh (likely the subscription was already
+        // deleted server-side) or the caller asked for a fresh record - drop
+        // the stale id and recreate below.
+        await destroyPushSubscription(storedServerId).catch(() => undefined);
+        assertPersonalSetupCurrent(identity);
+      }
+      await AsyncStorage.removeItem(subKey);
+      assertPersonalSetupCurrent(identity);
+    }
+
+    // Reap leftover Stalwart subscriptions that would otherwise starve the new
+    // one's verification. Stalwart emits only one PushVerification per account
+    // per ~60s and picks the oldest unverified subscription, so a single stale
+    // straggler blocks every fresh attempt - the symptom is the confusing
+    // "Timed out waiting for PushVerification" error. We can't read a
+    // subscription's verified state or URL over JMAP (Stalwart hides both), only
+    // its deviceClientId, so we decide what's safe to remove like this:
+    //   - same deviceClientId as ours: a previous attempt from THIS device,
+    //     always safe to reap.
+    //   - a different deviceClientId: could be another live device or the PWA on
+    //     this account. Ask the relay whether it's still alive and only reap the
+    //     ones it confirms are dead. Anything live - or anything the relay can't
+    //     vouch for (a different relay, a non-Bulwark client, a network blip) -
+    //     is left untouched.
+    for (const s of existingSubs) {
+      if (s.id === storedServerId) continue;
+      if (s.deviceClientId === deviceClientId) {
+        await destroyPushSubscription(s.id).catch(() => undefined);
+        assertPersonalSetupCurrent(identity);
+        continue;
+      }
+      const dead = await relayReportsDead(relayBaseUrl, s.deviceClientId);
+      assertPersonalSetupCurrent(identity);
+      if (dead) {
+        await destroyPushSubscription(s.id).catch(() => undefined);
+        assertPersonalSetupCurrent(identity);
+      }
+    }
+
+    let serverAssignedId: string;
+    try {
+      serverAssignedId = await createPushSubscription({
+        deviceClientId,
+        url: buildRelayUrl(relayBaseUrl, `/api/push/jmap/${encodeURIComponent(deviceClientId)}`),
+        types: [...PUSH_TYPES],
+        expires: expiresFromNow(SUBSCRIPTION_EXPIRES_DAYS),
+        ...(emailPush ? { emailPush } : {}),
+      });
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new PushSetupError('jmap', `The mail server refused the push subscription: ${detail}`);
+    }
+    createdSubscriptionId = serverAssignedId;
+    assertPersonalSetupCurrent(identity);
+
+    logPhase('verify');
+    const verificationCode = await pollVerificationCode(relayBaseUrl, deviceClientId);
+    assertPersonalSetupCurrent(identity);
+    try {
+      await verifyPushSubscription(serverAssignedId, verificationCode);
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new PushSetupError('verify', `The mail server rejected the verification code: ${detail}`);
+    }
+    assertPersonalSetupCurrent(identity);
+
+    await commitPersonalSetup(identity, serverAssignedId, true);
+    logPhase('done', 'subscription verified');
+
+    return { subscriptionId: serverAssignedId, verified: true };
+  } catch (error) {
+    if (!isPersonalSetupCurrent(identity)) {
+      let sameJmapAccount = false;
+      try {
+        sameJmapAccount = jmapClient.username === identity.username &&
+          jmapClient.serverUrl === identity.serverUrl &&
+          jmapClient.accountId === identity.jmapAccountId;
+      } catch {
+        sameJmapAccount = false;
+      }
+      if (createdSubscriptionId && sameJmapAccount) {
+        await destroyPushSubscription(createdSubscriptionId).catch(() => undefined);
+      }
+      if (createdSubscriptionId) {
+        if (await AsyncStorage.getItem(subKey) === createdSubscriptionId) {
+          await AsyncStorage.removeItem(subKey);
+        }
+        if (!(await AsyncStorage.getItem(subKey))) {
+          const ids = await readPushAccountIds();
+          if (ids.includes(accountId)) await writePushAccountIds(ids.filter((id) => id !== accountId));
+          await writePushJmapAccountId(accountId, null);
         }
       }
-      // Server rejected the refresh (likely the subscription was already
-      // deleted server-side) or the caller asked for a fresh record - drop
-      // the stale id and recreate below.
-      await destroyPushSubscription(storedServerId).catch(() => undefined);
+      if (relayStarted && (createdSubscriptionId || revokingAccounts.has(accountId) ||
+          !(await AsyncStorage.getItem(subKey)))) {
+        if (deviceClientId) await deregisterFromRelay(relayBaseUrl, deviceClientId);
+      }
     }
-    await AsyncStorage.removeItem(subKey);
+    throw error;
   }
+}
 
-  // Reap leftover Stalwart subscriptions that would otherwise starve the new
-  // one's verification. Stalwart emits only one PushVerification per account
-  // per ~60s and picks the oldest unverified subscription, so a single stale
-  // straggler blocks every fresh attempt - the symptom is the confusing
-  // "Timed out waiting for PushVerification" error. We can't read a
-  // subscription's verified state or URL over JMAP (Stalwart hides both), only
-  // its deviceClientId, so we decide what's safe to remove like this:
-  //   - same deviceClientId as ours: a previous attempt from THIS device,
-  //     always safe to reap.
-  //   - a different deviceClientId: could be another live device or the PWA on
-  //     this account. Ask the relay whether it's still alive and only reap the
-  //     ones it confirms are dead. Anything live - or anything the relay can't
-  //     vouch for (a different relay, a non-Bulwark client, a network blip) -
-  //     is left untouched.
-  for (const s of existingSubs) {
-    if (s.id === storedServerId) continue;
-    if (s.deviceClientId === deviceClientId) {
-      await destroyPushSubscription(s.id).catch(() => undefined);
-      continue;
+async function commitPersonalSetup(
+  identity: PersonalSetupIdentity,
+  subscriptionId: string,
+  created: boolean,
+): Promise<void> {
+  await queueAccountGateOperation(identity.accountId, async () => {
+    assertPersonalSetupCurrent(identity);
+    if (created) {
+      await AsyncStorage.setItem(subscriptionIdKey(identity.accountId), subscriptionId);
+      assertPersonalSetupCurrent(identity);
     }
-    if (await relayReportsDead(relayBaseUrl, s.deviceClientId)) {
-      await destroyPushSubscription(s.id).catch(() => undefined);
-    }
-  }
-
-  let serverAssignedId: string;
-  try {
-    serverAssignedId = await createPushSubscription({
-      deviceClientId,
-      url: buildRelayUrl(relayBaseUrl, `/api/push/jmap/${encodeURIComponent(deviceClientId)}`),
-      types: [...PUSH_TYPES],
-      expires: expiresFromNow(SUBSCRIPTION_EXPIRES_DAYS),
-      ...(emailPush ? { emailPush } : {}),
-    });
-  } catch (err) {
-    const detail = err instanceof Error ? err.message : String(err);
-    throw new PushSetupError('jmap', `The mail server refused the push subscription: ${detail}`);
-  }
-
-  logPhase('verify');
-  const verificationCode = await pollVerificationCode(relayBaseUrl, deviceClientId);
-  try {
-    await verifyPushSubscription(serverAssignedId, verificationCode);
-  } catch (err) {
-    const detail = err instanceof Error ? err.message : String(err);
-    throw new PushSetupError('verify', `The mail server rejected the verification code: ${detail}`);
-  }
-
-  await AsyncStorage.setItem(subKey, serverAssignedId);
-  await addPushAccountId(accountId);
-  await writePushJmapAccountId(accountId, jmapAccountId);
-  await activateSetupAccount(accountId, generation);
-  logPhase('done', 'subscription verified');
-
-  return { subscriptionId: serverAssignedId, verified: true };
+    await addPushAccountId(identity.accountId);
+    assertPersonalSetupCurrent(identity);
+    await writePushJmapAccountId(identity.accountId, identity.jmapAccountId);
+    assertPersonalSetupCurrent(identity);
+  });
+  await activateSetupAccount(identity);
+  assertPersonalSetupCurrent(identity);
 }
 
 async function addPushAccountId(accountId: string): Promise<void> {
@@ -739,24 +864,16 @@ async function addPushAccountId(accountId: string): Promise<void> {
   }
 }
 
-async function activateSetupAccount(accountId: string, generation: number): Promise<void> {
-  const [{ useAccountStore }, { useSettingsStore }] = await Promise.all([
-    import('../stores/account-store'), import('../stores/settings-store'),
-  ]);
-  if (gateGeneration(accountId) !== generation) return;
-  if (!(await readPushAccountIds()).includes(accountId)) return;
-  const canActivate = () => {
-    const settings = useSettingsStore.getState();
-    return gateGeneration(accountId) === generation &&
-      settings.hydrated && settings.emailNotificationsEnabled &&
-      !!useAccountStore.getState().getAccountById(accountId) &&
-      !!jmapClient.currentSession &&
-      generateAccountId(jmapClient.username ?? '', jmapClient.serverUrl ?? '') === accountId;
-  };
-  if (!canActivate()) return;
-  await queueAccountGateOperation(accountId, async () => {
-    if (canActivate()) await activateAndroidMailAccount(accountId);
+async function activateSetupAccount(identity: PersonalSetupIdentity): Promise<void> {
+  if (!isPersonalSetupCurrent(identity)) return;
+  if (!(await readPushAccountIds()).includes(identity.accountId)) return;
+  await queueAccountGateOperation(identity.accountId, async () => {
+    if (isPersonalSetupCurrent(identity)) await activateAndroidMailAccount(identity.accountId);
   });
+  if (isPersonalSetupCurrent(identity)) {
+    locallyDisabledAccounts.delete(identity.accountId);
+    await AsyncStorage.removeItem(ACCOUNT_DISABLED_INTENT_PREFIX + identity.accountId);
+  }
 }
 
 // Push the subscription's expires forward when it's getting close to the
@@ -835,37 +952,44 @@ async function clearAccountPushKeys(accountId: string): Promise<void> {
 export async function teardownPushNotificationsForAccount(
   accountId: string,
 ): Promise<void> {
-  await disableAndroidMailAccount(accountId);
-  await migrateLegacyPushKeys();
-  const remaining = (await readPushAccountIds()).filter((id) => id !== accountId);
-  await writePushAccountIds(remaining);
-  await dismissAndroidMailNotifications(accountId);
+  revokingAccounts.set(accountId, (revokingAccounts.get(accountId) ?? 0) + 1);
+  try {
+    await disableAndroidMailAccount(accountId);
+    await migrateLegacyPushKeys();
+    const remaining = (await readPushAccountIds()).filter((id) => id !== accountId);
+    await writePushAccountIds(remaining);
+    await dismissAndroidMailNotifications(accountId);
 
-  const storedSubId = await AsyncStorage.getItem(subscriptionIdKey(accountId));
-  const storedDcid = await AsyncStorage.getItem(deviceClientIdKey(accountId));
-  const relayBaseUrl = await getStoredRelayBaseUrl();
+    const storedSubId = await AsyncStorage.getItem(subscriptionIdKey(accountId));
+    const storedDcid = await AsyncStorage.getItem(deviceClientIdKey(accountId));
+    const relayBaseUrl = await getStoredRelayBaseUrl();
 
-  // Destroy every subscription the server holds for this device, not just the
-  // id we happen to have recorded - a destroy that lost its round-trip or a
-  // failed enable can leave a registration this client no longer tracks (#841).
-  const idsToDestroy = new Set<string>();
-  if (storedSubId) idsToDestroy.add(storedSubId);
-  if (storedDcid) {
-    const existing = await listPushSubscriptions().catch(() => []);
-    for (const s of existing) {
-      if (s.deviceClientId === storedDcid) idsToDestroy.add(s.id);
+    // Destroy every subscription the server holds for this device, not just the
+    // id we happen to have recorded - a destroy that lost its round-trip or a
+    // failed enable can leave a registration this client no longer tracks (#841).
+    const idsToDestroy = new Set<string>();
+    if (storedSubId) idsToDestroy.add(storedSubId);
+    if (storedDcid) {
+      const existing = await listPushSubscriptions().catch(() => []);
+      for (const s of existing) {
+        if (s.deviceClientId === storedDcid) idsToDestroy.add(s.id);
+      }
     }
-  }
-  for (const id of idsToDestroy) {
-    await destroyPushSubscription(id).catch(() => undefined);
-  }
-  if (relayBaseUrl && storedDcid) {
-    await deregisterFromRelay(relayBaseUrl, storedDcid);
-  }
+    for (const id of idsToDestroy) {
+      await destroyPushSubscription(id).catch(() => undefined);
+    }
+    if (relayBaseUrl && storedDcid) {
+      await deregisterFromRelay(relayBaseUrl, storedDcid);
+    }
 
-  await clearAccountPushKeys(accountId);
+    await clearAccountPushKeys(accountId);
 
-  await dismissAndroidMailNotifications(accountId);
+    await dismissAndroidMailNotifications(accountId);
+  } finally {
+    const remaining = (revokingAccounts.get(accountId) ?? 1) - 1;
+    if (remaining === 0) revokingAccounts.delete(accountId);
+    else revokingAccounts.set(accountId, remaining);
+  }
 }
 
 /**
@@ -1021,7 +1145,12 @@ export async function setAndroidMailPreviewEnabled(enabled: boolean): Promise<vo
 
 export async function disableAndroidMailAccount(accountId: string): Promise<void> {
   invalidateAccountGate(accountId);
-  return queueAccountGateOperation(accountId, () => disableAndroidMailAccountNative(accountId));
+  locallyDisabledAccounts.add(accountId);
+  return queueAccountGateOperation(accountId, async () => {
+    await AsyncStorage.setItem(ACCOUNT_DISABLED_INTENT_PREFIX + accountId, '1');
+    await disableAndroidMailAccountNative(accountId);
+    locallyDisabledAccounts.delete(accountId);
+  });
 }
 
 async function disableAndroidMailAccountNative(accountId: string): Promise<void> {
@@ -1045,9 +1174,48 @@ async function disableRegisteredAndroidMailAccounts(accountIds: string[]): Promi
   await native.disableMailAccounts(accountIds);
 }
 
-export async function disableAllRegisteredAndroidMailAccounts(): Promise<void> {
+let globalDisableInFlight: Promise<void> = Promise.resolve();
+
+export function disableAllRegisteredAndroidMailAccounts(): Promise<void> {
+  const run = (async () => {
+    await migrateLegacyPushKeys();
+    await disableRegisteredAndroidMailAccounts(await readPushAccountIds());
+  })();
+  globalDisableInFlight = run.catch(() => undefined);
+  return run;
+}
+
+export async function restoreRegisteredAndroidMailAccounts(): Promise<void> {
+  await globalDisableInFlight;
   await migrateLegacyPushKeys();
-  await disableRegisteredAndroidMailAccounts(await readPushAccountIds());
+  const accountIds = await readPushAccountIds();
+  for (const accountId of accountIds) {
+    const generation = gateGeneration(accountId);
+    const allowed = () => {
+      const settings = useSettingsStore.getState();
+      const account = useAccountStore.getState().getAccountById(accountId);
+      return gateGeneration(accountId) === generation &&
+        settings.hydrated && settings.emailNotificationsEnabled &&
+        !!account && !isCompanyMailServer(account.serverUrl) &&
+        !revokingAccounts.has(accountId) && !locallyDisabledAccounts.has(accountId);
+    };
+    if (!allowed()) continue;
+    const [subscriptionId, deviceClientId, credentials, disabledIntent] = await Promise.all([
+      AsyncStorage.getItem(subscriptionIdKey(accountId)),
+      AsyncStorage.getItem(deviceClientIdKey(accountId)),
+      jmapClient.getStoredCredentials(accountId),
+      AsyncStorage.getItem(ACCOUNT_DISABLED_INTENT_PREFIX + accountId),
+    ]);
+    const account = useAccountStore.getState().getAccountById(accountId);
+    if (!subscriptionId || !deviceClientId || !credentials || disabledIntent || !allowed() ||
+        !account || credentials.serverUrl !== account.serverUrl ||
+        generateAccountId(credentials.username, credentials.serverUrl) !== accountId) continue;
+    await queueAccountGateOperation(accountId, async () => {
+      if (allowed() && (await readPushAccountIds()).includes(accountId) && allowed()) {
+        await activateAndroidMailAccount(accountId);
+      }
+    });
+  }
 }
 
 export async function activateAndroidMailAccount(accountId: string): Promise<void> {

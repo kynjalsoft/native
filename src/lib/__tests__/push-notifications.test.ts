@@ -33,6 +33,7 @@ vi.mock('../../api/jmap-client', () => ({
     serverUrl: 'https://mail.example.com',
     accountId: 'jmap-primary',
     currentSession: { capabilities: { 'urn:ietf:params:jmap:core': {} } },
+    getStoredCredentials: vi.fn(async () => ({ username: 'user@example.com', serverUrl: 'https://mail.example.com' })),
   },
 }));
 
@@ -57,11 +58,13 @@ import {
   setupPushNotifications,
   disableAllRegisteredAndroidMailAccounts,
   disableAndroidMailAccount,
+  restoreRegisteredAndroidMailAccounts,
   deviceClientIdKey,
   isValidRelayUrl,
   readPushJmapAccountIds,
   PushSetupError,
   teardownPushNotificationsForAccount,
+  readPushAccountIds,
 } from '../push-notifications';
 import {
   listPushSubscriptions,
@@ -118,6 +121,18 @@ describe('setupPushNotifications leftover reaping', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     await AsyncStorage.clear();
+    listMock.mockResolvedValue([]);
+    Object.assign(jmapClient, {
+      username: 'user@example.com',
+      serverUrl: 'https://mail.example.com',
+      accountId: 'jmap-primary',
+      currentSession: { capabilities: { 'urn:ietf:params:jmap:core': {} } },
+    });
+    useAccountStore.setState({
+      accounts: [{ id: ACCOUNT_ID, serverUrl: 'https://mail.example.com' } as never],
+      activeAccountId: ACCOUNT_ID,
+    });
+    useSettingsStore.setState({ hydrated: true, emailNotificationsEnabled: true });
     // Pin our deviceClientId so we control which leftovers are "ours".
     await AsyncStorage.setItem(deviceClientIdKey(ACCOUNT_ID), OUR_DCID);
   });
@@ -136,7 +151,7 @@ describe('setupPushNotifications leftover reaping', () => {
       native.activateMailAccount.mockClear();
       useSettingsStore.setState({ emailNotificationsEnabled: false });
       listMock.mockResolvedValue([sub('new-server-id', OUR_DCID)]);
-      expect((await setupPushNotifications({ relayBaseUrl: RELAY })).verified).toBe(true);
+      await expect(setupPushNotifications({ relayBaseUrl: RELAY })).rejects.toMatchObject({ phase: 'account' });
       expect(native.activateMailAccount).not.toHaveBeenCalled();
     } finally {
       useAccountStore.setState({ accounts: [], activeAccountId: null });
@@ -163,8 +178,6 @@ describe('setupPushNotifications leftover reaping', () => {
   });
 
   it('does not reactivate a gate when setup finishes after logout starts', async () => {
-    useAccountStore.setState({ accounts: [{ id: ACCOUNT_ID, serverUrl: 'https://mail.example.com' } as never] });
-    useSettingsStore.setState({ hydrated: true, emailNotificationsEnabled: true });
     installFetch({});
     let release!: () => void;
     createMock.mockImplementationOnce(() => new Promise<string>((resolve) => {
@@ -179,13 +192,88 @@ describe('setupPushNotifications leftover reaping', () => {
       await vi.waitFor(() => expect(createMock).toHaveBeenCalled());
       await disableAndroidMailAccount(ACCOUNT_ID);
       release();
-      await setup;
+      await expect(setup).rejects.toMatchObject({ phase: 'account' });
       expect(native.disableMailAccount).toHaveBeenCalledWith(ACCOUNT_ID);
       expect(native.activateMailAccount).not.toHaveBeenCalled();
+      expect(destroyMock).toHaveBeenCalledWith('new-server-id');
     } finally {
       useAccountStore.setState({ accounts: [], activeAccountId: null });
       useSettingsStore.setState({ hydrated: false, emailNotificationsEnabled: true });
     }
+  });
+
+  it('does not recreate a registration when a delayed setup finishes after teardown', async () => {
+    installFetch({});
+    let release!: () => void;
+    createMock.mockImplementationOnce(() => new Promise<string>((resolve) => {
+      release = () => resolve('late-server-id');
+    }));
+    const setup = setupPushNotifications({ relayBaseUrl: RELAY });
+    await vi.waitFor(() => expect(createMock).toHaveBeenCalled());
+    await teardownPushNotificationsForAccount(ACCOUNT_ID);
+    release();
+    await expect(setup).rejects.toMatchObject({ phase: 'account' });
+    expect(destroyMock).toHaveBeenCalledWith('late-server-id');
+    expect(await AsyncStorage.getItem(SUB_KEY)).toBeNull();
+    expect(await readPushAccountIds()).not.toContain(ACCOUNT_ID);
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining(`/api/push/register/${OUR_DCID}`),
+      { method: 'DELETE' },
+    );
+  });
+
+  it('rejects a personal setup switched to a company account during token retrieval', async () => {
+    installFetch({});
+    const native = (NativeModules as { BulwarkFcm: { getToken: ReturnType<typeof vi.fn> } }).BulwarkFcm;
+    let release!: () => void;
+    native.getToken.mockImplementationOnce(() => new Promise<string>((resolve) => {
+      release = () => resolve('fcm-token-xyz');
+    }));
+    const setup = setupPushNotifications({ relayBaseUrl: RELAY });
+    await vi.waitFor(() => expect(native.getToken).toHaveBeenCalled());
+    Object.assign(jmapClient, {
+      username: 'staff@zyndpay.io',
+      serverUrl: 'https://mail.zyndpay.io',
+      accountId: 'company-jmap',
+    });
+    release();
+    await expect(setup).rejects.toMatchObject({ phase: 'account' });
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(createMock).not.toHaveBeenCalled();
+  });
+
+  it('restores only retained personal account gates after global re-enable', async () => {
+    const inactiveId = generateAccountId('other@example.com', 'https://mail.example.com');
+    const optedOutId = generateAccountId('optedout@example.com', 'https://mail.example.com');
+    const removedId = generateAccountId('removed@example.com', 'https://mail.example.com');
+    (jmapClient.getStoredCredentials as ReturnType<typeof vi.fn>).mockImplementation(async (id: string) => ({
+      username: id.replace(/@mail\.example\.com$/, ''),
+      serverUrl: 'https://mail.example.com',
+    }));
+    useAccountStore.setState({ accounts: [
+      { id: ACCOUNT_ID, serverUrl: 'https://mail.example.com' } as never,
+      { id: inactiveId, serverUrl: 'https://mail.example.com' } as never,
+      { id: optedOutId, serverUrl: 'https://mail.example.com' } as never,
+    ] });
+    await AsyncStorage.setItem('push:accountIds:v1', JSON.stringify([ACCOUNT_ID, inactiveId, optedOutId, removedId]));
+    for (const id of [ACCOUNT_ID, inactiveId, optedOutId, removedId]) {
+      await AsyncStorage.setItem(`push:subscriptionId:v2:${id}`, `sub-${id}`);
+      await AsyncStorage.setItem(deviceClientIdKey(id), `device-${id}`);
+    }
+    await AsyncStorage.setItem(`push:disabledIntent:v1:${optedOutId}`, '1');
+    const native = (NativeModules as { BulwarkFcm: {
+      disableMailAccounts: ReturnType<typeof vi.fn>;
+      activateMailAccount: ReturnType<typeof vi.fn>;
+    } }).BulwarkFcm;
+    useSettingsStore.setState({ emailNotificationsEnabled: false });
+    await disableAllRegisteredAndroidMailAccounts();
+    useSettingsStore.setState({ emailNotificationsEnabled: true });
+    await restoreRegisteredAndroidMailAccounts();
+    expect(native.disableMailAccounts).toHaveBeenCalledWith([ACCOUNT_ID, inactiveId, optedOutId, removedId]);
+    expect(native.activateMailAccount).toHaveBeenCalledWith(ACCOUNT_ID);
+    expect(native.activateMailAccount).toHaveBeenCalledWith(inactiveId);
+    expect(native.activateMailAccount).not.toHaveBeenCalledWith(optedOutId);
+    expect(native.activateMailAccount).not.toHaveBeenCalledWith(removedId);
   });
 
   it('reaps our own and relay-confirmed-dead leftovers, keeps live and unverifiable ones', async () => {
@@ -251,6 +339,16 @@ describe('setupPushNotifications subscription shape', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     await AsyncStorage.clear();
+    Object.assign(jmapClient, {
+      username: 'user@example.com',
+      serverUrl: 'https://mail.example.com',
+      accountId: 'jmap-primary',
+    });
+    useAccountStore.setState({
+      accounts: [{ id: ACCOUNT_ID, serverUrl: 'https://mail.example.com' } as never],
+      activeAccountId: ACCOUNT_ID,
+    });
+    useSettingsStore.setState({ hydrated: true, emailNotificationsEnabled: true });
     await AsyncStorage.setItem(deviceClientIdKey(ACCOUNT_ID), OUR_DCID);
     (jmapClient as { currentSession: unknown }).currentSession = {
       capabilities: { 'urn:ietf:params:jmap:core': {} },
