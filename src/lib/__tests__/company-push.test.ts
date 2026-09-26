@@ -414,10 +414,62 @@ describe('company Expo push boundary', () => {
     expect(await companyPushStatus(accountId)).toMatchObject({ status: 'REVOKE_PENDING' });
     expect(await companyPushPreviewModeActive(accountId)).toBe(false);
     expect(JSON.parse(records.get('zyndmail.production.push.registration.v1')!).revocationPending).toBe(true);
+    expect(JSON.parse(records.get('zyndmail.production.push.registration.v1')!).revocationReason).toBe('global-email-off');
     deleteFails = false;
     expect(await reconcileCompanyPush(accountId)).toEqual({ status: 'OFF' });
     expect(await companyPushRevocationPending(accountId)).toBe(false);
     expect(await companyPushStatus(accountId)).toEqual({ status: 'OFF' });
+  });
+
+  it('cancels offline global-off revocation when Email returns on without deleting the registration', async () => {
+    let deleteAvailable = false;
+    let putAvailable = true;
+    const fetchMock = vi.fn(async (url: string, init: RequestInit) => {
+      if (url.includes('/v1/push-health?')) return { ok: true, status: 200,
+        json: async () => ({ status: 'ok', previewMode: 'sender-subject-snippet-v1' }) };
+      if (init.method === 'DELETE') return { ok: deleteAvailable, status: deleteAvailable ? 200 : 503 };
+      return { ok: putAvailable, status: putAvailable ? 200 : 503,
+        json: async () => ({ registrationId: 'registration-1' }) };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await registerCompanyPush(accountId, true)).toEqual({ status: 'ACTIVE' });
+    useSettingsStore.setState({ emailNotificationsEnabled: false });
+    expect(await reconcileCompanyPush(accountId)).toMatchObject({ status: 'REVOKE_PENDING' });
+    expect(JSON.parse(records.get('zyndmail.production.push.registration.v1')!).revocationReason).toBe('global-email-off');
+    const deletions = fetchMock.mock.calls.filter(([, init]) => init.method === 'DELETE').length;
+
+    useSettingsStore.setState({ emailNotificationsEnabled: true });
+    deleteAvailable = true;
+    putAvailable = false;
+    expect(await reconcileCompanyPush(accountId)).toMatchObject({ status: 'ERROR' });
+    expect(fetchMock.mock.calls.filter(([, init]) => init.method === 'DELETE')).toHaveLength(deletions);
+    expect(JSON.parse(records.get('zyndmail.production.push.registration.v1')!)).toMatchObject({
+      registrationId: 'registration-1', revocationPending: false,
+    });
+    expect(await companyPushRevocationPending(accountId)).toBe(false);
+  });
+
+  it('keeps explicit opt-out revocation pending through an Email off-on toggle', async () => {
+    records.set('zyndmail.production.push.registration.v1', JSON.stringify({
+      subject: 'staff-subject', accountId, registrationId: 'registration-1', renewedAt: Date.now(),
+    }));
+    records.set('zyndmail.production.push.preference.v1', 'staff-subject');
+    let relayAvailable = false;
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => ({
+      ok: relayAvailable, status: relayAvailable ? 200 : 503,
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    expect(await revokeCompanyPush(accountId)).toBe(false);
+    expect(JSON.parse(records.get('zyndmail.production.push.registration.v1')!).revocationReason).toBe('required');
+    useSettingsStore.setState({ emailNotificationsEnabled: false });
+    expect(await reconcileDisabledCompanyPush()).toBe(true);
+    expect(JSON.parse(records.get('zyndmail.production.push.registration.v1')!).revocationReason).toBe('required');
+    useSettingsStore.setState({ emailNotificationsEnabled: true });
+    relayAvailable = true;
+    expect(await reconcilePendingCompanyPushRevocation()).toBe(false);
+    expect(records.has('zyndmail.production.push.registration.v1')).toBe(false);
+    expect(fetchMock.mock.calls.filter(([, init]) => init.method === 'DELETE').length).toBeGreaterThan(1);
   });
 
   it('cancels queued staff global-off revocation after a rapid off-on toggle', async () => {

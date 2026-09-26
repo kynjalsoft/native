@@ -12,6 +12,9 @@
     "production": {
       "distribution": "store",
       "environment": "production",
+      "env": {
+        "EXPO_PUBLIC_MAIL_PUSH_RELAY_ORIGIN": "https://mail.zyndpay.io"
+      },
       "autoIncrement": true,
       "channel": "production",
       "android": {
@@ -21,6 +24,9 @@
     "production-apk": {
       "distribution": "internal",
       "environment": "production",
+      "env": {
+        "EXPO_PUBLIC_MAIL_PUSH_RELAY_ORIGIN": "https://mail.zyndpay.io"
+      },
       "autoIncrement": true,
       "channel": "production",
       "android": {

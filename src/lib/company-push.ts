@@ -32,6 +32,7 @@ interface Registration {
   routingVersion?: number;
   previews?: boolean;
   revocationPending?: boolean;
+  revocationReason?: 'global-email-off' | 'required';
 }
 
 export type CompanyPushStatus =
@@ -194,11 +195,27 @@ async function readRegistration(): Promise<Registration | null> {
       ? { subject: value.subject, accountId: typeof value.accountId === 'string' ? value.accountId : undefined,
           registrationId: value.registrationId,
           revocationKey: typeof value.revocationKey === 'string' && REVOCATION_KEY.test(value.revocationKey) ? value.revocationKey : undefined,
-          renewedAt: value.renewedAt ?? 0, routingVersion: value.routingVersion, previews: value.previews, revocationPending: value.revocationPending === true }
+          renewedAt: value.renewedAt ?? 0, routingVersion: value.routingVersion, previews: value.previews,
+          revocationPending: value.revocationPending === true,
+          revocationReason: value.revocationReason === 'global-email-off' ? 'global-email-off'
+            : value.revocationPending ? 'required' : undefined }
       : null;
   } catch {
     return null;
   }
+}
+
+async function markRegistrationPending(
+  registration: Registration, reason: 'global-email-off' | 'required',
+): Promise<Registration> {
+  const pending: Registration = {
+    ...registration,
+    revocationPending: true,
+    revocationReason: registration.revocationPending && registration.revocationReason !== 'global-email-off'
+      ? 'required' : reason,
+  };
+  await SecureStore.setItemAsync(REGISTRATION_KEY, JSON.stringify(pending), storageOptions);
+  return pending;
 }
 
 /** The opaque push cannot name a mailbox. Match its secure installation
@@ -401,13 +418,26 @@ export async function hasPendingCompanyPushRevocation(): Promise<boolean> {
 
 async function deleteRegistration(registration: Registration, bearer: string | null): Promise<boolean> {
   try {
+    const body = JSON.stringify(bearer
+      ? { registrationId: registration.registrationId }
+      : registration.revocationKey
+        ? { registrationId: registration.registrationId, revocationKey: registration.revocationKey }
+        : { registrationId: registration.registrationId, installationId: await installationId() });
+    if (registration.revocationReason === 'global-email-off' &&
+        useSettingsStore.getState().emailNotificationsEnabled) {
+      const current = await readRegistration();
+      if (current?.registrationId === registration.registrationId &&
+          current.revocationPending && current.revocationReason === 'global-email-off' &&
+          useSettingsStore.getState().emailNotificationsEnabled) {
+        await SecureStore.setItemAsync(REGISTRATION_KEY, JSON.stringify({
+          ...current, revocationPending: false, revocationReason: undefined,
+        }), storageOptions);
+        return false;
+      }
+    }
     const response = await relayFetch('v1/device-registrations/current', bearer, {
       method: 'DELETE',
-      body: JSON.stringify(bearer
-        ? { registrationId: registration.registrationId }
-        : registration.revocationKey
-          ? { registrationId: registration.registrationId, revocationKey: registration.revocationKey }
-          : { registrationId: registration.registrationId, installationId: await installationId() }),
+      body,
     });
     if (!response.ok && response.status !== 404 && response.status !== 410) return false;
     const current = await readRegistration();
@@ -460,7 +490,7 @@ async function registerCompanyPushInner(accountId: string, requestPermission: bo
   if (!useSettingsStore.getState().emailNotificationsEnabled) return { status: 'OFF' };
   if (!requestPermission && !await hasPushPreference(session.subject)) return { status: 'OFF' };
   let previous = await readRegistration();
-  if (previous?.revocationPending && previous.subject !== session.subject) {
+  if (previous?.revocationPending) {
     if (await reconcilePendingCompanyPushRevocationInner()) {
       return { status: 'UNAVAILABLE', reason: 'The previous staff registration is awaiting server revocation. Retry when the mail relay is available.' };
     }
@@ -541,13 +571,13 @@ async function registerCompanyPushInner(accountId: string, requestPermission: bo
       renewedAt: Date.now(), routingVersion, previews,
     };
     if (generateAccountId(jmapClient.username ?? '', jmapClient.serverUrl ?? '') !== accountId) {
-      await SecureStore.setItemAsync(REGISTRATION_KEY, JSON.stringify({ ...registration, revocationPending: true }), storageOptions);
+      await markRegistrationPending(registration, 'required');
       if (!await deleteRegistration(registration, session.bearer)) await deleteRegistration(registration, null);
       return { status: 'ERROR', reason: 'The active mail account changed during registration.' };
     }
     await SecureStore.setItemAsync(REGISTRATION_KEY, JSON.stringify(registration), storageOptions);
     if (generateAccountId(jmapClient.username ?? '', jmapClient.serverUrl ?? '') !== accountId) {
-      await SecureStore.setItemAsync(REGISTRATION_KEY, JSON.stringify({ ...registration, revocationPending: true }), storageOptions);
+      await markRegistrationPending(registration, 'required');
       if (!await deleteRegistration(registration, session.bearer)) await deleteRegistration(registration, null);
       return { status: 'ERROR', reason: 'The active mail account changed during registration.' };
     }
@@ -590,7 +620,7 @@ async function revokeCompanyPushInner(accountId: string, preservePreference: boo
     }
   }
   if (registration && (provenOwner || ambiguousLegacyOwner)) {
-    await SecureStore.setItemAsync(REGISTRATION_KEY, JSON.stringify({ ...registration, revocationPending: true }), storageOptions);
+    await markRegistrationPending(registration, 'required');
     await dismissCompanyPushNotifications();
   }
   const preferenceSubject = provenOwner ? registration?.subject : knownSubject;
@@ -636,14 +666,21 @@ export async function reconcilePendingCompanyPushRevocation(): Promise<boolean> 
 async function reconcilePendingCompanyPushRevocationInner(): Promise<boolean> {
   const registration = await readRegistration();
   if (!registration?.revocationPending) return false;
+  if (registration.revocationReason === 'global-email-off' &&
+      useSettingsStore.getState().emailNotificationsEnabled) {
+    await SecureStore.setItemAsync(REGISTRATION_KEY, JSON.stringify({
+      ...registration, revocationPending: false, revocationReason: undefined,
+    }), storageOptions);
+    return false;
+  }
   await deleteRegistration(registration, null);
   return hasPendingCompanyPushRevocation();
 }
 
-async function revokeSavedRegistration(registration: Registration): Promise<void> {
-  await SecureStore.setItemAsync(REGISTRATION_KEY, JSON.stringify({ ...registration, revocationPending: true }), storageOptions);
+async function revokeSavedRegistration(registration: Registration, reason: 'global-email-off' | 'required' = 'required'): Promise<void> {
+  await markRegistrationPending(registration, reason);
   await dismissCompanyPushNotifications();
-  await deleteRegistration(registration, null);
+  await reconcilePendingCompanyPushRevocationInner();
 }
 
 export async function reconcileDisabledCompanyPush(): Promise<boolean> {
@@ -651,7 +688,7 @@ export async function reconcileDisabledCompanyPush(): Promise<boolean> {
   return withRegistrationLock(async () => {
     if (useSettingsStore.getState().emailNotificationsEnabled) return hasPendingCompanyPushRevocation();
     const registration = await readRegistration();
-    if (registration) await revokeSavedRegistration(registration);
+    if (registration) await revokeSavedRegistration(registration, 'global-email-off');
     return hasPendingCompanyPushRevocation();
   });
 }

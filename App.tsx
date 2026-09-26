@@ -81,7 +81,7 @@ import {
   resolveCompanyPush,
 } from './src/lib/company-push';
 import { openCompanyPushIntent } from './src/lib/company-push-intent';
-import { openFetchedPersonalNotification } from './src/lib/personal-notification-tap';
+import { openFetchedPersonalNotification, ownsPersonalNotificationTap } from './src/lib/personal-notification-tap';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<MainTabsParamList>();
@@ -96,10 +96,11 @@ async function navigateToNotificationTap(
   if (!payload.accountId) return 'ignored';
   const target = useAccountStore.getState().getAccountById(payload.accountId);
   if (!target || isCompanyMailServer(target.serverUrl)) return 'ignored';
-  const currentOwner = () => {
-    if (useAuthStore.getState().activeAccountId !== payload.accountId) return false;
-    try { return jmapClient.accountId === payload.accountId; } catch { return false; }
-  };
+  const currentOwner = () => ownsPersonalNotificationTap(payload.accountId!, {
+    activeAccountId: useAuthStore.getState().activeAccountId,
+    sessionUsername: jmapClient.username,
+    sessionServerUrl: jmapClient.serverUrl,
+  });
 
   // The notification carries the account it was generated for. If the user
   // has since switched to a different account (or had a different one active
@@ -131,11 +132,11 @@ async function navigateToNotificationTap(
       return openFetchedPersonalNotification(
         payload.accountId,
         async () => (await getEmails([emailId], jmapAccountId))[0],
-        () => {
-          let sessionAccountId: string | null = null;
-          try { sessionAccountId = jmapClient.accountId; } catch {}
-          return { activeAccountId: useAuthStore.getState().activeAccountId, sessionAccountId };
-        },
+        () => ({
+          activeAccountId: useAuthStore.getState().activeAccountId,
+          sessionUsername: jmapClient.username,
+          sessionServerUrl: jmapClient.serverUrl,
+        }),
         () => navigationRef.isReady() && stillReady(),
         (email) => {
           if (!email) {
