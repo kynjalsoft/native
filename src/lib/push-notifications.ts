@@ -789,8 +789,10 @@ async function clearAccountPushKeys(accountId: string): Promise<void> {
 export async function teardownPushNotificationsForAccount(
   accountId: string,
 ): Promise<void> {
-  await dismissAndroidMailNotifications(accountId);
   await migrateLegacyPushKeys();
+  const remaining = (await readPushAccountIds()).filter((id) => id !== accountId);
+  await writePushAccountIds(remaining);
+  await dismissAndroidMailNotifications(accountId);
 
   const storedSubId = await AsyncStorage.getItem(subscriptionIdKey(accountId));
   const storedDcid = await AsyncStorage.getItem(deviceClientIdKey(accountId));
@@ -816,8 +818,6 @@ export async function teardownPushNotificationsForAccount(
 
   await clearAccountPushKeys(accountId);
 
-  const remaining = (await readPushAccountIds()).filter((id) => id !== accountId);
-  await writePushAccountIds(remaining);
   await dismissAndroidMailNotifications(accountId);
 }
 
@@ -828,10 +828,11 @@ export async function teardownPushNotificationsForAccount(
  * FCM token is always deleted so no push gets through regardless.
  */
 export async function teardownPushNotifications(): Promise<void> {
-  await dismissAndroidMailNotifications();
   await migrateLegacyPushKeys();
 
   const accountIds = await readPushAccountIds();
+  await AsyncStorage.removeItem(PUSH_ACCOUNT_IDS_KEY);
+  await dismissAndroidMailNotifications();
   const relayBaseUrl = await getStoredRelayBaseUrl();
 
   for (const accountId of accountIds) {

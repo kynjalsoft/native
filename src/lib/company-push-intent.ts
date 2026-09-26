@@ -22,6 +22,8 @@ export interface CompanyPushAccountLike {
 export interface CompanyPushNavigationReadiness {
   authenticated: boolean;
   locked: boolean;
+  switching: boolean;
+  sessionAccountId: string | null;
   accountRegistryHydrated: boolean;
   navigationReady: boolean;
   activeAccountId: string | null;
@@ -45,7 +47,7 @@ export interface CompanyPushIntentDependencies {
 export type CompanyPushIntentResult = 'ignored' | 'deferred' | 'retry' | 'opened';
 
 function readyToOpen(readiness: CompanyPushNavigationReadiness): boolean {
-  return readiness.authenticated && !readiness.locked && readiness.accountRegistryHydrated &&
+  return readiness.authenticated && !readiness.locked && !readiness.switching && readiness.accountRegistryHydrated &&
     readiness.navigationReady;
 }
 
@@ -79,14 +81,16 @@ export async function openCompanyPushIntent(
 
     readiness = dependencies.readReadiness();
     if (!readyToOpen(readiness)) return 'deferred';
-    if (readiness.activeAccountId !== companyAccount.id) return 'retry';
+    if (readiness.activeAccountId !== companyAccount.id ||
+        readiness.sessionAccountId !== companyAccount.id) return 'retry';
 
     const destination = await dependencies.resolveDestination(companyAccount.id, content.data);
     if (!destination) return 'retry';
 
     readiness = dependencies.readReadiness();
     if (!readyToOpen(readiness)) return 'deferred';
-    if (readiness.activeAccountId !== companyAccount.id) return 'retry';
+    if (readiness.activeAccountId !== companyAccount.id ||
+        readiness.sessionAccountId !== companyAccount.id) return 'retry';
 
     if (destination.target === 'EMAIL') {
       dependencies.navigateToEmail(destination);

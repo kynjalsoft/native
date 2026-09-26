@@ -152,8 +152,8 @@ async function companyPushRegistrationActive(accountId: string, requirePreviews:
       generateAccountId(jmapClient.username ?? '', jmapClient.serverUrl ?? '') !== accountId ||
       !isCompanyMailServer(jmapClient.serverUrl ?? '')) return false;
   try {
-    const [registration, allowedSubjects, tokens] = await Promise.all([
-      readRegistration(), preferredSubjects(), jmapClient.getStoredOAuthTokens(accountId),
+    const [registration, allowed, tokens] = await Promise.all([
+      readRegistration(), hasPushPreference(accountId), jmapClient.getStoredOAuthTokens(accountId),
     ]);
     const current = useSettingsStore.getState();
     return current.hydrated && current.emailNotificationsEnabled &&
@@ -162,7 +162,8 @@ async function companyPushRegistrationActive(accountId: string, requirePreviews:
       generateAccountId(jmapClient.username ?? '', jmapClient.serverUrl ?? '') === accountId &&
       !!registration?.registrationId && registration.revocationPending !== true &&
       (!requirePreviews || (registration.routingVersion === 3 && registration.previews === true)) &&
-      allowedSubjects.includes(registration.subject) &&
+      (!current.notificationPreviewsEnabled || (registration.routingVersion === 3 && registration.previews === true)) &&
+      allowed && (!registration.accountId || registration.accountId === accountId) &&
       tokens?.clientId === ZYNDMAIL_COMPANY.clientId &&
       tokens.companyIdentity?.subject === registration.subject;
   } catch {
@@ -240,27 +241,52 @@ export async function registeredCompanyPushAccountId(): Promise<string | null> {
   return legacyOwner;
 }
 
-async function preferredSubjects(): Promise<string[]> {
+async function preferredAccountIds(): Promise<string[]> {
   const raw = await SecureStore.getItemAsync(PREFERENCE_KEY, storageOptions);
   if (!raw) return [];
+  let legacySubjects: string[];
   try {
-    const value = JSON.parse(raw) as { version?: unknown; subjects?: unknown };
-    if (value?.version === 2 && Array.isArray(value.subjects)) {
-      return value.subjects.filter((subject): subject is string => typeof subject === 'string' && !!subject);
+    const value = JSON.parse(raw) as { version?: unknown; accountIds?: unknown; subjects?: unknown };
+    if (value?.version === 3 && Array.isArray(value.accountIds)) {
+      return value.accountIds.filter((id): id is string => typeof id === 'string' && !!id);
     }
-  } catch {}
-  return [raw];
+    legacySubjects = value?.version === 2 && Array.isArray(value.subjects)
+      ? value.subjects.filter((subject): subject is string => typeof subject === 'string' && !!subject)
+      : [raw];
+  } catch { legacySubjects = [raw]; }
+  const mappings = await accountSubjects();
+  const registration = await readRegistration();
+  const saved = useAccountStore.getState().accounts.filter((account) => isCompanyMailServer(account.serverUrl));
+  const activeId = generateAccountId(jmapClient.username ?? '', jmapClient.serverUrl ?? '');
+  const ids = new Set(saved.map((account) => account.id));
+  if (isCompanyMailServer(jmapClient.serverUrl ?? '')) ids.add(activeId);
+  if (registration?.accountId) ids.add(registration.accountId);
+  const owners = new Map<string, string[]>();
+  for (const id of ids) {
+    const tokens = await jmapClient.getStoredOAuthTokens(id).catch(() => null);
+    const mapped = mappings.find((entry) => entry.accountId === id)?.subject;
+    const authenticated = tokens?.companyIdentity?.subject;
+    if (mapped && authenticated && mapped !== authenticated) continue;
+    const subject = authenticated ?? mapped ?? (registration?.accountId === id ? registration.subject : null);
+    if (subject) owners.set(subject, [...(owners.get(subject) ?? []), id]);
+  }
+  const accountIds = legacySubjects.flatMap((subject) => {
+    const matches = owners.get(subject) ?? [];
+    return matches.length === 1 ? matches : [];
+  });
+  await SecureStore.setItemAsync(PREFERENCE_KEY, JSON.stringify({ version: 3, accountIds }), storageOptions);
+  return accountIds;
 }
 
-async function hasPushPreference(subject: string): Promise<boolean> {
-  return (await preferredSubjects()).includes(subject);
+async function hasPushPreference(accountId: string): Promise<boolean> {
+  return (await preferredAccountIds()).includes(accountId);
 }
 
-async function setPushPreference(subject: string, enabled: boolean): Promise<void> {
-  const subjects = (await preferredSubjects()).filter((value) => value !== subject);
-  if (enabled) subjects.push(subject);
-  if (subjects.length) {
-    await SecureStore.setItemAsync(PREFERENCE_KEY, JSON.stringify({ version: 2, subjects }), storageOptions);
+async function setPushPreference(accountId: string, enabled: boolean): Promise<void> {
+  const accountIds = (await preferredAccountIds()).filter((value) => value !== accountId);
+  if (enabled) accountIds.push(accountId);
+  if (accountIds.length) {
+    await SecureStore.setItemAsync(PREFERENCE_KEY, JSON.stringify({ version: 3, accountIds }), storageOptions);
   } else {
     await SecureStore.deleteItemAsync(PREFERENCE_KEY, storageOptions);
   }
@@ -283,6 +309,9 @@ async function accountSubjects(): Promise<AccountSubject[]> {
 async function rememberAccountSubject(accountId: string, subject: string): Promise<void> {
   const entries = await accountSubjects();
   if (entries.some((entry) => entry.accountId === accountId && entry.subject === subject)) return;
+  if (entries.some((entry) => entry.accountId === accountId && entry.subject !== subject)) {
+    await setPushPreference(accountId, false);
+  }
   await SecureStore.setItemAsync(ACCOUNT_SUBJECTS_KEY, JSON.stringify([
     ...entries.filter((entry) => entry.accountId !== accountId), { accountId, subject },
   ]), storageOptions);
@@ -292,22 +321,6 @@ async function forgetAccountSubject(accountId: string): Promise<void> {
   const entries = (await accountSubjects()).filter((entry) => entry.accountId !== accountId);
   if (entries.length) await SecureStore.setItemAsync(ACCOUNT_SUBJECTS_KEY, JSON.stringify(entries), storageOptions);
   else await SecureStore.deleteItemAsync(ACCOUNT_SUBJECTS_KEY, storageOptions);
-}
-
-async function removeUnprovenPreferences(accountId: string, registration: Registration | null): Promise<void> {
-  const known = await accountSubjects();
-  const retained = new Set<string>();
-  for (const account of useAccountStore.getState().accounts) {
-    if (account.id === accountId || !isCompanyMailServer(account.serverUrl)) continue;
-    const mapped = known.find((entry) => entry.accountId === account.id)?.subject;
-    if (mapped) retained.add(mapped);
-    if (registration?.accountId === account.id) retained.add(registration.subject);
-    const tokens = await jmapClient.getStoredOAuthTokens(account.id).catch(() => null);
-    if (tokens?.companyIdentity?.subject) retained.add(tokens.companyIdentity.subject);
-  }
-  for (const subject of await preferredSubjects()) {
-    if (!retained.has(subject)) await setPushPreference(subject, false);
-  }
 }
 
 async function currentCompanySession(accountId: string): Promise<{ subject: string; bearer: string } | null> {
@@ -378,7 +391,8 @@ export async function companyPushStatus(accountId: string): Promise<CompanyPushS
     const [registration, tokens] = await Promise.all([
       readRegistration(), jmapClient.getStoredOAuthTokens(accountId).catch(() => null),
     ]);
-    return registration?.subject && registration.subject === tokens?.companyIdentity?.subject
+    return registration?.subject && registration.subject === tokens?.companyIdentity?.subject &&
+      (!registration.accountId || registration.accountId === accountId)
       ? companyPushRevocationPendingStatus : { status: 'OFF' };
   }
   const problem = configurationError();
@@ -386,10 +400,12 @@ export async function companyPushStatus(accountId: string): Promise<CompanyPushS
   const session = await currentCompanySession(accountId);
   if (!session) return { status: 'UNAVAILABLE', reason: 'Sign in with ZyndPay Staff to enable mail alerts.' };
   const registration = await readRegistration();
-  if (registration?.revocationPending && registration.subject === session.subject) return companyPushRevocationPendingStatus;
+  if (registration?.revocationPending && registration.subject === session.subject &&
+      (!registration.accountId || registration.accountId === accountId)) return companyPushRevocationPendingStatus;
   if (!registration && !(await relayHealth()).ready) return { status: 'UNAVAILABLE', reason: RELAY_UNAVAILABLE };
-  if (!await hasPushPreference(session.subject)) return { status: 'OFF' };
-  if (registration && registration.subject !== session.subject) {
+  if (!await hasPushPreference(accountId)) return { status: 'OFF' };
+  if (registration && (registration.subject !== session.subject ||
+      (registration.accountId && registration.accountId !== accountId))) {
     return { status: 'ERROR', reason: 'An earlier staff registration must be revoked first.' };
   }
   const permission = await Notifications.getPermissionsAsync();
@@ -398,6 +414,11 @@ export async function companyPushStatus(accountId: string): Promise<CompanyPushS
   if (registration?.routingVersion === 3 && registration.previews === true &&
       !useSettingsStore.getState().notificationPreviewsEnabled) {
     return companyPushPreviewPending;
+  }
+  if (registration && useSettingsStore.getState().notificationPreviewsEnabled &&
+      (registration.routingVersion !== 3 || registration.previews !== true ||
+        !await companyPushPreviewAvailable())) {
+    return { status: 'UNAVAILABLE', reason: RELAY_UNAVAILABLE };
   }
   return registration ? { status: 'ACTIVE' } : { status: 'ERROR', reason: 'Register this device again.' };
 }
@@ -410,6 +431,7 @@ export async function companyPushPreviewOptOutPending(accountId: string): Promis
   ]);
   return !!registration && registration.routingVersion === 3 && registration.previews === true &&
     registration.revocationPending !== true &&
+    (!registration.accountId || registration.accountId === accountId) &&
     registration.subject === tokens?.companyIdentity?.subject;
 }
 
@@ -418,6 +440,7 @@ export async function companyPushRevocationPending(accountId: string): Promise<b
     readRegistration(), jmapClient.getStoredOAuthTokens(accountId).catch(() => null),
   ]);
   return registration?.revocationPending === true && !!registration.registrationId &&
+    (!registration.accountId || registration.accountId === accountId) &&
     registration.subject === tokens?.companyIdentity?.subject;
 }
 
@@ -497,7 +520,7 @@ async function registerCompanyPushInner(accountId: string, requestPermission: bo
   if (!session) return { status: 'UNAVAILABLE', reason: 'Sign in with ZyndPay Staff to enable mail alerts.' };
   await rememberAccountSubject(accountId, session.subject);
   if (!useSettingsStore.getState().emailNotificationsEnabled) return { status: 'OFF' };
-  if (!requestPermission && !await hasPushPreference(session.subject)) return { status: 'OFF' };
+  if (!requestPermission && !await hasPushPreference(accountId)) return { status: 'OFF' };
   let previous = await readRegistration();
   if (previous?.revocationPending) {
     if (await reconcilePendingCompanyPushRevocationInner()) {
@@ -505,7 +528,8 @@ async function registerCompanyPushInner(accountId: string, requestPermission: bo
     }
     previous = await readRegistration();
   }
-  if (previous && previous.subject !== session.subject) {
+  if (previous && (previous.subject !== session.subject ||
+      (previous.accountId && previous.accountId !== accountId))) {
     // One installation has one staff registration. Switching staff identities
     // must retire the earlier subject before enrolling the new one.
     const oldIds = useAccountStore.getState().accounts
@@ -514,7 +538,7 @@ async function registerCompanyPushInner(accountId: string, requestPermission: bo
     let revoked = false;
     for (const oldId of oldIds) {
       const tokens = await jmapClient.getStoredOAuthTokens(oldId).catch(() => null);
-      if (tokens?.companyIdentity?.subject !== previous.subject) continue;
+      if (previous.accountId ? oldId !== previous.accountId : tokens?.companyIdentity?.subject !== previous.subject) continue;
       revoked = await revokeCompanyPushInner(oldId, true);
       break;
     }
@@ -525,6 +549,7 @@ async function registerCompanyPushInner(accountId: string, requestPermission: bo
   }
   const health = await relayHealth();
   if (!health.ready) return { status: 'UNAVAILABLE', reason: RELAY_UNAVAILABLE };
+  if (desiredPreviews && !health.previewMode) return { status: 'UNAVAILABLE', reason: RELAY_UNAVAILABLE };
   const previews = health.previewMode && desiredPreviews;
   const routingVersion = health.previewMode ? 3 : 2;
   if (previous?.previews === previews && previous?.routingVersion === routingVersion && !force && !requestPermission && Date.now() - previous.renewedAt < RENEW_AFTER_MS) return companyPushStatus(accountId);
@@ -590,7 +615,7 @@ async function registerCompanyPushInner(accountId: string, requestPermission: bo
       if (!await deleteRegistration(registration, session.bearer)) await deleteRegistration(registration, null);
       return { status: 'ERROR', reason: 'The active mail account changed during registration.' };
     }
-    await setPushPreference(session.subject, true);
+    await setPushPreference(accountId, true);
     return { status: 'ACTIVE' };
   } catch (error) {
     return { status: 'ERROR', reason: error instanceof Error ? error.message : 'Mail push registration failed.' };
@@ -632,12 +657,7 @@ async function revokeCompanyPushInner(accountId: string, preservePreference: boo
     await markRegistrationPending(registration, 'required');
     await dismissCompanyPushNotifications();
   }
-  const preferenceSubject = provenOwner ? registration?.subject : knownSubject;
-  if (preferenceSubject && !preservePreference && await hasPushPreference(preferenceSubject)) {
-    await setPushPreference(preferenceSubject, false);
-  } else if (!preferenceSubject && removeAccount) {
-    await removeUnprovenPreferences(accountId, registration);
-  }
+  if (!preservePreference) await setPushPreference(accountId, false);
   if (removeAccount) await forgetAccountSubject(accountId);
   if (!registration || (!provenOwner && !ambiguousLegacyOwner)) return true;
   const isActiveOwner = generateAccountId(jmapClient.username ?? '', jmapClient.serverUrl ?? '') === accountId;
@@ -730,8 +750,7 @@ function validIdentifier(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= 256;
 }
 
-/** Accept the documented relay response and the older EMAIL shape; always
- * verify the message and thread against JMAP before navigating. */
+/** Verify the message and thread against JMAP before navigating. */
 export function parseCompanyPushDestination(value: unknown): CompanyPushReferenceTarget | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const result = value as Record<string, unknown>;
@@ -741,10 +760,6 @@ export function parseCompanyPushDestination(value: unknown): CompanyPushReferenc
   }
   if (result.target === 'MESSAGE' && Object.keys(result).length === 3 &&
       validIdentifier(result.accountId) && validIdentifier(result.emailId)) {
-    return { target: 'MESSAGE', accountId: result.accountId, emailId: result.emailId };
-  }
-  if (result.target === 'EMAIL' && Object.keys(result).length === 4 &&
-      validIdentifier(result.accountId) && validIdentifier(result.emailId) && validIdentifier(result.threadId)) {
     return { target: 'MESSAGE', accountId: result.accountId, emailId: result.emailId };
   }
   return null;

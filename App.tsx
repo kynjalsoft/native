@@ -82,6 +82,7 @@ import {
 } from './src/lib/company-push';
 import { openCompanyPushIntent } from './src/lib/company-push-intent';
 import { openFetchedPersonalNotification, ownsPersonalNotificationTap } from './src/lib/personal-notification-tap';
+import { generateAccountId } from './src/lib/account-utils';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<MainTabsParamList>();
@@ -100,6 +101,7 @@ async function navigateToNotificationTap(
     activeAccountId: useAuthStore.getState().activeAccountId,
     sessionUsername: jmapClient.username,
     sessionServerUrl: jmapClient.serverUrl,
+    switching: useAuthStore.getState().isLoading,
   });
 
   // The notification carries the account it was generated for. If the user
@@ -136,6 +138,7 @@ async function navigateToNotificationTap(
           activeAccountId: useAuthStore.getState().activeAccountId,
           sessionUsername: jmapClient.username,
           sessionServerUrl: jmapClient.serverUrl,
+          switching: useAuthStore.getState().isLoading,
         }),
         () => navigationRef.isReady() && stillReady(),
         (email) => {
@@ -874,6 +877,9 @@ function AppContent() {
       readReadiness: () => ({
         authenticated: useAuthStore.getState().isAuthenticated,
         locked: appLockedRef.current,
+        switching: useAuthStore.getState().isLoading,
+        sessionAccountId: jmapClient.username && jmapClient.serverUrl
+          ? generateAccountId(jmapClient.username, jmapClient.serverUrl) : null,
         accountRegistryHydrated: useAccountStore.persist.hasHydrated(),
         navigationReady: navigationRef.isReady(),
         activeAccountId: useAuthStore.getState().activeAccountId,

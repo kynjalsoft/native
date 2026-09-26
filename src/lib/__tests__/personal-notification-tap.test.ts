@@ -45,4 +45,17 @@ describe('personal notification tap', () => {
     expect(getMessage).toHaveBeenCalledWith('u1');
     expect(navigate).toHaveBeenCalledWith({ id: 'message-a', jmapAccountId: 'u1' });
   });
+
+  it('does not navigate after a switch starts before the fetch completes', async () => {
+    let finish!: (message: { id: string }) => void;
+    const owner = { activeAccountId: 'alice@mail.example.com', sessionUsername: 'alice',
+      sessionServerUrl: 'https://mail.example.com', switching: false };
+    const navigate = vi.fn();
+    const opening = openFetchedPersonalNotification('alice@mail.example.com',
+      () => new Promise((resolve) => { finish = resolve; }), () => owner, () => true, navigate);
+    owner.switching = true;
+    finish({ id: 'message-a' });
+    await expect(opening).resolves.toBe('ignored');
+    expect(navigate).not.toHaveBeenCalled();
+  });
 });

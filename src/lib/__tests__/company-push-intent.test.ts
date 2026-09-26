@@ -13,6 +13,8 @@ function dependencies(overrides: Partial<CompanyPushIntentDependencies> = {}): C
     readReadiness: () => ({
       authenticated: true,
       locked: false,
+      switching: false,
+      sessionAccountId: 'company-local-account',
       accountRegistryHydrated: true,
       navigationReady: true,
       activeAccountId: 'company-local-account',
@@ -43,6 +45,8 @@ describe('company push tap routing', () => {
       readReadiness: () => ({
         authenticated: true,
         locked: false,
+        switching: false,
+        sessionAccountId: 'company-local-account',
         accountRegistryHydrated: false,
         navigationReady: false,
         activeAccountId: 'company-local-account',
@@ -61,6 +65,8 @@ describe('company push tap routing', () => {
     const readiness = {
       authenticated: true,
       locked: false,
+      switching: false,
+      sessionAccountId: 'personal-account',
       accountRegistryHydrated: true,
       navigationReady: true,
       activeAccountId: 'personal-account',
@@ -70,7 +76,8 @@ describe('company push tap routing', () => {
       ],
     };
     const deps = dependencies({
-      readReadiness: () => ({ ...readiness, activeAccountId: switched ? 'company-local-account' : readiness.activeAccountId }),
+      readReadiness: () => ({ ...readiness, activeAccountId: switched ? 'company-local-account' : readiness.activeAccountId,
+        sessionAccountId: switched ? 'company-local-account' : readiness.sessionAccountId }),
       switchAccount: vi.fn(async () => { switched = true; }),
     });
 
@@ -88,7 +95,8 @@ describe('company push tap routing', () => {
     let active = 'staff-one';
     const deps = dependencies({
       readReadiness: () => ({
-        authenticated: true, locked: false, accountRegistryHydrated: true, navigationReady: true,
+        authenticated: true, locked: false, switching: false, sessionAccountId: active,
+        accountRegistryHydrated: true, navigationReady: true,
         activeAccountId: active,
         accounts: [
           { id: 'staff-one', serverUrl: 'https://mail.zyndpay.io' },
@@ -122,7 +130,8 @@ describe('company push tap routing', () => {
     const deps = dependencies({
       registeredCompanyAccountId: vi.fn(async () => null),
       readReadiness: () => ({
-        authenticated: true, locked: false, accountRegistryHydrated: true, navigationReady: true,
+        authenticated: true, locked: false, switching: false, sessionAccountId: 'staff-one',
+        accountRegistryHydrated: true, navigationReady: true,
         activeAccountId: 'staff-one',
         accounts: [
           { id: 'staff-one', serverUrl: 'https://mail.zyndpay.io' },
@@ -151,6 +160,8 @@ describe('company push tap routing', () => {
       readReadiness: () => ({
         authenticated: true,
         locked: false,
+        switching: false,
+        sessionAccountId: 'personal-account',
         accountRegistryHydrated: true,
         navigationReady: true,
         activeAccountId: 'personal-account',
@@ -174,5 +185,26 @@ describe('company push tap routing', () => {
     expect(deps.navigateToInbox).toHaveBeenCalledOnce();
     expect(deps.navigateToEmail).not.toHaveBeenCalled();
     expect(deps.clearLastNotificationResponse).toHaveBeenCalledOnce();
+  });
+
+  it('defers a tap when switching starts during message resolution', async () => {
+    let finish!: (value: { target: 'EMAIL'; accountId: string; emailId: string; threadId: string }) => void;
+    let switching = false;
+    const deps = dependencies({
+      readReadiness: () => ({
+        authenticated: true, locked: false, switching,
+        sessionAccountId: switching ? 'other-account' : 'company-local-account',
+        accountRegistryHydrated: true, navigationReady: true,
+        activeAccountId: 'company-local-account',
+        accounts: [{ id: 'company-local-account', serverUrl: 'https://mail.zyndpay.io' }],
+      }),
+      resolveDestination: vi.fn(() => new Promise<{ target: 'EMAIL'; accountId: string; emailId: string; threadId: string }>((resolve) => { finish = resolve; })),
+    });
+    const opening = openCompanyPushIntent(deps);
+    await vi.waitFor(() => expect(deps.resolveDestination).toHaveBeenCalled());
+    switching = true;
+    finish({ target: 'EMAIL', accountId: 'jmap-account', emailId: 'message', threadId: 'thread' });
+    await expect(opening).resolves.toBe('deferred');
+    expect(deps.navigateToEmail).not.toHaveBeenCalled();
   });
 });

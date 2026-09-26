@@ -1,6 +1,7 @@
 import React from 'react';
 import { ActivityIndicator, AppState, View } from 'react-native';
 import { useSettingsStore } from '../../stores/settings-store';
+import { dismissAndroidMailNotifications } from '../../lib/push-notifications';
 import { useAuthStore } from '../../stores/auth-store';
 import { useLocaleStore } from '../../stores/locale-store';
 import { useColors } from '../../theme/colors';
@@ -76,7 +77,9 @@ export function CompanyPushSettings(): React.ReactElement {
     setBusy(true);
     statusRequest.current += 1;
     useSettingsStore.getState().updateSetting('notificationPreviewsEnabled', enabled);
-    if (!enabled) await dismissCompanyPushNotifications();
+    if (!enabled) await Promise.all([
+      dismissCompanyPushNotifications(), dismissAndroidMailNotifications(),
+    ]);
     try {
       const result = await registerCompanyPush(accountId, false, true);
       if (result.status !== 'ACTIVE' && result.status !== 'OFF') {

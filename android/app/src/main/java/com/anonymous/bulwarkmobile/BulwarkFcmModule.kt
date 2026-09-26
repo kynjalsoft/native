@@ -65,12 +65,12 @@ class BulwarkFcmModule(reactContext: ReactApplicationContext)
         }
         val title = options.getString("title") ?: "New mail"
         val body = options.getString("body") ?: ""
+        val previews = options.hasKey("previews") && options.getBoolean("previews")
         val initials = options.getString("initials") ?: "?"
         val bgColorHex = options.getString("bgColorHex") ?: "#2563eb"
         val iconUrl = options.takeIf { it.hasKey("iconUrl") }?.getString("iconUrl")
         val emailId = options.getString("emailId")
         val threadId = options.getString("threadId")
-        val subject = options.takeIf { it.hasKey("subject") }?.getString("subject")
         val accountId = options.takeIf { it.hasKey("accountId") }?.getString("accountId")
         val jmapAccountId = options.takeIf { it.hasKey("jmapAccountId") }?.getString("jmapAccountId")
         val groupKey = options.takeIf { it.hasKey("groupKey") }?.getString("groupKey")
@@ -85,9 +85,9 @@ class BulwarkFcmModule(reactContext: ReactApplicationContext)
                 ?: makeLetterAvatar(initials, bgColorHex)
             postNotification(
                 notificationId, title, body, largeIcon, bgColorHex,
-                emailId, threadId, subject, accountId, jmapAccountId, groupKey,
+                emailId, threadId, accountId, jmapAccountId, groupKey, previews,
             )
-            if (groupKey != null) postGroupSummary(groupKey, groupTitle, bgColorHex, accountId)
+            if (groupKey != null) postGroupSummary(groupKey, groupTitle, bgColorHex, accountId, previews)
             promise.resolve(null)
         }
     }
@@ -130,16 +130,15 @@ class BulwarkFcmModule(reactContext: ReactApplicationContext)
         colorHex: String,
         emailId: String?,
         threadId: String?,
-        subject: String?,
         accountId: String?,
         jmapAccountId: String?,
         groupKey: String?,
+        previews: Boolean,
     ) {
         val ctx = reactApplicationContext
         val intent = mailTapIntent(ctx, "message", notificationId).apply {
             if (emailId != null) putExtra(NotificationTapStore.EXTRA_EMAIL_ID, emailId)
             if (threadId != null) putExtra(NotificationTapStore.EXTRA_THREAD_ID, threadId)
-            if (subject != null) putExtra(NotificationTapStore.EXTRA_SUBJECT, subject)
             if (accountId != null) putExtra(NotificationTapStore.EXTRA_ACCOUNT_ID, accountId)
             if (jmapAccountId != null) putExtra(NotificationTapStore.EXTRA_JMAP_ACCOUNT_ID, jmapAccountId)
         }
@@ -156,6 +155,7 @@ class BulwarkFcmModule(reactContext: ReactApplicationContext)
             .setContentTitle(title)
             .setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .setVisibility(if (previews) NotificationCompat.VISIBILITY_PUBLIC else NotificationCompat.VISIBILITY_PRIVATE)
             .setColor(parseColor(colorHex, fallback = Color.parseColor("#2563eb")))
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
@@ -173,7 +173,7 @@ class BulwarkFcmModule(reactContext: ReactApplicationContext)
     // single "N new messages" entry (Android renders the "+N more" itself
     // from the children). Tapping the summary opens the app on the inbox;
     // the per-message children carry the deep link.
-    private fun postGroupSummary(groupKey: String, groupTitle: String, colorHex: String, accountId: String?) {
+    private fun postGroupSummary(groupKey: String, groupTitle: String, colorHex: String, accountId: String?, previews: Boolean) {
         val ctx = reactApplicationContext
         val manager = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val children = manager.activeNotifications.filter {
@@ -207,6 +207,7 @@ class BulwarkFcmModule(reactContext: ReactApplicationContext)
             .setContentTitle(groupTitle)
             .setContentText(if (count == 1) "1 new message" else "$count new messages")
             .setStyle(inbox)
+            .setVisibility(if (previews) NotificationCompat.VISIBILITY_PUBLIC else NotificationCompat.VISIBILITY_PRIVATE)
             .setColor(parseColor(colorHex, fallback = Color.parseColor("#2563eb")))
             .setGroup(groupKey)
             .setGroupSummary(true)

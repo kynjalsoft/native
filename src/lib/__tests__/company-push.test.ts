@@ -106,7 +106,7 @@ describe('company Expo push boundary', () => {
     expect(fetchMock.mock.calls.at(-1)?.[1].method).toBe('DELETE');
   });
 
-  it('keeps generic relays content-free even when an old device preference asks for previews', async () => {
+  it('rejects generic relay enrollment while previews are enabled', async () => {
     const fetchMock = vi.fn(async (url: string, init: RequestInit) => ({
       ok: true, status: 200,
       json: async () => url.includes('/v1/push-health?')
@@ -115,6 +115,9 @@ describe('company Expo push boundary', () => {
     }));
     vi.stubGlobal('fetch', fetchMock);
     expect(await companyPushPreviewAvailable()).toBe(false);
+    expect(await registerCompanyPush(accountId, true)).toMatchObject({ status: 'UNAVAILABLE' });
+    expect(fetchMock.mock.calls.some(([, init]) => init.method === 'PUT')).toBe(false);
+    useSettingsStore.setState({ notificationPreviewsEnabled: false });
     expect(await registerCompanyPush(accountId, true)).toEqual({ status: 'ACTIVE' });
     const [, request] = fetchMock.mock.calls.find(([, init]) => init.method === 'PUT')!;
     expect(JSON.parse(request.body as string)).not.toHaveProperty('previews');
@@ -122,6 +125,8 @@ describe('company Expo push boundary', () => {
       importance: 3, lockscreenVisibility: 0, showBadge: false,
     }));
     expect(registerChannel).not.toHaveBeenCalledWith('mail-messages-v2', expect.anything());
+    useSettingsStore.setState({ notificationPreviewsEnabled: true });
+    expect(await companyPushStatus(accountId)).toMatchObject({ status: 'UNAVAILABLE' });
   });
 
   it('stops generic foreground presentation after push opt-out and while revocation is pending', async () => {
@@ -132,8 +137,8 @@ describe('company Expo push boundary', () => {
       return { ok: true, status: 200, json: async () => ({ registrationId: 'registration-1' }) };
     }));
 
-    expect(await registerCompanyPush(accountId, true)).toEqual({ status: 'ACTIVE' });
     useSettingsStore.setState({ notificationPreviewsEnabled: false });
+    expect(await registerCompanyPush(accountId, true)).toEqual({ status: 'ACTIVE' });
     expect(await companyPushModeActive(accountId)).toBe(true);
     records.delete('zyndmail.production.push.preference.v1');
     expect(await companyPushModeActive(accountId)).toBe(false);
@@ -163,7 +168,7 @@ describe('company Expo push boundary', () => {
     session.getStoredCredentials.mockResolvedValue({ serverUrl: 'https://mail.zyndpay.io' });
     const methods: string[] = [];
     vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
-      if (url.includes('/v1/push-health?')) return { ok: true, json: async () => ({ status: 'ok' }) };
+      if (url.includes('/v1/push-health?')) return { ok: true, json: async () => ({ status: 'ok', previewMode: 'sender-subject-snippet-v1' }) };
       methods.push(init.method ?? 'GET');
       return { ok: true, status: 200, json: async () => ({ registrationId: 'new-registration' }) };
     }));
@@ -213,6 +218,45 @@ describe('company Expo push boundary', () => {
     expect(methods).toEqual(['PUT', 'DELETE', 'PUT', 'DELETE', 'PUT', 'DELETE', 'PUT']);
   });
 
+  it('keeps surviving consent when staff accounts share an OIDC subject', async () => {
+    const otherId = 'other@zyndpay.io@mail.zyndpay.io';
+    useAccountStore.setState({ accounts: [
+      { id: accountId, serverUrl: 'https://mail.zyndpay.io' } as never,
+      { id: otherId, serverUrl: 'https://mail.zyndpay.io' } as never,
+    ] });
+    let nextRegistration = 0;
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => ({
+      ok: true, status: 200,
+      json: async () => url.includes('/v1/push-health?')
+        ? { status: 'ok', previewMode: 'sender-subject-snippet-v1' }
+        : { registrationId: `registration-${++nextRegistration}` },
+    })));
+    expect(await registerCompanyPush(accountId, true)).toEqual({ status: 'ACTIVE' });
+    session.username = 'other@zyndpay.io';
+    expect(await registerCompanyPush(otherId, false)).toEqual({ status: 'OFF' });
+    expect(await registerCompanyPush(otherId, true)).toEqual({ status: 'ACTIVE' });
+    expect(await revokeCompanyPush(accountId, false, true)).toBe(true);
+    expect(JSON.parse(records.get('zyndmail.production.push.preference.v1')!).accountIds).toEqual([otherId]);
+    expect(JSON.parse(records.get('zyndmail.production.push.registration.v1')!).accountId).toBe(otherId);
+    expect(await companyPushStatus(otherId)).toEqual({ status: 'ACTIVE' });
+  });
+
+  it('does not grant ambiguous legacy subject consent to both saved accounts', async () => {
+    const otherId = 'other@zyndpay.io@mail.zyndpay.io';
+    useAccountStore.setState({ accounts: [
+      { id: accountId, serverUrl: 'https://mail.zyndpay.io' } as never,
+      { id: otherId, serverUrl: 'https://mail.zyndpay.io' } as never,
+    ] });
+    records.set('zyndmail.production.push.account-subjects.v1', JSON.stringify([
+      { accountId, subject: 'staff-subject' }, { accountId: otherId, subject: 'staff-subject' },
+    ]));
+    records.set('zyndmail.production.push.preference.v1', 'staff-subject');
+    expect(await registerCompanyPush(accountId, false)).toEqual({ status: 'OFF' });
+    session.username = 'other@zyndpay.io';
+    expect(await registerCompanyPush(otherId, false)).toEqual({ status: 'OFF' });
+    expect(JSON.parse(records.get('zyndmail.production.push.preference.v1')!)).toEqual({ version: 3, accountIds: [] });
+  });
+
   it('preserves the returning staff account opt-in while settings reconciles a failed switch', async () => {
     const otherId = 'other@zyndpay.io@mail.zyndpay.io';
     useAccountStore.setState({ accounts: [
@@ -247,12 +291,12 @@ describe('company Expo push boundary', () => {
     session.username = 'staff@zyndpay.io';
     expect(await companyPushStatus(accountId)).toMatchObject({ status: 'REVOKE_PENDING' });
     expect(await reconcileCompanyPush(accountId)).toMatchObject({ status: 'REVOKE_PENDING' });
-    expect(JSON.parse(records.get('zyndmail.production.push.preference.v1')!).subjects).toContain('staff-subject');
+    expect(JSON.parse(records.get('zyndmail.production.push.preference.v1')!).accountIds).toContain(accountId);
 
     relayAvailable = true;
     expect(await reconcileCompanyPush(accountId)).toEqual({ status: 'ACTIVE' });
     expect(await companyPushStatus(accountId)).toEqual({ status: 'ACTIVE' });
-    expect(JSON.parse(records.get('zyndmail.production.push.preference.v1')!).subjects).toContain('staff-subject');
+    expect(JSON.parse(records.get('zyndmail.production.push.preference.v1')!).accountIds).toContain(accountId);
     expect(JSON.parse(records.get('zyndmail.production.push.registration.v1')!).subject).toBe('staff-subject');
   });
 
@@ -508,7 +552,7 @@ describe('company Expo push boundary', () => {
     expect(JSON.parse(records.get('zyndmail.production.push.registration.v1')!)).toMatchObject({
       accountId, registrationId: 'staff-registration',
     });
-    expect(records.get('zyndmail.production.push.preference.v1')).toContain('staff-subject');
+    expect(JSON.parse(records.get('zyndmail.production.push.preference.v1')!).accountIds).toContain(accountId);
   });
 
   it('retries pending revocation without staff authorization after switching to a personal account', async () => {
@@ -586,6 +630,9 @@ describe('company Expo push boundary', () => {
       { id: accountId, serverUrl: 'https://mail.zyndpay.io' } as never,
       { id: otherId, serverUrl: 'https://mail.zyndpay.io' } as never,
     ] });
+    records.set('zyndmail.production.push.account-subjects.v1', JSON.stringify([
+      { accountId, subject: 'staff-subject' }, { accountId: otherId, subject: 'other-subject' },
+    ]));
     session.getStoredOAuthTokens.mockRejectedValue(new Error('Unreadable tokens'));
     session.getStoredCredentials.mockResolvedValue(null);
     let relayAvailable = false;
@@ -596,7 +643,7 @@ describe('company Expo push boundary', () => {
 
     expect(await revokeCompanyPush(accountId)).toBe(false);
     expect(JSON.parse(records.get('zyndmail.production.push.registration.v1')!).revocationPending).toBe(true);
-    expect(JSON.parse(records.get('zyndmail.production.push.preference.v1')!).subjects).toEqual(['other-subject']);
+    expect(JSON.parse(records.get('zyndmail.production.push.preference.v1')!).accountIds).toEqual([otherId]);
     expect(fetchMock.mock.calls[0][1].headers).not.toHaveProperty('Authorization');
     expect(JSON.parse(fetchMock.mock.calls[0][1].body as string)).toEqual(withKey
       ? { registrationId: 'registration-1', revocationKey }
@@ -607,7 +654,7 @@ describe('company Expo push boundary', () => {
     relayAvailable = true;
     expect(await reconcilePendingCompanyPushRevocation()).toBe(false);
     expect(records.has('zyndmail.production.push.registration.v1')).toBe(false);
-    expect(JSON.parse(records.get('zyndmail.production.push.preference.v1')!).subjects).toEqual(['other-subject']);
+    expect(JSON.parse(records.get('zyndmail.production.push.preference.v1')!).accountIds).toEqual([otherId]);
   });
 
   it('clears only the removed staff consent when another staff account owns the registration', async () => {
@@ -634,7 +681,7 @@ describe('company Expo push boundary', () => {
     expect(JSON.parse(records.get('zyndmail.production.push.registration.v1')!)).toMatchObject({
       accountId: otherId, registrationId: 'other-registration',
     });
-    expect(JSON.parse(records.get('zyndmail.production.push.preference.v1')!).subjects).toEqual(['other-subject']);
+    expect(JSON.parse(records.get('zyndmail.production.push.preference.v1')!).accountIds).toEqual([otherId]);
   });
 
   it('drops unowned legacy consent when removed staff identity cannot be recovered', async () => {
@@ -655,7 +702,7 @@ describe('company Expo push boundary', () => {
 
     expect(await revokeCompanyPush(accountId, false, true)).toBe(true);
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(JSON.parse(records.get('zyndmail.production.push.preference.v1')!).subjects).toEqual(['other-subject']);
+    expect(JSON.parse(records.get('zyndmail.production.push.preference.v1')!).accountIds).toEqual([otherId]);
     expect(JSON.parse(records.get('zyndmail.production.push.registration.v1')!).accountId).toBe(otherId);
   });
 
@@ -858,8 +905,8 @@ describe('company Expo push boundary', () => {
     expect(JSON.parse(records.get('zyndmail.production.push.registration.v1')!)).toMatchObject({
       accountId: otherId, subject: 'other-subject', registrationId: 'other-registration',
     });
-    expect(JSON.parse(records.get('zyndmail.production.push.preference.v1')!).subjects)
-      .toContain('other-subject');
+    expect(JSON.parse(records.get('zyndmail.production.push.preference.v1')!).accountIds)
+      .toContain(otherId);
   });
 
   it('revokes saved staff push when global email alerts are disabled on a personal account', async () => {
@@ -984,7 +1031,7 @@ describe('company Expo push boundary', () => {
 
   it('does not expose a native redirect exception if registration redirects after a healthy probe', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
-      if (url.includes('/v1/push-health?')) return { ok: true, json: async () => ({ status: 'ok' }) };
+      if (url.includes('/v1/push-health?')) return { ok: true, json: async () => ({ status: 'ok', previewMode: 'sender-subject-snippet-v1' }) };
       throw new TypeError('FetchRedirectException: Redirect is not allowed');
     }));
     const result = await registerCompanyPush(accountId, true);
@@ -1006,7 +1053,7 @@ describe('company Expo push boundary', () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => ({
       ok: init.method !== 'DELETE', status: init.method === 'DELETE' ? 503 : 200,
       json: async () => url.includes('/v1/push-health?')
-        ? { status: 'ok' } : { registrationId: 'registration-1' },
+        ? { status: 'ok', previewMode: 'sender-subject-snippet-v1' } : { registrationId: 'registration-1' },
     })));
     expect(await registerCompanyPush(accountId, true)).toEqual({ status: 'ACTIVE' });
     const activeTokens = await session.getStoredOAuthTokens() as Record<string, unknown>;
@@ -1058,7 +1105,7 @@ describe('company notification destination', () => {
   it('accepts documented account and message targets and ignores an old thread hint', () => {
     expect(parseCompanyPushDestination({ target: 'ACCOUNT', accountId: 'shared' })).toEqual({ target: 'ACCOUNT', accountId: 'shared' });
     expect(parseCompanyPushDestination({ target: 'MESSAGE', accountId: 'shared', emailId: 'message' })).toEqual({ target: 'MESSAGE', accountId: 'shared', emailId: 'message' });
-    expect(parseCompanyPushDestination({ target: 'EMAIL', accountId: 'shared', emailId: 'message', threadId: 'untrusted' })).toEqual({ target: 'MESSAGE', accountId: 'shared', emailId: 'message' });
+    expect(parseCompanyPushDestination({ target: 'EMAIL', accountId: 'shared', emailId: 'message', threadId: 'untrusted' })).toBeNull();
     expect(parseCompanyPushDestination({ target: 'INBOX' })).toEqual({ target: 'INBOX' });
   });
   it('rejects malformed targets and injected URLs', () => {
@@ -1067,7 +1114,7 @@ describe('company notification destination', () => {
     expect(parseCompanyPushDestination(null)).toBeNull();
   });
 
-  it('opens a resolved message using its current server thread, not the relay hint', async () => {
+  it('rejects undocumented relay targets without fetching a message', async () => {
     records.set('zyndmail.production.push.registration.v1', JSON.stringify({
       subject: 'staff-subject', registrationId: 'registration-1', renewedAt: Date.now(),
     }));
@@ -1075,10 +1122,8 @@ describe('company notification destination', () => {
       ok: true, status: 200,
       json: async () => ({ target: 'EMAIL', accountId: 'shared', emailId: 'message', threadId: 'stale-thread' }),
     })));
-    expect(await resolveCompanyPush(accountId, { version: 1, notificationRef: 'a'.repeat(24) })).toEqual({
-      target: 'EMAIL', accountId: 'shared', emailId: 'message', threadId: 'authoritative-thread',
-    });
-    expect(getEmails).toHaveBeenCalledWith(['message'], 'shared');
+    expect(await resolveCompanyPush(accountId, { version: 1, notificationRef: 'a'.repeat(24) })).toBeNull();
+    expect(getEmails).not.toHaveBeenCalled();
   });
 
   it('opens the new relay MESSAGE target at the exact shared-mailbox message', async () => {

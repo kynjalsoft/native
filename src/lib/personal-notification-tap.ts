@@ -4,16 +4,16 @@ export type PersonalNotificationTapResult = 'opened' | 'retry' | 'ignored';
 
 export function ownsPersonalNotificationTap(
   accountId: string,
-  owner: { activeAccountId: string | null; sessionUsername: string | null; sessionServerUrl: string | null },
+  owner: { activeAccountId: string | null; sessionUsername: string | null; sessionServerUrl: string | null; switching?: boolean },
 ): boolean {
-  return owner.activeAccountId === accountId && !!owner.sessionUsername && !!owner.sessionServerUrl &&
+  return !owner.switching && owner.activeAccountId === accountId && !!owner.sessionUsername && !!owner.sessionServerUrl &&
     generateAccountId(owner.sessionUsername, owner.sessionServerUrl) === accountId;
 }
 
 export async function openFetchedPersonalNotification<T>(
   accountId: string,
   fetchMessage: () => Promise<T | undefined>,
-  readOwner: () => { activeAccountId: string | null; sessionUsername: string | null; sessionServerUrl: string | null },
+  readOwner: () => { activeAccountId: string | null; sessionUsername: string | null; sessionServerUrl: string | null; switching?: boolean },
   isReady: () => boolean,
   navigate: (message: T | undefined) => void,
 ): Promise<PersonalNotificationTapResult> {

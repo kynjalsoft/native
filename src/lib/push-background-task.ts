@@ -41,21 +41,40 @@ const EMAIL_PROPERTIES = [
 
 interface PushPersistedSettings {
   emailNotificationsEnabled?: boolean;
+  notificationPreviewsEnabled?: boolean;
 }
 
-async function emailNotificationsAllowed(): Promise<boolean> {
+async function readNotificationSettings(): Promise<{ enabled: boolean; previews: boolean }> {
   try {
     const raw = await AsyncStorage.getItem(SETTINGS_STORAGE_KEY);
-    if (!raw) return true; // first launch: default to on
+    if (!raw) return { enabled: true, previews: true };
     const parsed = JSON.parse(raw) as PushPersistedSettings;
-    return parsed.emailNotificationsEnabled !== false;
+    return { enabled: parsed.emailNotificationsEnabled !== false,
+      previews: parsed.notificationPreviewsEnabled !== false };
   } catch {
-    return false;
+    return { enabled: false, previews: false };
   }
+}
+
+function safeVisibleText(value: unknown, max: number): string {
+  return typeof value === 'string'
+    ? value.replace(/<[^>]*>/g, ' ').replace(/[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/g, ' ')
+      .replace(/\s+/g, ' ').trim().slice(0, max)
+    : '';
+}
+
+export function visibleMailNotification(email: Email, previews: boolean): { title: string; body: string } {
+  if (!previews) return { title: 'ZyndMail', body: 'New mail' };
+  const from = email.from?.[0];
+  const title = safeVisibleText(from?.name || from?.email, 160) || 'New mail';
+  const subject = safeVisibleText(email.subject, 200) || '(no subject)';
+  const snippet = safeVisibleText(email.preview, 240);
+  return { title, body: snippet ? `${subject}\n${snippet}` : subject };
 }
 
 interface ShowNotificationOptions {
   notificationId: string;
+  previews: boolean;
   title: string;
   body: string;
   initials: string;
@@ -63,7 +82,6 @@ interface ShowNotificationOptions {
   iconUrl?: string;
   emailId: string;
   threadId: string;
-  subject?: string;
   accountId: string;
   jmapAccountId: string;
   // Android notification group: one per account so the tray bundles
@@ -74,6 +92,7 @@ interface ShowNotificationOptions {
 
 interface BulwarkFcmNative {
   showNotification(opts: ShowNotificationOptions): Promise<void>;
+  dismissMailNotifications?(accountId: string): Promise<void>;
 }
 
 /**
@@ -354,7 +373,7 @@ async function detachedNewestUnreadInboxIds(
 // singleton jmapClient's session (see "Detached JMAP access" above).
 export async function pushBackgroundTask(data: unknown): Promise<void> {
   try {
-    if (!(await emailNotificationsAllowed())) return;
+    if (!(await readNotificationSettings()).enabled) return;
 
     await migrateLegacyPushKeys();
 
@@ -408,6 +427,13 @@ function notifiedId(jmapAccountId: string, emailId: string): string {
   return JSON.stringify([jmapAccountId, emailId]);
 }
 
+async function pushAccountStillOwned(accountId: string): Promise<boolean> {
+  const [ids, registry, credentials] = await Promise.all([
+    readPushAccountIds(), readAccountRegistry(), jmapClient.getStoredCredentials(accountId),
+  ]);
+  return ids.includes(accountId) && registry.some((account) => account.id === accountId) && !!credentials;
+}
+
 async function processAccountForPush(accountId: string, payload: RelayPushData): Promise<void> {
   const session = await openDetachedSession(accountId);
   if (!session) return;
@@ -453,19 +479,20 @@ async function processAccountForPush(accountId: string, payload: RelayPushData):
     (a, b) => new Date(a.receivedAt ?? 0).getTime() - new Date(b.receivedAt ?? 0).getTime(),
   );
   for (const email of ordered) {
-    if (!(await emailNotificationsAllowed())) return;
+    const settings = await readNotificationSettings();
+    if (!settings.enabled || !await pushAccountStillOwned(accountId)) return;
     const from = email.from?.[0];
     const name = from?.name ?? '';
     const address = from?.email ?? '';
-    const title = name || address || 'New mail';
-    const body = email.subject || '(no subject)';
-    const initials = getEmailInitials(name, address);
-    const bgColorHex = hslToHex(generateEmailAvatarColor(name, address));
-    const faviconDomain = getFaviconDomain(address);
+    const { title, body } = visibleMailNotification(email, settings.previews);
+    const initials = settings.previews ? getEmailInitials(name, address) : 'ZM';
+    const bgColorHex = settings.previews ? hslToHex(generateEmailAvatarColor(name, address)) : '#2563eb';
+    const faviconDomain = settings.previews ? getFaviconDomain(address) : null;
     const iconUrl = faviconDomain ? getFaviconUrl(faviconDomain) : undefined;
 
     await native.showNotification({
       notificationId: notificationIdForEmail(accountId, targetAccount, email.id),
+      previews: settings.previews,
       title,
       body,
       initials,
@@ -473,12 +500,16 @@ async function processAccountForPush(accountId: string, payload: RelayPushData):
       iconUrl,
       emailId: email.id,
       threadId: email.threadId,
-      subject: email.subject ?? undefined,
       accountId,
       jmapAccountId: targetAccount,
       groupKey,
-      groupTitle,
+      groupTitle: settings.previews ? groupTitle : 'ZyndMail',
     });
+    const after = await readNotificationSettings();
+    if (!after.enabled || after.previews !== settings.previews || !await pushAccountStillOwned(accountId)) {
+      await native.dismissMailNotifications?.(accountId);
+      return;
+    }
     // Persist after each successful native post. If a later post fails, a
     // redelivery must not display the earlier messages a second time.
     await rememberNotifiedIds(accountId, [notifiedId(targetAccount, email.id)]);
