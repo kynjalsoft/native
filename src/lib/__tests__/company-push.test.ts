@@ -38,7 +38,7 @@ vi.mock('expo-notifications', () => ({
 vi.mock('../../api/jmap-client', () => ({ jmapClient: session }));
 vi.mock('../../api/email', () => ({ getEmails }));
 
-import { isCompanyPushPresentation, isGenericCompanyPushPresentation, parseCompanyPushDestination, companyPushPreviewAvailable, companyPushRelayOrigin, companyPushStatus, parseCompanyPushPayload, registerCompanyPush, revokeCompanyPush, resolveCompanyPush } from '../company-push';
+import { isCompanyPushPresentation, isGenericCompanyPushPresentation, parseCompanyPushDestination, companyPushPreviewAvailable, companyPushPreviewModeActive, companyPushRelayOrigin, companyPushStatus, parseCompanyPushPayload, registerCompanyPush, revokeCompanyPush, resolveCompanyPush } from '../company-push';
 import { useSettingsStore } from '../../stores/settings-store';
 import { useAccountStore } from '../../stores/account-store';
 import { ZYNDMAIL_COMPANY } from '../zyndmail-company';
@@ -168,6 +168,75 @@ describe('company Expo push boundary', () => {
     const registration = fetchMock.mock.calls.find(([, request]) => request.method === 'PUT');
     expect(registration).toBeDefined();
     expect(JSON.parse(registration![1].body as string).previews).toBe(true);
+  });
+
+  it('applies a preview opt-out after an in-flight preview registration', async () => {
+    let releasePut!: () => void;
+    let enteredPut!: () => void;
+    const blockedPut = new Promise<void>((resolve) => { releasePut = resolve; });
+    const putStarted = new Promise<void>((resolve) => { enteredPut = resolve; });
+    const requests: boolean[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
+      if (url.includes('/v1/push-health?')) return { ok: true, json: async () => ({ status: 'ok', previewMode: 'sender-subject-snippet-v1' }) };
+      if (init.method === 'PUT') {
+        requests.push(JSON.parse(init.body as string).previews);
+        if (requests.length === 1) { enteredPut(); await blockedPut; }
+      }
+      return { ok: true, status: 200, json: async () => ({ registrationId: 'registration-1' }) };
+    }));
+
+    const first = registerCompanyPush(accountId, true);
+    await putStarted;
+    useSettingsStore.setState({ notificationPreviewsEnabled: false });
+    const second = registerCompanyPush(accountId, false, true);
+    releasePut();
+    expect(await first).toEqual({ status: 'ACTIVE' });
+    expect(await second).toEqual({ status: 'ACTIVE' });
+    expect(requests).toEqual([true, false]);
+    expect(JSON.parse(records.get('zyndmail.production.push.registration.v1')!).previews).toBe(false);
+  });
+
+  it('keeps opt-out pending through a relay outage and reconciles later', async () => {
+    let relayReady = true;
+    const requests: boolean[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
+      if (url.includes('/v1/push-health?')) return relayReady
+        ? { ok: true, json: async () => ({ status: 'ok', previewMode: 'sender-subject-snippet-v1' }) }
+        : { ok: false };
+      if (init.method === 'PUT') requests.push(JSON.parse(init.body as string).previews);
+      return { ok: true, status: 200, json: async () => ({ registrationId: 'registration-1' }) };
+    }));
+
+    expect(await registerCompanyPush(accountId, true)).toEqual({ status: 'ACTIVE' });
+    useSettingsStore.setState({ notificationPreviewsEnabled: false });
+    relayReady = false;
+    expect((await registerCompanyPush(accountId, false, true)).status).toBe('UNAVAILABLE');
+    expect(await companyPushStatus(accountId)).toMatchObject({ status: 'PENDING' });
+    relayReady = true;
+    expect(await registerCompanyPush(accountId, false, true)).toEqual({ status: 'ACTIVE' });
+    expect(await companyPushStatus(accountId)).toEqual({ status: 'ACTIVE' });
+    expect(requests).toEqual([true, false]);
+  });
+
+  it('clears foreground preview permission after revoking an in-flight registration', async () => {
+    let releasePut!: () => void;
+    let enteredPut!: () => void;
+    const blockedPut = new Promise<void>((resolve) => { releasePut = resolve; });
+    const putStarted = new Promise<void>((resolve) => { enteredPut = resolve; });
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
+      if (url.includes('/v1/push-health?')) return { ok: true, json: async () => ({ status: 'ok', previewMode: 'sender-subject-snippet-v1' }) };
+      if (init.method === 'PUT') { enteredPut(); await blockedPut; }
+      return { ok: true, status: 200, json: async () => ({ registrationId: 'registration-1' }) };
+    }));
+
+    const registration = registerCompanyPush(accountId, true);
+    await putStarted;
+    const revocation = revokeCompanyPush(accountId);
+    releasePut();
+    expect(await registration).toEqual({ status: 'ACTIVE' });
+    expect(await revocation).toBe(true);
+    expect(companyPushPreviewModeActive()).toBe(false);
+    expect(await companyPushStatus(accountId)).toEqual({ status: 'OFF' });
   });
 
   it('does not invite or request notification permission when the production relay redirects to webmail', async () => {

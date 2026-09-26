@@ -4,7 +4,7 @@ import { useSettingsStore } from '../../stores/settings-store';
 import { useAuthStore } from '../../stores/auth-store';
 import { useLocaleStore } from '../../stores/locale-store';
 import { useColors } from '../../theme/colors';
-import { companyPushPreviewAvailable, companyPushStatus, dismissCompanyPushNotifications, registerCompanyPush, revokeCompanyPush, type CompanyPushStatus } from '../../lib/company-push';
+import { companyPushPreviewAvailable, companyPushPreviewPending, companyPushStatus, dismissCompanyPushNotifications, registerCompanyPush, revokeCompanyPush, type CompanyPushStatus } from '../../lib/company-push';
 import { SettingItem, SettingsSection, ToggleSwitch } from './settings-section';
 
 /** Company push uses the authenticated mail-plane relay, never a user-entered URL. */
@@ -31,7 +31,10 @@ export function CompanyPushSettings(): React.ReactElement {
         // Opening Notifications is an explicit opportunity to repair a stale
         // local registration. Do not show ACTIVE until the relay has accepted
         // the current preview preference for this device.
-        if (next.status === 'ACTIVE') next = await registerCompanyPush(accountId, false, true);
+        if (next.status === 'ACTIVE' || next.status === 'PENDING') {
+          const renewed = await registerCompanyPush(accountId, false, true);
+          next = next.status === 'PENDING' && renewed.status !== 'ACTIVE' ? next : renewed;
+        }
         if (current && request === statusRequest.current) {
           setPreviewAvailable(supportsPreviews);
           setStatus(next);
@@ -67,16 +70,20 @@ export function CompanyPushSettings(): React.ReactElement {
     setBusy(true);
     statusRequest.current += 1;
     useSettingsStore.getState().updateSetting('notificationPreviewsEnabled', enabled);
+    if (!enabled) await dismissCompanyPushNotifications();
     try {
       const result = await registerCompanyPush(accountId, false, true);
       if (result.status !== 'ACTIVE' && result.status !== 'OFF') {
-        useSettingsStore.getState().updateSetting('notificationPreviewsEnabled', previews);
+        if (enabled) useSettingsStore.getState().updateSetting('notificationPreviewsEnabled', previews);
       }
-      if (!enabled) await dismissCompanyPushNotifications();
-      setStatus(result);
+      setStatus(!enabled && result.status !== 'ACTIVE'
+        ? companyPushPreviewPending
+        : result);
     } catch {
-      useSettingsStore.getState().updateSetting('notificationPreviewsEnabled', previews);
-      setStatus({ status: 'ERROR', reason: 'Preview preference could not be applied. Please try again.' });
+      if (enabled) useSettingsStore.getState().updateSetting('notificationPreviewsEnabled', previews);
+      setStatus(!enabled
+        ? companyPushPreviewPending
+        : { status: 'ERROR', reason: 'Preview preference could not be applied. Please try again.' });
     } finally { setBusy(false); }
   };
 
@@ -84,7 +91,7 @@ export function CompanyPushSettings(): React.ReactElement {
     ? t('settings.notifications.company.email_disabled', 'Turn on Email notifications above to enable company mail alerts.')
     : status?.status === 'ACTIVE'
     ? t('settings.notifications.company.active', 'This device was registered for private mail alerts. Delivery depends on server and device connectivity.')
-    : status?.status === 'UNAVAILABLE' || status?.status === 'ERROR'
+    : status?.status === 'UNAVAILABLE' || status?.status === 'ERROR' || status?.status === 'PENDING'
       ? status.reason
       : status?.status === 'DENIED'
         ? t('settings.notifications.company.denied', 'Allow notifications for ZyndMail in your device settings.')
@@ -96,7 +103,7 @@ export function CompanyPushSettings(): React.ReactElement {
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
           {busy && <ActivityIndicator size="small" color={colors.primary} />}
           <ToggleSwitch
-            checked={emailEnabled && status?.status === 'ACTIVE'}
+            checked={emailEnabled && (status?.status === 'ACTIVE' || status?.status === 'PENDING')}
             onChange={(value) => { void onChange(value); }}
             disabled={!accountId || busy || !status || !emailEnabled}
           />

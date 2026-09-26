@@ -107,6 +107,17 @@ async function navigateToNotificationTap(
   if (!navigationRef.isReady() || !stillReady()) return 'retry';
   try {
     if (payload.emailId && payload.threadId) {
+      if (!payload.jmapAccountId) {
+        navigationRef.navigate('UnifiedInbox');
+        Alert.alert(
+          useLocaleStore.getState().t('error'),
+          useLocaleStore.getState().t(
+            'notification_link_unavailable',
+            'This notification cannot open a single email. Search your inbox to find the message.',
+          ),
+        );
+        return 'opened';
+      }
       let email;
       try {
         [email] = await getEmails([payload.emailId], payload.jmapAccountId);
@@ -842,6 +853,9 @@ function AppContent() {
           }, [1_000, 3_000, 10_000, 30_000][attempts - 1]);
         } else {
           companyPushRetryCount.current = 0;
+          pendingCompanyPushResponses.current = pendingCompanyPushResponses.current
+            .filter((item) => item.notification.request.identifier !== identifier);
+          setPendingCompanyPushRevision((revision) => revision + 1);
           Alert.alert(
             useLocaleStore.getState().t('error'),
             useLocaleStore.getState().t(

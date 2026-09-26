@@ -34,8 +34,14 @@ interface Registration {
 
 export type CompanyPushStatus =
   | { status: 'OFF' | 'NOT_REQUESTED' | 'DENIED' | 'ACTIVE' }
+  | { status: 'PENDING'; reason: string }
   | { status: 'UNAVAILABLE'; reason: string }
   | { status: 'ERROR'; reason: string };
+
+export const companyPushPreviewPending: CompanyPushStatus = {
+  status: 'PENDING',
+  reason: 'Previews are off on this device. Server synchronization is pending; rich background notifications may continue until it succeeds.',
+};
 
 /** No default: this must be the reviewed mail-plane relay, never the public Bulwark relay. */
 export function companyPushRelayOrigin(): string | null {
@@ -249,24 +255,38 @@ export async function companyPushStatus(accountId: string): Promise<CompanyPushS
   const permission = await Notifications.getPermissionsAsync();
   if (permission.status === 'undetermined') return { status: 'NOT_REQUESTED' };
   if (!permission.granted) return { status: 'DENIED' };
+  if (registration?.routingVersion === 3 && registration.previews === true &&
+      !useSettingsStore.getState().notificationPreviewsEnabled) {
+    return companyPushPreviewPending;
+  }
   return registration ? { status: 'ACTIVE' } : { status: 'ERROR', reason: 'Register this device again.' };
 }
 
-const inFlight = new Map<string, Promise<CompanyPushStatus>>();
+const inFlight = new Map<string, { promise: Promise<CompanyPushStatus>; previews: boolean; requestPermission: boolean; force: boolean }>();
+const revoking = new Set<string>();
 
 export function registerCompanyPush(accountId: string, requestPermission: boolean, force = false): Promise<CompanyPushStatus> {
+  if (revoking.has(accountId)) return Promise.resolve({ status: 'OFF' });
+  const previews = useSettingsStore.getState().notificationPreviewsEnabled;
   const existing = inFlight.get(accountId);
-  if (existing) return existing;
-  const run = registerCompanyPushInner(accountId, requestPermission, force)
+  if (existing) {
+    if (existing.previews === previews && (!requestPermission || existing.requestPermission) &&
+        (!force || existing.force)) return existing.promise;
+    return existing.promise.then(() =>
+      useSettingsStore.getState().notificationPreviewsEnabled === previews
+        ? registerCompanyPush(accountId, requestPermission, force)
+        : companyPushStatus(accountId));
+  }
+  const run = registerCompanyPushInner(accountId, requestPermission, force, previews)
     .catch((error): CompanyPushStatus => ({
       status: 'ERROR', reason: error instanceof Error ? error.message : 'Mail push registration failed.',
     }))
-    .finally(() => { inFlight.delete(accountId); });
-  inFlight.set(accountId, run);
+    .finally(() => { if (inFlight.get(accountId)?.promise === run) inFlight.delete(accountId); });
+  inFlight.set(accountId, { promise: run, previews, requestPermission, force });
   return run;
 }
 
-async function registerCompanyPushInner(accountId: string, requestPermission: boolean, force: boolean): Promise<CompanyPushStatus> {
+async function registerCompanyPushInner(accountId: string, requestPermission: boolean, force: boolean, desiredPreviews: boolean): Promise<CompanyPushStatus> {
   const problem = configurationError();
   if (problem) return { status: 'UNAVAILABLE', reason: problem };
   const session = await currentCompanySession(accountId);
@@ -295,7 +315,7 @@ async function registerCompanyPushInner(accountId: string, requestPermission: bo
   const health = await relayHealth();
   if (!health.ready) return { status: 'UNAVAILABLE', reason: RELAY_UNAVAILABLE };
   if (!health.previewMode) previewModeActive = false;
-  const previews = health.previewMode && useSettingsStore.getState().notificationPreviewsEnabled;
+  const previews = health.previewMode && desiredPreviews;
   const routingVersion = health.previewMode ? 3 : 2;
   if (previous?.previews === previews && previous?.routingVersion === routingVersion && !force && !requestPermission && Date.now() - previous.renewedAt < RENEW_AFTER_MS) return companyPushStatus(accountId);
   if (Platform.OS === 'android') {
@@ -361,31 +381,38 @@ async function registerCompanyPushInner(accountId: string, requestPermission: bo
 }
 
 export async function revokeCompanyPush(accountId: string): Promise<boolean> {
+  revoking.add(accountId);
   previewModeActive = false;
   await dismissCompanyPushNotifications();
-  const pending = inFlight.get(accountId);
-  if (pending) await pending.catch(() => undefined);
-  // A failed token refresh or relay outage must not silently re-enable push
-  // after opt-out. Only clear this account's preference, since a different
-  // staff account may be active on the same device.
-  const tokens = await jmapClient.getStoredOAuthTokens(accountId).catch(() => null);
-  if (tokens?.companyIdentity?.subject &&
-      await preferenceSubject() === tokens.companyIdentity.subject) {
-    await SecureStore.deleteItemAsync(PREFERENCE_KEY, storageOptions);
-  }
-  const registration = await readRegistration();
-  const session = await storedCompanySession(accountId).catch(() => null);
-  if (!session) return registration === null;
-  if (!registration || registration.subject !== session.subject) return true;
   try {
-    const response = await relayFetch('v1/device-registrations/current', session.bearer, {
-      method: 'DELETE', body: JSON.stringify({ registrationId: registration.registrationId }),
-    });
-    if (!response.ok && response.status !== 404 && response.status !== 410) return false;
-    await SecureStore.deleteItemAsync(REGISTRATION_KEY, storageOptions);
-    return true;
-  } catch {
-    return false;
+    const pending = inFlight.get(accountId)?.promise;
+    if (pending) await pending.catch(() => undefined);
+    previewModeActive = false;
+    // A failed token refresh or relay outage must not silently re-enable push
+    // after opt-out. Only clear this account's preference, since a different
+    // staff account may be active on the same device.
+    const tokens = await jmapClient.getStoredOAuthTokens(accountId).catch(() => null);
+    if (tokens?.companyIdentity?.subject &&
+        await preferenceSubject() === tokens.companyIdentity.subject) {
+      await SecureStore.deleteItemAsync(PREFERENCE_KEY, storageOptions);
+    }
+    const registration = await readRegistration();
+    const session = await storedCompanySession(accountId).catch(() => null);
+    if (!session) return registration === null;
+    if (!registration || registration.subject !== session.subject) return true;
+    try {
+      const response = await relayFetch('v1/device-registrations/current', session.bearer, {
+        method: 'DELETE', body: JSON.stringify({ registrationId: registration.registrationId }),
+      });
+      if (!response.ok && response.status !== 404 && response.status !== 410) return false;
+      await SecureStore.deleteItemAsync(REGISTRATION_KEY, storageOptions);
+      return true;
+    } catch {
+      return false;
+    }
+  } finally {
+    previewModeActive = false;
+    revoking.delete(accountId);
   }
 }
 
