@@ -523,16 +523,31 @@ export async function revokeCompanyPush(accountId: string, preservePreference = 
 
 async function revokeCompanyPushInner(accountId: string, preservePreference: boolean): Promise<boolean> {
   const tokens = await jmapClient.getStoredOAuthTokens(accountId).catch(() => null);
-  const subject = tokens?.companyIdentity?.subject;
   const registration = await readRegistration();
-  if (subject && registration?.subject === subject) {
+  const tokenSubject = tokens?.companyIdentity?.subject;
+  const provenOwner = !!registration && (registration.accountId
+    ? registration.accountId === accountId
+    : registration.subject === tokenSubject);
+  let ambiguousLegacyOwner = !!registration && !registration.accountId && !tokenSubject;
+  if (ambiguousLegacyOwner) {
+    for (const account of useAccountStore.getState().accounts) {
+      if (account.id === accountId || !isCompanyMailServer(account.serverUrl)) continue;
+      const otherTokens = await jmapClient.getStoredOAuthTokens(account.id).catch(() => null);
+      if (otherTokens?.companyIdentity?.subject === registration.subject) {
+        ambiguousLegacyOwner = false;
+        break;
+      }
+    }
+  }
+  if (registration && (provenOwner || ambiguousLegacyOwner)) {
     await SecureStore.setItemAsync(REGISTRATION_KEY, JSON.stringify({ ...registration, revocationPending: true }), storageOptions);
     await dismissCompanyPushNotifications();
   }
-  if (subject && !preservePreference && await hasPushPreference(subject)) {
-    await setPushPreference(subject, false);
+  const preferenceSubject = provenOwner ? registration?.subject : tokenSubject;
+  if (preferenceSubject && !preservePreference && await hasPushPreference(preferenceSubject)) {
+    await setPushPreference(preferenceSubject, false);
   }
-  if (!registration || registration.subject !== subject) return true;
+  if (!registration || (!provenOwner && !ambiguousLegacyOwner)) return true;
   const isActiveOwner = generateAccountId(jmapClient.username ?? '', jmapClient.serverUrl ?? '') === accountId;
   if (!isActiveOwner && registration.revocationKey) return deleteRegistration(registration, null);
   const session = await storedCompanySession(accountId).catch(() => null);
