@@ -370,6 +370,12 @@ async function registerCompanyPushInner(accountId: string, requestPermission: bo
   const session = await currentCompanySession(accountId);
   if (!session) return { status: 'UNAVAILABLE', reason: 'Sign in with ZyndPay Staff to enable mail alerts.' };
   let previous = await readRegistration();
+  if (previous?.revocationPending && previous.subject !== session.subject) {
+    if (await reconcilePendingCompanyPushRevocation()) {
+      return { status: 'UNAVAILABLE', reason: 'The previous staff registration is awaiting server revocation. Retry when the mail relay is available.' };
+    }
+    previous = await readRegistration();
+  }
   if (previous && previous.subject !== session.subject) {
     // One installation has one staff registration. Switching staff identities
     // must retire the earlier subject before enrolling the new one.
