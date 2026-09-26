@@ -749,7 +749,7 @@ async function revokeCompanyPushInner(accountId: string, preservePreference: boo
     ? registration.accountId === accountId
     : registration.subject === knownSubject);
   let ambiguousLegacyOwner = !!registration && !registration.accountId && !knownSubject;
-  if (ambiguousLegacyOwner) {
+  if (ambiguousLegacyOwner && registration) {
     for (const account of useAccountStore.getState().accounts) {
       if (account.id === accountId || !isCompanyMailServer(account.serverUrl)) continue;
       const otherTokens = await jmapClient.getStoredOAuthTokens(account.id).catch(() => null);

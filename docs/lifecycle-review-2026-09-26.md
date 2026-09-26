@@ -10,7 +10,7 @@ The findings below describe the original source review. The following changes ha
 | --- | --- | --- |
 | F1 | **Code fixed** | Company accounts no longer see or invoke the Trash/Junk empty-folder action. A policy regression test covers the company and non-company cases. |
 | F2 | **Code gated; release qualification open** | Calendar, Contacts and Files top-level apps and their settings are hidden for company accounts; automatic contact/calendar fetch is skipped. They remain available for other accounts. Company exposure requires a separate scope and device acceptance decision. |
-| F3 | **Open release gate** | Current source passes TypeScript, translation coverage, 1,099 tests (14 skipped), and iOS/Android Metro export. Expo SDK patch dependencies were aligned. The workspace still has no current signed artifacts or physical-device results. CI now runs translation coverage and both bundle exports. The notification lifecycle has a separate [audit and acceptance matrix](notification-lifecycle-audit-2026-09-26.md). |
+| F3 | **Open release gate** | Earlier source checks passed TypeScript, translation coverage, tests, and iOS/Android Metro export. Expo SDK patch dependencies were aligned. The workspace still has no current signed artifacts or physical-device results. CI now runs translation coverage and both bundle exports. The notification lifecycle has a separate [audit and acceptance matrix](notification-lifecycle-audit-2026-09-26.md). |
 | F4 | **Core mail improvement; device verification open** | The in-app text-size choice now affects inbox, thread, message body and compose styles. Its label describes that scope. Other screens continue to follow device text size; large-text and screen-reader layout still require device checks. |
 | F5 | **Code fixed; device verification open** | Unsupported app destinations explain that the server/account lacks the capability and direct staff to their administrator. Capability-denied behavior still needs a live account witness. |
 | F6 | **Documentation aligned** | The intentionally removed source/license links are no longer promised in README or release notes. Repository attribution and license remain. |
@@ -18,19 +18,19 @@ The findings below describe the original source review. The following changes ha
 
 No physical iOS or Android acceptance, company mailbox, push, OTA, or support-response result is claimed by this update.
 
-Expo Doctor now passes 20 of 21 checks. Its remaining warning is that the checked-in Android native project does not automatically receive `app.config.js` changes. The package, portrait orientation, URL schemes and backup setting are present in the Android manifest; any future native config edit still requires a manual Android review and build. `npm audit --omit=dev` reports a moderate transitive `uuid` advisory through Expo's `xcode` config tooling; its proposed automatic fix would downgrade Expo across SDK versions, so that change was not applied.
+During the implementation review, Expo Doctor passed 20 of 21 checks. Its remaining warning was that the checked-in Android native project does not automatically receive `app.config.js` changes. The package, portrait orientation, URL schemes and backup setting are present in the Android manifest; any future native config edit still requires a manual Android review and build. That review's `npm audit --omit=dev` reported a moderate transitive `uuid` advisory through Expo's `xcode` config tooling; its proposed automatic fix would downgrade Expo across SDK versions, so that change was not applied.
 
-## Verdict and evidence boundary
+## Baseline source review at `b53f725`
 
-The source is in good automated health: `npm test` passed 1,084 tests (14 skipped), `npm run typecheck` and `npm run i18n:check` passed, and Expo exported both iOS and Android bundles. These checks establish source and bundle health, not a usable or production-ready device experience.
+At baseline, `npm test` passed 1,084 tests (14 skipped), `npm run typecheck` and `npm run i18n:check` passed, and Expo exported both iOS and Android bundles. Those checks established baseline source and bundle health, not a usable or production-ready device experience.
 
 **The live experience audit is incomplete.** This workspace has no installed build, Android SDK, physical device, authenticated EAS session, or test mailbox. GitHub has no ZyndMail release artifact. A companion operations record contains an older internal APK and iOS simulator build from commit `8c7a3a4`; those artifacts do not match this review's source and cannot qualify the current app. No current-flow screenshots or VoiceOver/TalkBack results were captured. The journey health below is a source-review status, not a claim that staff completed the task on a device.
 
-Use three evidence labels throughout: **verified in source** means current code or a command run in this review; **recorded requirement** means a release or product document; **device unverified** means a real user path remains to be observed. The older parity checklist is a lead list, not proof that an item still fails; several entries have since been fixed.
+The journey map and F1–F7 findings below record the baseline review before the implementation update above. Their source locations and proposed fixes describe `b53f725`; use the update table for the changed code. **Verified in source** means code or a command checked in that baseline review; **recorded requirement** means a release or product document; **device unverified** means a real user path remains to be observed. The older parity checklist is a lead list, not proof that an item still fails; several entries have since been fixed.
 
 ## Journey map
 
-| Step | Staff task | Source-review health | Current evidence and next witness |
+| Step | Staff task | Baseline source-review health | Baseline evidence and next witness |
 | --- | --- | --- | --- |
 | 1 | Install or replace the old client | **Conditional** | Migration requires a new binary, re-sign-in and saving unsaved old drafts first ([release notes](zyndmail-production-release.md)). Verify the actual staff notice and install path on both platforms. |
 | 2 | Sign in and recover access | **Implemented; device unverified** | Login offers QR pairing, email discovery, manual server entry and browser handoff (`src/screens/LoginScreen.tsx`, `src/screens/login/ChooseStep.tsx`). Witness company Keycloak passkey/TOTP, cancellation, failed discovery and recovery guidance. |
@@ -45,7 +45,7 @@ Use three evidence labels throughout: **verified in source** means current code 
 
 ## Findings and recommended changes
 
-Severity describes the effect **if the current source ships to company staff**. No finding below is presented as a reproduced device failure.
+Severity describes the potential effect if the baseline source shipped to company staff. No finding below is presented as a reproduced device failure.
 
 | ID | Priority | Evidence | Staff impact | Action and acceptance |
 | --- | --- | --- | --- | --- |
