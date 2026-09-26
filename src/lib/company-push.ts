@@ -544,15 +544,20 @@ export async function revokeEvictedCompanyPush(accountId: string): Promise<void>
   await withRegistrationLock(async () => {
     const registration = await readRegistration();
     if (!registration) return;
+    let provenOwner = registration.accountId === accountId;
     if (registration.accountId !== accountId) {
       if (registration.accountId) return;
       const tokens = await jmapClient.getStoredOAuthTokens(accountId).catch(() => null);
-      if (tokens?.companyIdentity?.subject !== registration.subject) {
-        const staffAccounts = useAccountStore.getState().accounts.filter((account) => isCompanyMailServer(account.serverUrl));
-        if (staffAccounts.length !== 1 || staffAccounts[0].id !== accountId) return;
+      provenOwner = tokens?.companyIdentity?.subject === registration.subject;
+      if (!provenOwner) {
+        for (const account of useAccountStore.getState().accounts) {
+          if (account.id === accountId || !isCompanyMailServer(account.serverUrl)) continue;
+          const otherTokens = await jmapClient.getStoredOAuthTokens(account.id).catch(() => null);
+          if (otherTokens?.companyIdentity?.subject === registration.subject) return;
+        }
       }
     }
-    await revokeSavedRegistration(registration);
+    await revokeSavedRegistration(registration, provenOwner);
   });
 }
 
@@ -567,9 +572,9 @@ async function reconcilePendingCompanyPushRevocationInner(): Promise<boolean> {
   return hasPendingCompanyPushRevocation();
 }
 
-async function revokeSavedRegistration(registration: Registration): Promise<void> {
+async function revokeSavedRegistration(registration: Registration, clearPreference: boolean): Promise<void> {
   await SecureStore.setItemAsync(REGISTRATION_KEY, JSON.stringify({ ...registration, revocationPending: true }), storageOptions);
-  await setPushPreference(registration.subject, false);
+  if (clearPreference) await setPushPreference(registration.subject, false);
   await dismissCompanyPushNotifications();
   await deleteRegistration(registration, null);
 }
@@ -577,8 +582,9 @@ async function revokeSavedRegistration(registration: Registration): Promise<void
 export async function reconcileDisabledCompanyPush(): Promise<boolean> {
   if (useSettingsStore.getState().emailNotificationsEnabled) return hasPendingCompanyPushRevocation();
   return withRegistrationLock(async () => {
+    if (useSettingsStore.getState().emailNotificationsEnabled) return hasPendingCompanyPushRevocation();
     const registration = await readRegistration();
-    if (registration) await revokeSavedRegistration(registration);
+    if (registration) await revokeSavedRegistration(registration, false);
     return hasPendingCompanyPushRevocation();
   });
 }
@@ -588,7 +594,7 @@ export async function reconcileCompanyPush(accountId: string): Promise<CompanyPu
   const pending = enabled && await companyPushRevocationPending(accountId);
   if (!enabled || pending) {
     const registration = pending ? await readRegistration() : null;
-    const keepPreference = enabled && !!registration && await hasPushPreference(registration.subject);
+    const keepPreference = !enabled || (!!registration && await hasPushPreference(registration.subject));
     if (!await revokeCompanyPush(accountId, keepPreference)) return companyPushRevocationPendingStatus;
     if (!enabled) return { status: 'OFF' };
   }
