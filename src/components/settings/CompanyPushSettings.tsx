@@ -66,7 +66,7 @@ export function CompanyPushSettings(): React.ReactElement {
   };
 
   const changePreviews = async (enabled: boolean) => {
-    if (!accountId || busy || !emailEnabled || !previewAvailable) return;
+    if (!accountId || busy || !emailEnabled || (enabled && !previewAvailable)) return;
     setBusy(true);
     statusRequest.current += 1;
     useSettingsStore.getState().updateSetting('notificationPreviewsEnabled', enabled);
@@ -112,8 +112,8 @@ export function CompanyPushSettings(): React.ReactElement {
       <SettingItem label={t('settings.notifications.company.previews', 'Show message previews')}
         description={previewAvailable
           ? t('settings.notifications.company.previews_description', 'Show sender, subject and a short snippet. This text passes through Expo and may appear on your lock screen, subject to your device settings. Turn off for generic alerts.')
-          : t('settings.notifications.company.previews_unavailable', 'This mail relay currently supports generic alerts only. Message previews require an approved relay update.')}>
-        <ToggleSwitch checked={previews && previewAvailable} disabled={busy || !accountId || !status || !emailEnabled || !previewAvailable}
+          : t('settings.notifications.company.previews_unavailable', 'An available, approved relay is required to turn on previews. You can turn them off on this device at any time.')}>
+        <ToggleSwitch checked={previews} disabled={busy || !accountId || !status || !emailEnabled || (!previewAvailable && !previews)}
           onChange={(value) => { void changePreviews(value); }} />
       </SettingItem>
     </SettingsSection>

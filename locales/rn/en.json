@@ -552,7 +552,7 @@
         "email_disabled": "Turn on Email notifications above to enable company mail alerts.",
         "previews": "Show message previews",
         "previews_description": "Show sender, subject and a short snippet. This text passes through Expo and may appear on your lock screen, subject to your device settings. Turn off for generic alerts.",
-        "previews_unavailable": "This mail relay currently supports generic alerts only. Message previews require an approved relay update.",
+        "previews_unavailable": "An available, approved relay is required to turn on previews. You can turn them off on this device at any time.",
         "section": "New-mail alerts for authorized personal and shared mailboxes.",
         "title": "Company mail alerts",
         "toggle": "Push notifications"

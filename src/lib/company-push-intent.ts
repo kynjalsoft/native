@@ -64,18 +64,18 @@ export async function openCompanyPushIntent(
   let readiness = dependencies.readReadiness();
   if (!readyToOpen(readiness)) return 'deferred';
 
-  const registeredId = dependencies.registeredCompanyAccountId
-    ? await dependencies.registeredCompanyAccountId() : null;
-  const companyAccount = registeredId
-    ? readiness.accounts.find((account) => account.id === registeredId &&
-      dependencies.isCompanyMailServer(account.serverUrl))
-    : dependencies.registeredCompanyAccountId
-      ? null
-      : readiness.accounts.find((account) => dependencies.isCompanyMailServer(account.serverUrl));
-  if (!companyAccount) return readiness.accounts.some((account) =>
-    dependencies.isCompanyMailServer(account.serverUrl)) ? 'retry' : 'deferred';
-
   try {
+    const registeredId = dependencies.registeredCompanyAccountId
+      ? await dependencies.registeredCompanyAccountId() : null;
+    const companyAccount = registeredId
+      ? readiness.accounts.find((account) => account.id === registeredId &&
+        dependencies.isCompanyMailServer(account.serverUrl))
+      : dependencies.registeredCompanyAccountId
+        ? null
+        : readiness.accounts.find((account) => dependencies.isCompanyMailServer(account.serverUrl));
+    if (!companyAccount) return readiness.accounts.some((account) =>
+      dependencies.isCompanyMailServer(account.serverUrl)) ? 'retry' : 'deferred';
+
     if (readiness.activeAccountId !== companyAccount.id) {
       await dependencies.switchAccount(companyAccount.id);
     }

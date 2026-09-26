@@ -102,6 +102,21 @@ describe('company push tap routing', () => {
     expect(deps.resolveDestination).toHaveBeenCalledWith('staff-two', response.notification.request.content.data);
   });
 
+  it('retries an owner lookup failure and opens a later tap', async () => {
+    const registeredCompanyAccountId = vi.fn()
+      .mockRejectedValueOnce(new Error('SecureStore unavailable'))
+      .mockResolvedValue('company-local-account');
+    const deps = dependencies({ registeredCompanyAccountId });
+
+    await expect(openCompanyPushIntent(deps)).resolves.toBe('retry');
+    expect(deps.resolveDestination).not.toHaveBeenCalled();
+    expect(deps.clearLastNotificationResponse).not.toHaveBeenCalled();
+
+    await expect(openCompanyPushIntent(deps)).resolves.toBe('opened');
+    expect(deps.navigateToEmail).toHaveBeenCalledOnce();
+    expect(deps.clearLastNotificationResponse).toHaveBeenCalledOnce();
+  });
+
   it('keeps a transient relay failure retryable and does not navigate to the inbox', async () => {
     const deps = dependencies({ resolveDestination: vi.fn(async () => null) });
 
