@@ -266,6 +266,46 @@ describe('company Expo push boundary', () => {
     ]);
   });
 
+  it('requires fresh consent after an offline legacy preview opt-out and subject change', async () => {
+    const registrationKey = 'zyndmail.production.push.registration.v1';
+    const preferenceKey = 'zyndmail.production.push.preference.v1';
+    records.set(registrationKey, JSON.stringify({
+      subject: 'staff-subject', registrationId: 'legacy-registration', renewedAt: Date.now(),
+      routingVersion: 3, previews: true,
+    }));
+    records.set(preferenceKey, JSON.stringify({ version: 3, accountIds: [accountId] }));
+    records.set('zyndmail.production.push.installation.v1', 'legacy-installation');
+    useAccountStore.setState({ accounts: [{ id: accountId, serverUrl: 'https://mail.zyndpay.io' } as never] });
+    useSettingsStore.setState({ notificationPreviewsEnabled: false });
+    let online = false;
+    const requests: Array<{ method?: string; body: unknown }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init: RequestInit) => {
+      requests.push({ method: init.method, body: JSON.parse(init.body as string) });
+      return { ok: online, status: online ? 200 : 503 };
+    }));
+
+    expect((await registerCompanyPush(accountId, false)).status).toBe('PENDING');
+    expect(JSON.parse(records.get(registrationKey)!)).toMatchObject({
+      registrationId: 'legacy-registration', revocationPending: true,
+    });
+    session.getStoredOAuthTokens.mockResolvedValue({
+      accessToken: jwt('replacement-subject'), clientId: ZYNDMAIL_COMPANY.clientId,
+      companyIdentity: { issuer: ZYNDMAIL_COMPANY.issuer, audience: 'stalwart', subject: 'replacement-subject' },
+    });
+    await registerCompanyPush(accountId, false);
+    expect(JSON.parse(records.get(registrationKey)!)).toMatchObject({
+      subject: 'staff-subject', revocationPending: true,
+    });
+    expect(JSON.parse(records.get(preferenceKey) ?? '{"accountIds":[]}').accountIds).not.toContain(accountId);
+    online = true;
+    expect(await registerCompanyPush(accountId, false)).toEqual({ status: 'OFF' });
+    expect(records.has(registrationKey)).toBe(false);
+    expect(JSON.parse(records.get(preferenceKey) ?? '{"accountIds":[]}').accountIds).not.toContain(accountId);
+    expect(requests.map((request) => request.method)).toEqual(['DELETE', 'DELETE', 'DELETE']);
+    expect(requests.every((request) => request.body &&
+      (request.body as { registrationId: string }).registrationId === 'legacy-registration')).toBe(true);
+  });
+
   it('does not restore migrated legacy consent after an overlapping opt-out', async () => {
     const preferenceKey = 'zyndmail.production.push.preference.v1';
     records.set(preferenceKey, JSON.stringify({ version: 2, subjects: ['staff-subject'] }));
@@ -1019,7 +1059,7 @@ describe('company Expo push boundary', () => {
     expect(records.has('zyndmail.production.push.registration.v1')).toBe(false);
   });
 
-  it('retires an ambiguous legacy registration without erasing surviving staff consent', async () => {
+  it('requires reconsent for an ambiguous sole survivor while retiring a legacy registration', async () => {
     const otherId = 'other@zyndpay.io@mail.zyndpay.io';
     records.set('zyndmail.production.push.registration.v1', JSON.stringify({
       subject: 'staff-subject', registrationId: 'legacy-registration', renewedAt: Date.now(),
@@ -1054,14 +1094,12 @@ describe('company Expo push boundary', () => {
     });
     useAccountStore.setState({ accounts: [{ id: otherId, serverUrl: 'https://mail.zyndpay.io' } as never] });
     session.username = 'other@zyndpay.io';
-    expect(await registerCompanyPush(otherId, false)).toMatchObject({ status: 'UNAVAILABLE' });
+    expect(await registerCompanyPush(otherId, false)).toEqual({ status: 'OFF' });
     relayAvailable = true;
-    expect(await registerCompanyPush(otherId, false)).toEqual({ status: 'ACTIVE' });
-    expect(JSON.parse(records.get('zyndmail.production.push.registration.v1')!)).toMatchObject({
-      accountId: otherId, subject: 'other-subject', registrationId: 'other-registration',
-    });
-    expect(JSON.parse(records.get('zyndmail.production.push.preference.v1')!).accountIds)
-      .toContain(otherId);
+    expect(await registerCompanyPush(otherId, false)).toEqual({ status: 'OFF' });
+    expect(records.has('zyndmail.production.push.registration.v1')).toBe(false);
+    expect(JSON.parse(records.get('zyndmail.production.push.preference.v1') ?? '{"accountIds":[]}').accountIds)
+      .not.toContain(otherId);
   });
 
   it('revokes saved staff push when global email alerts are disabled on a personal account', async () => {

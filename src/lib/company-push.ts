@@ -542,8 +542,11 @@ async function registerCompanyPushInner(accountId: string, requestPermission: bo
       (oldSubject === previous.subject ||
         (!previous.revocationPending && soleSavedCompanyAccount.length === 1 &&
           soleSavedCompanyAccount[0].id === accountId))));
-  if (changedOwner && previous) {
-    previous = await markRegistrationPending(previous, 'required');
+  const pendingLegacySubjectChange = !!session && !!previous && previous.revocationPending &&
+    !previous.accountId && !oldSubject && previous.subject !== session.subject &&
+    soleSavedCompanyAccount.length === 1 && soleSavedCompanyAccount[0].id === accountId;
+  if (changedOwner || pendingLegacySubjectChange) {
+    if (changedOwner && previous) previous = await markRegistrationPending(previous, 'required');
     await setPushPreference(accountId, false);
   }
   if (previous?.routingVersion === 3 && previous.previews === true &&
