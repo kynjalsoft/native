@@ -531,6 +531,21 @@ async function registerCompanyPushInner(accountId: string, requestPermission: bo
   if (problem) return { status: 'UNAVAILABLE', reason: problem };
   const session = await currentCompanySession(accountId);
   let previous = await readRegistration();
+  const oldSubject = session
+    ? (await accountSubjects()).find((entry) => entry.accountId === accountId)?.subject
+    : undefined;
+  const soleSavedCompanyAccount = session
+    ? useAccountStore.getState().accounts.filter((account) => isCompanyMailServer(account.serverUrl))
+    : [];
+  const changedOwner = !!session && !!previous && previous.subject !== session.subject &&
+    (previous.accountId === accountId || (!previous.accountId &&
+      (oldSubject === previous.subject ||
+        (!previous.revocationPending && soleSavedCompanyAccount.length === 1 &&
+          soleSavedCompanyAccount[0].id === accountId))));
+  if (changedOwner && previous) {
+    previous = await markRegistrationPending(previous, 'required');
+    await setPushPreference(accountId, false);
+  }
   if (previous?.routingVersion === 3 && previous.previews === true &&
       !useSettingsStore.getState().notificationPreviewsEnabled &&
       (!session || previous.accountId !== accountId || previous.subject !== session.subject)) {
@@ -540,14 +555,6 @@ async function registerCompanyPushInner(accountId: string, requestPermission: bo
     previous = await readRegistration();
   }
   if (!session) return { status: 'UNAVAILABLE', reason: 'Sign in with ZyndPay Staff to enable mail alerts.' };
-  const oldSubject = (await accountSubjects()).find((entry) => entry.accountId === accountId)?.subject;
-  const soleSavedCompanyAccount = useAccountStore.getState().accounts.filter((account) =>
-    isCompanyMailServer(account.serverUrl));
-  const changedOwner = !!previous && previous.subject !== session.subject &&
-    (previous.accountId === accountId || (!previous.accountId &&
-      (oldSubject === previous.subject ||
-        (soleSavedCompanyAccount.length === 1 && soleSavedCompanyAccount[0].id === accountId))));
-  if (changedOwner && previous) previous = await markRegistrationPending(previous, 'required');
   await rememberAccountSubject(accountId, session.subject);
   if (changedOwner && previous) {
     if (!await deleteRegistration(previous, null)) {

@@ -232,6 +232,8 @@ describe('company Expo push boundary', () => {
 
   it('retires an unmapped legacy registration after the sole staff mailbox changes subject', async () => {
     const registrationKey = 'zyndmail.production.push.registration.v1';
+    const preferenceKey = 'zyndmail.production.push.preference.v1';
+    records.set(preferenceKey, JSON.stringify({ version: 3, accountIds: [accountId] }));
     records.set(registrationKey, JSON.stringify({
       subject: 'staff-subject', registrationId: 'legacy-registration', renewedAt: Date.now(),
       routingVersion: 3, previews: true,
@@ -253,9 +255,11 @@ describe('company Expo push boundary', () => {
     expect(JSON.parse(records.get(registrationKey)!)).toMatchObject({
       registrationId: 'legacy-registration', revocationPending: true, revocationReason: 'required',
     });
+    expect(records.has(preferenceKey)).toBe(false);
     online = true;
     expect(await registerCompanyPush(accountId, false)).toEqual({ status: 'OFF' });
     expect(records.has(registrationKey)).toBe(false);
+    expect(records.has(preferenceKey)).toBe(false);
     expect(requests).toEqual([
       { method: 'DELETE', body: { registrationId: 'legacy-registration', installationId: 'legacy-installation' } },
       { method: 'DELETE', body: { registrationId: 'legacy-registration', installationId: 'legacy-installation' } },

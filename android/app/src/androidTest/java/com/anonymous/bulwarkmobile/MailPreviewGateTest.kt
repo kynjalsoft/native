@@ -15,7 +15,7 @@ class MailPreviewGateTest {
     fun previewOptOutWhileIconLoadsPreventsRichPost() {
         val gate = MailPreviewGate()
         var enabled = false
-        gate.update(true, { enabled = it; true }, {})
+        gate.update(true, { enabled }, { enabled = it; true }, {})
         val generation = gate.snapshot()
         val fetching = CountDownLatch(1)
         val resume = CountDownLatch(1)
@@ -29,7 +29,7 @@ class MailPreviewGateTest {
         }
         worker.start()
         assertTrue(fetching.await(5, TimeUnit.SECONDS))
-        gate.update(false, { enabled = it; true }, {})
+        gate.update(false, { enabled }, { enabled = it; true }, {})
         resume.countDown()
         worker.join(5000)
         assertFalse(worker.isAlive)
@@ -58,10 +58,49 @@ class MailPreviewGateTest {
     }
 
     @Test
+    fun unchangedHydrationDoesNotDiscardAnInFlightPost() {
+        val gate = MailPreviewGate()
+        var saved = true
+        val ticket = gate.snapshot("staff")
+        gate.update(true, { saved }, { saved = it; true }, {})
+        var posted = false
+        assertTrue(gate.postIfCurrent(ticket, true, { saved }) { posted = true })
+        assertTrue(posted)
+    }
+
+    @Test
+    fun accountDismissalInvalidatesOnlyItsPendingPosts() {
+        val gate = MailPreviewGate()
+        var saved = false
+        gate.update(true, { saved }, { saved = it; true }, {})
+        val removed = gate.snapshot("removed")
+        val surviving = gate.snapshot("surviving")
+        val fetching = CountDownLatch(1)
+        val resume = CountDownLatch(1)
+        val posted = AtomicBoolean(false)
+        val worker = Thread {
+            fetching.countDown()
+            if (resume.await(5, TimeUnit.SECONDS)) {
+                gate.postIfCurrent(removed, true, { saved }) { posted.set(true) }
+            }
+        }
+        worker.start()
+        assertTrue(fetching.await(5, TimeUnit.SECONDS))
+        val dismissed = AtomicBoolean(false)
+        gate.dismiss("removed") { dismissed.set(true) }
+        resume.countDown()
+        worker.join(5000)
+        assertFalse(worker.isAlive)
+        assertTrue(dismissed.get())
+        assertFalse(posted.get())
+        assertTrue(gate.postIfCurrent(surviving, true, { saved }) {})
+    }
+
+    @Test
     fun optOutDismissesPostThatAlreadyEnteredNativeGate() {
         val gate = MailPreviewGate()
         var enabled = false
-        gate.update(true, { enabled = it; true }, {})
+        gate.update(true, { enabled }, { enabled = it; true }, {})
         val generation = gate.snapshot()
         val posting = CountDownLatch(1)
         val finishPost = CountDownLatch(1)
@@ -74,7 +113,7 @@ class MailPreviewGateTest {
         }
         worker.start()
         assertTrue(posting.await(5, TimeUnit.SECONDS))
-        val optOut = Thread { gate.update(false, { enabled = it; true }, { dismissed.set(true) }) }
+        val optOut = Thread { gate.update(false, { enabled }, { enabled = it; true }, { dismissed.set(true) }) }
         optOut.start()
         assertFalse(dismissed.get())
         finishPost.countDown()
@@ -84,5 +123,33 @@ class MailPreviewGateTest {
         assertFalse(optOut.isAlive)
         assertTrue(dismissed.get())
         assertFalse(enabled)
+    }
+
+    @Test
+    fun accountDismissalWaitsForPostingThenCancelsIt() {
+        val gate = MailPreviewGate()
+        var saved = false
+        gate.update(true, { saved }, { saved = it; true }, {})
+        val ticket = gate.snapshot("removed")
+        val posting = CountDownLatch(1)
+        val finishPost = CountDownLatch(1)
+        val dismissed = AtomicBoolean(false)
+        val worker = Thread {
+            gate.postIfCurrent(ticket, true, { saved }) {
+                posting.countDown()
+                finishPost.await(5, TimeUnit.SECONDS)
+            }
+        }
+        worker.start()
+        assertTrue(posting.await(5, TimeUnit.SECONDS))
+        val logout = Thread { gate.dismiss("removed") { dismissed.set(true) } }
+        logout.start()
+        assertFalse(dismissed.get())
+        finishPost.countDown()
+        worker.join(5000)
+        logout.join(5000)
+        assertFalse(worker.isAlive)
+        assertFalse(logout.isAlive)
+        assertTrue(dismissed.get())
     }
 }

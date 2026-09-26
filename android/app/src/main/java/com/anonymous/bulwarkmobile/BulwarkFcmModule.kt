@@ -77,7 +77,7 @@ class BulwarkFcmModule(reactContext: ReactApplicationContext)
             ?: accountId?.let { "bulwark-mail:$it" }
         val groupTitle = options.takeIf { it.hasKey("groupTitle") }?.getString("groupTitle")
             ?: accountId ?: "ZyndMail"
-        val generation = mailPreviewGate.snapshot()
+        val generation = mailPreviewGate.snapshot(accountId)
 
         // Bitmap fetch + draw off the bridge thread so the caller doesn't
         // block waiting for the favicon request.
@@ -106,9 +106,11 @@ class BulwarkFcmModule(reactContext: ReactApplicationContext)
     @ReactMethod
     fun setMailPreviewEnabled(enabled: Boolean, promise: Promise) {
         try {
-            mailPreviewGate.update(enabled, { value ->
-                reactApplicationContext.getSharedPreferences(MAIL_PREVIEW_PREFERENCES, Context.MODE_PRIVATE)
-                    .edit().putBoolean("enabled", value).commit()
+            val preferences = reactApplicationContext.getSharedPreferences(MAIL_PREVIEW_PREFERENCES, Context.MODE_PRIVATE)
+            mailPreviewGate.update(enabled, {
+                if (preferences.contains("enabled")) preferences.getBoolean("enabled", false) else null
+            }, { value ->
+                preferences.edit().putBoolean("enabled", value).commit()
             }) {
                 cancelMailNotifications(null)
             }
@@ -127,7 +129,7 @@ class BulwarkFcmModule(reactContext: ReactApplicationContext)
     @ReactMethod
     fun dismissMailNotifications(accountId: String?, promise: Promise) {
         try {
-            cancelMailNotifications(accountId)
+            mailPreviewGate.dismiss(accountId) { cancelMailNotifications(accountId) }
             promise.resolve(null)
         } catch (error: Exception) {
             promise.reject("dismiss_mail_failed", error)
