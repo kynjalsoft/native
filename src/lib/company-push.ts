@@ -223,12 +223,21 @@ async function markRegistrationPending(
 export async function registeredCompanyPushAccountId(): Promise<string | null> {
   const registration = await readRegistration();
   if (!registration) return null;
+  if (registration.accountId) {
+    const owner = useAccountStore.getState().getAccountById(registration.accountId);
+    if (!owner || !isCompanyMailServer(owner.serverUrl)) return null;
+    const tokens = await jmapClient.getStoredOAuthTokens(owner.id).catch(() => null);
+    return tokens?.companyIdentity?.subject === registration.subject ? owner.id : null;
+  }
+  let legacyOwner: string | null = null;
   for (const account of useAccountStore.getState().accounts) {
     if (!isCompanyMailServer(account.serverUrl)) continue;
     const tokens = await jmapClient.getStoredOAuthTokens(account.id).catch(() => null);
-    if (tokens?.companyIdentity?.subject === registration.subject) return account.id;
+    if (tokens?.companyIdentity?.subject !== registration.subject) continue;
+    if (legacyOwner) return null;
+    legacyOwner = account.id;
   }
-  return null;
+  return legacyOwner;
 }
 
 async function preferredSubjects(): Promise<string[]> {
@@ -642,17 +651,20 @@ export async function revokeEvictedCompanyPush(accountId: string): Promise<void>
   await withRegistrationLock(async () => {
     const registration = await readRegistration();
     if (!registration) return;
-    let provenOwner = registration.accountId === accountId;
-    if (registration.accountId !== accountId) {
-      if (registration.accountId) return;
+    if (registration.accountId && registration.accountId !== accountId) return;
+    if (!registration.accountId) {
+      const subjects = await accountSubjects();
+      const mappedSubject = (id: string) => subjects.find((entry) => entry.accountId === id)?.subject;
       const tokens = await jmapClient.getStoredOAuthTokens(accountId).catch(() => null);
-      provenOwner = tokens?.companyIdentity?.subject === registration.subject;
-      if (!provenOwner) {
+      const tokenSubject = tokens?.companyIdentity?.subject;
+      if (tokenSubject !== registration.subject && mappedSubject(accountId) !== registration.subject) {
         for (const account of useAccountStore.getState().accounts) {
           if (account.id === accountId || !isCompanyMailServer(account.serverUrl)) continue;
           const otherTokens = await jmapClient.getStoredOAuthTokens(account.id).catch(() => null);
-          if (otherTokens?.companyIdentity?.subject === registration.subject) return;
+          if (otherTokens?.companyIdentity?.subject === registration.subject ||
+              mappedSubject(account.id) === registration.subject) return;
         }
+        if (tokenSubject || mappedSubject(accountId)) return;
       }
     }
     await revokeSavedRegistration(registration);
@@ -743,7 +755,8 @@ export async function resolveCompanyPush(accountId: string, value: unknown): Pro
   if (!payload) return null;
   const session = await currentCompanySession(accountId).catch(() => null);
   const registration = await readRegistration();
-  if (!session || !registration || registration.subject !== session.subject) return null;
+  if (!session || !registration || registration.subject !== session.subject ||
+      (registration.accountId && registration.accountId !== accountId)) return null;
   try {
     const response = await relayFetch('v1/notification-references/resolve', session.bearer, {
       method: 'POST',

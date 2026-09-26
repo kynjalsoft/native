@@ -38,7 +38,7 @@ vi.mock('expo-notifications', () => ({
 vi.mock('../../api/jmap-client', () => ({ jmapClient: session }));
 vi.mock('../../api/email', () => ({ getEmails }));
 
-import { isCompanyPushPresentation, isGenericCompanyPushPresentation, parseCompanyPushDestination, companyPushModeActive, companyPushPreviewAvailable, companyPushPreviewModeActive, companyPushPreviewOptOutPending, companyPushRevocationPending, companyPushRelayOrigin, companyPushStatus, parseCompanyPushPayload, reconcileCompanyPush, reconcileDisabledCompanyPush, reconcilePendingCompanyPushRevocation, registerCompanyPush, revokeCompanyPush, revokeEvictedCompanyPush, resolveCompanyPush } from '../company-push';
+import { isCompanyPushPresentation, isGenericCompanyPushPresentation, parseCompanyPushDestination, companyPushModeActive, companyPushPreviewAvailable, companyPushPreviewModeActive, companyPushPreviewOptOutPending, companyPushRevocationPending, companyPushRelayOrigin, companyPushStatus, parseCompanyPushPayload, reconcileCompanyPush, reconcileDisabledCompanyPush, reconcilePendingCompanyPushRevocation, registerCompanyPush, registeredCompanyPushAccountId, revokeCompanyPush, revokeEvictedCompanyPush, resolveCompanyPush } from '../company-push';
 import { useSettingsStore } from '../../stores/settings-store';
 import { useAccountStore } from '../../stores/account-store';
 import { ZYNDMAIL_COMPANY } from '../zyndmail-company';
@@ -696,6 +696,43 @@ describe('company Expo push boundary', () => {
       .toEqual(['staff-subject', 'other-subject']);
   });
 
+  it('keeps a surviving staff registration when legacy ownership is mapped and tokens are unreadable', async () => {
+    const otherId = 'other@zyndpay.io@mail.zyndpay.io';
+    records.set('zyndmail.production.push.registration.v1', JSON.stringify({
+      subject: 'other-subject', registrationId: 'legacy-registration', renewedAt: Date.now(),
+    }));
+    records.set('zyndmail.production.push.account-subjects.v1', JSON.stringify([
+      { accountId, subject: 'staff-subject' },
+      { accountId: otherId, subject: 'other-subject' },
+    ]));
+    records.set('zyndmail.production.push.preference.v1', JSON.stringify({
+      version: 2, subjects: ['staff-subject', 'other-subject'],
+    }));
+    records.set('zyndmail.production.push.installation.v1', 'legacy-installation');
+    useAccountStore.setState({ accounts: [
+      { id: accountId, serverUrl: 'https://mail.zyndpay.io' } as never,
+      { id: otherId, serverUrl: 'https://mail.zyndpay.io' } as never,
+    ] });
+    session.getStoredOAuthTokens.mockRejectedValue(new Error('Unreadable tokens'));
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => ({ ok: false, status: 503 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await revokeEvictedCompanyPush(accountId);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(JSON.parse(records.get('zyndmail.production.push.registration.v1')!)).toMatchObject({
+      subject: 'other-subject', registrationId: 'legacy-registration',
+    });
+    expect(JSON.parse(records.get('zyndmail.production.push.registration.v1')!).revocationPending).toBeUndefined();
+    expect(JSON.parse(records.get('zyndmail.production.push.preference.v1')!).subjects)
+      .toEqual(['staff-subject', 'other-subject']);
+
+    await revokeEvictedCompanyPush(otherId);
+    expect(JSON.parse(records.get('zyndmail.production.push.registration.v1')!).revocationPending).toBe(true);
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body as string)).toEqual({
+      registrationId: 'legacy-registration', installationId: 'legacy-installation',
+    });
+  });
+
   it('retires a logged-out staff registration before enrolling a different staff account', async () => {
     const oldKey = Buffer.from(Array.from({ length: 32 }, (_, index) => index + 1)).toString('base64url');
     const newAccountId = 'other@zyndpay.io@mail.zyndpay.io';
@@ -985,6 +1022,39 @@ describe('company Expo push boundary', () => {
 
 
 describe('company notification destination', () => {
+  it('routes shared-subject taps only through the registration owner', async () => {
+    const otherId = 'other@zyndpay.io@mail.zyndpay.io';
+    useAccountStore.setState({ accounts: [
+      { id: accountId, serverUrl: 'https://mail.zyndpay.io' } as never,
+      { id: otherId, serverUrl: 'https://mail.zyndpay.io' } as never,
+    ] });
+    records.set('zyndmail.production.push.registration.v1', JSON.stringify({
+      subject: 'staff-subject', accountId: otherId,
+      registrationId: 'other-registration', renewedAt: Date.now(),
+    }));
+    const fetchMock = vi.fn(async () => ({ ok: true, status: 200,
+      json: async () => ({ target: 'MESSAGE', accountId: 'shared', emailId: 'message' }),
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const payload = { version: 1, notificationRef: 'a'.repeat(24) };
+
+    expect(await registeredCompanyPushAccountId()).toBe(otherId);
+    expect(await resolveCompanyPush(accountId, payload)).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+    session.username = 'other@zyndpay.io';
+    expect(await resolveCompanyPush(otherId, payload)).toEqual({
+      target: 'EMAIL', accountId: 'shared', emailId: 'message', threadId: 'authoritative-thread',
+    });
+    expect(getEmails).toHaveBeenCalledWith(['message'], 'shared');
+
+    records.set('zyndmail.production.push.registration.v1', JSON.stringify({
+      subject: 'staff-subject', registrationId: 'legacy-registration', renewedAt: Date.now(),
+    }));
+    expect(await registeredCompanyPushAccountId()).toBeNull();
+    useAccountStore.setState({ accounts: [{ id: otherId, serverUrl: 'https://mail.zyndpay.io' } as never] });
+    expect(await registeredCompanyPushAccountId()).toBe(otherId);
+  });
+
   it('accepts documented account and message targets and ignores an old thread hint', () => {
     expect(parseCompanyPushDestination({ target: 'ACCOUNT', accountId: 'shared' })).toEqual({ target: 'ACCOUNT', accountId: 'shared' });
     expect(parseCompanyPushDestination({ target: 'MESSAGE', accountId: 'shared', emailId: 'message' })).toEqual({ target: 'MESSAGE', accountId: 'shared', emailId: 'message' });
