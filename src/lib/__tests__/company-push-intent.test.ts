@@ -20,6 +20,7 @@ function dependencies(overrides: Partial<CompanyPushIntentDependencies> = {}): C
     }),
     isCompanyMailServer: (serverUrl) => serverUrl === 'https://mail.zyndpay.io',
     isCompanyPushPresentation: () => true,
+    registeredCompanyAccountId: vi.fn(async () => 'company-local-account'),
     switchAccount: vi.fn(async () => undefined),
     resolveDestination: vi.fn(async () => ({
       target: 'EMAIL' as const,
@@ -115,6 +116,25 @@ describe('company push tap routing', () => {
     await expect(openCompanyPushIntent(deps)).resolves.toBe('opened');
     expect(deps.navigateToEmail).toHaveBeenCalledOnce();
     expect(deps.clearLastNotificationResponse).toHaveBeenCalledOnce();
+  });
+
+  it('does not guess a destination when registration ownership is unknown', async () => {
+    const deps = dependencies({
+      registeredCompanyAccountId: vi.fn(async () => null),
+      readReadiness: () => ({
+        authenticated: true, locked: false, accountRegistryHydrated: true, navigationReady: true,
+        activeAccountId: 'staff-one',
+        accounts: [
+          { id: 'staff-one', serverUrl: 'https://mail.zyndpay.io' },
+          { id: 'staff-two', serverUrl: 'https://mail.zyndpay.io' },
+        ],
+      }),
+    });
+
+    await expect(openCompanyPushIntent(deps)).resolves.toBe('retry');
+    expect(deps.switchAccount).not.toHaveBeenCalled();
+    expect(deps.resolveDestination).not.toHaveBeenCalled();
+    expect(deps.navigateToEmail).not.toHaveBeenCalled();
   });
 
   it('keeps a transient relay failure retryable and does not navigate to the inbox', async () => {

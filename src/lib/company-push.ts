@@ -14,6 +14,7 @@ import { isCompanyMailServer, validateCompanyAccessToken, ZYNDMAIL_COMPANY } fro
 const INSTALLATION_KEY = 'zyndmail.production.push.installation.v1';
 const REGISTRATION_KEY = 'zyndmail.production.push.registration.v1';
 const PREFERENCE_KEY = 'zyndmail.production.push.preference.v1';
+const ACCOUNT_SUBJECTS_KEY = 'zyndmail.production.push.account-subjects.v1';
 const RENEW_AFTER_MS = 30 * 60_000;
 const RELAY_UNAVAILABLE = 'Company mail alerts are temporarily unavailable. Please try again later.';
 const OPAQUE_REFERENCE = /^[A-Za-z0-9_-]{22,256}$/;
@@ -239,6 +240,50 @@ async function setPushPreference(subject: string, enabled: boolean): Promise<voi
   }
 }
 
+interface AccountSubject { accountId: string; subject: string }
+
+async function accountSubjects(): Promise<AccountSubject[]> {
+  const raw = await SecureStore.getItemAsync(ACCOUNT_SUBJECTS_KEY, storageOptions);
+  if (!raw) return [];
+  try {
+    const value = JSON.parse(raw) as unknown;
+    return Array.isArray(value) ? value.filter((entry): entry is AccountSubject =>
+      !!entry && typeof entry.accountId === 'string' && typeof entry.subject === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+async function rememberAccountSubject(accountId: string, subject: string): Promise<void> {
+  const entries = await accountSubjects();
+  if (entries.some((entry) => entry.accountId === accountId && entry.subject === subject)) return;
+  await SecureStore.setItemAsync(ACCOUNT_SUBJECTS_KEY, JSON.stringify([
+    ...entries.filter((entry) => entry.accountId !== accountId), { accountId, subject },
+  ]), storageOptions);
+}
+
+async function forgetAccountSubject(accountId: string): Promise<void> {
+  const entries = (await accountSubjects()).filter((entry) => entry.accountId !== accountId);
+  if (entries.length) await SecureStore.setItemAsync(ACCOUNT_SUBJECTS_KEY, JSON.stringify(entries), storageOptions);
+  else await SecureStore.deleteItemAsync(ACCOUNT_SUBJECTS_KEY, storageOptions);
+}
+
+async function removeUnprovenPreferences(accountId: string, registration: Registration | null): Promise<void> {
+  const known = await accountSubjects();
+  const retained = new Set<string>();
+  for (const account of useAccountStore.getState().accounts) {
+    if (account.id === accountId || !isCompanyMailServer(account.serverUrl)) continue;
+    const mapped = known.find((entry) => entry.accountId === account.id)?.subject;
+    if (mapped) retained.add(mapped);
+    if (registration?.accountId === account.id) retained.add(registration.subject);
+    const tokens = await jmapClient.getStoredOAuthTokens(account.id).catch(() => null);
+    if (tokens?.companyIdentity?.subject) retained.add(tokens.companyIdentity.subject);
+  }
+  for (const subject of await preferredSubjects()) {
+    if (!retained.has(subject)) await setPushPreference(subject, false);
+  }
+}
+
 async function currentCompanySession(accountId: string): Promise<{ subject: string; bearer: string } | null> {
   if (generateAccountId(jmapClient.username ?? '', jmapClient.serverUrl ?? '') !== accountId ||
       !isCompanyMailServer(jmapClient.serverUrl ?? '')) return null;
@@ -411,6 +456,7 @@ async function registerCompanyPushInner(accountId: string, requestPermission: bo
   if (problem) return { status: 'UNAVAILABLE', reason: problem };
   const session = await currentCompanySession(accountId);
   if (!session) return { status: 'UNAVAILABLE', reason: 'Sign in with ZyndPay Staff to enable mail alerts.' };
+  await rememberAccountSubject(accountId, session.subject);
   if (!useSettingsStore.getState().emailNotificationsEnabled) return { status: 'OFF' };
   if (!requestPermission && !await hasPushPreference(session.subject)) return { status: 'OFF' };
   let previous = await readRegistration();
@@ -512,28 +558,32 @@ async function registerCompanyPushInner(accountId: string, requestPermission: bo
   }
 }
 
-export async function revokeCompanyPush(accountId: string, preservePreference = false): Promise<boolean> {
+export async function revokeCompanyPush(accountId: string, preservePreference = false, removeAccount = false): Promise<boolean> {
   revoking.add(accountId);
   try {
-    return await withRegistrationLock(() => revokeCompanyPushInner(accountId, preservePreference));
+    return await withRegistrationLock(() => revokeCompanyPushInner(accountId, preservePreference, removeAccount));
   } finally {
     revoking.delete(accountId);
   }
 }
 
-async function revokeCompanyPushInner(accountId: string, preservePreference: boolean): Promise<boolean> {
+async function revokeCompanyPushInner(accountId: string, preservePreference: boolean, removeAccount = false): Promise<boolean> {
   const tokens = await jmapClient.getStoredOAuthTokens(accountId).catch(() => null);
   const registration = await readRegistration();
-  const tokenSubject = tokens?.companyIdentity?.subject;
+  const subjects = await accountSubjects();
+  const knownSubject = tokens?.companyIdentity?.subject ??
+    subjects.find((entry) => entry.accountId === accountId)?.subject;
   const provenOwner = !!registration && (registration.accountId
     ? registration.accountId === accountId
-    : registration.subject === tokenSubject);
-  let ambiguousLegacyOwner = !!registration && !registration.accountId && !tokenSubject;
+    : registration.subject === knownSubject);
+  let ambiguousLegacyOwner = !!registration && !registration.accountId && !knownSubject;
   if (ambiguousLegacyOwner) {
     for (const account of useAccountStore.getState().accounts) {
       if (account.id === accountId || !isCompanyMailServer(account.serverUrl)) continue;
       const otherTokens = await jmapClient.getStoredOAuthTokens(account.id).catch(() => null);
-      if (otherTokens?.companyIdentity?.subject === registration.subject) {
+      const otherSubject = otherTokens?.companyIdentity?.subject ??
+        subjects.find((entry) => entry.accountId === account.id)?.subject;
+      if (otherSubject === registration.subject) {
         ambiguousLegacyOwner = false;
         break;
       }
@@ -543,10 +593,13 @@ async function revokeCompanyPushInner(accountId: string, preservePreference: boo
     await SecureStore.setItemAsync(REGISTRATION_KEY, JSON.stringify({ ...registration, revocationPending: true }), storageOptions);
     await dismissCompanyPushNotifications();
   }
-  const preferenceSubject = provenOwner ? registration?.subject : tokenSubject;
+  const preferenceSubject = provenOwner ? registration?.subject : knownSubject;
   if (preferenceSubject && !preservePreference && await hasPushPreference(preferenceSubject)) {
     await setPushPreference(preferenceSubject, false);
+  } else if (!preferenceSubject && removeAccount) {
+    await removeUnprovenPreferences(accountId, registration);
   }
+  if (removeAccount) await forgetAccountSubject(accountId);
   if (!registration || (!provenOwner && !ambiguousLegacyOwner)) return true;
   const isActiveOwner = generateAccountId(jmapClient.username ?? '', jmapClient.serverUrl ?? '') === accountId;
   if (!isActiveOwner && registration.revocationKey) return deleteRegistration(registration, null);
@@ -604,13 +657,14 @@ export async function reconcileDisabledCompanyPush(): Promise<boolean> {
 }
 
 export async function reconcileCompanyPush(accountId: string): Promise<CompanyPushStatus> {
-  const enabled = useSettingsStore.getState().emailNotificationsEnabled;
-  const pending = enabled && await companyPushRevocationPending(accountId);
-  if (!enabled || pending) {
-    const registration = pending ? await readRegistration() : null;
-    const keepPreference = !enabled || (!!registration && await hasPushPreference(registration.subject));
-    if (!await revokeCompanyPush(accountId, keepPreference)) return companyPushRevocationPendingStatus;
-    if (!enabled) return { status: 'OFF' };
+  if (!useSettingsStore.getState().emailNotificationsEnabled) {
+    const pending = await reconcileDisabledCompanyPush();
+    if (!useSettingsStore.getState().emailNotificationsEnabled) {
+      return pending ? companyPushRevocationPendingStatus : { status: 'OFF' };
+    }
+  }
+  if (await companyPushRevocationPending(accountId) && await reconcilePendingCompanyPushRevocation()) {
+    return companyPushRevocationPendingStatus;
   }
   return registerCompanyPush(accountId, false, true);
 }

@@ -498,7 +498,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     if (currentId) {
       const current = accountStore.getAccountById(currentId);
       if (current && isCompanyMailServer(current.serverUrl)) {
-        await revokeCompanyPush(currentId).catch(() => undefined);
+        await revokeCompanyPush(currentId, false, true).catch(() => undefined);
       } else {
         await teardownPushNotificationsForAccount(currentId).catch(() => undefined);
       }
@@ -551,7 +551,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     const ids = accountStore.accounts.map((a) => a.id);
     for (const account of accountStore.accounts) {
       if (isCompanyMailServer(account.serverUrl)) {
-        await revokeCompanyPush(account.id).catch(() => undefined);
+        await revokeCompanyPush(account.id, false, true).catch(() => undefined);
       }
     }
     await teardownPushNotifications().catch(() => undefined);
@@ -676,7 +676,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     const account = accountStore.getAccountById(accountId);
     if (!account) return;
     if (isCompanyMailServer(account.serverUrl)) {
-      await revokeCompanyPush(accountId).catch(() => undefined);
+      await revokeCompanyPush(accountId, false, true).catch(() => undefined);
     } else {
       await teardownPushNotificationsForAccount(accountId).catch(() => undefined);
     }

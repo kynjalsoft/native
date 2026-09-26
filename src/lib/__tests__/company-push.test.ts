@@ -420,6 +420,45 @@ describe('company Expo push boundary', () => {
     expect(await companyPushStatus(accountId)).toEqual({ status: 'OFF' });
   });
 
+  it('cancels queued staff global-off revocation after a rapid off-on toggle', async () => {
+    records.set('zyndmail.production.push.registration.v1', JSON.stringify({
+      subject: 'staff-subject', accountId, registrationId: 'staff-registration',
+      renewedAt: Date.now(), routingVersion: 3, previews: true,
+    }));
+    records.set('zyndmail.production.push.preference.v1', 'staff-subject');
+    const otherId = 'other@zyndpay.io@mail.zyndpay.io';
+    let release!: () => void;
+    let started!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const entered = new Promise<void>((resolve) => { started = resolve; });
+    session.username = 'other@zyndpay.io';
+    session.ensureFreshToken.mockImplementationOnce(async () => { started(); await held; });
+    const blocker = registerCompanyPush(otherId, false);
+    await entered;
+    session.username = 'staff@zyndpay.io';
+    const methods: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
+      if (url.includes('/v1/push-health?')) return { ok: true, status: 200,
+        json: async () => ({ status: 'ok', previewMode: 'sender-subject-snippet-v1' }) };
+      methods.push(init.method ?? 'GET');
+      return { ok: true, status: 200, json: async () => ({ registrationId: 'staff-registration' }) };
+    }));
+    useSettingsStore.setState({ emailNotificationsEnabled: false });
+    const off = reconcileCompanyPush(accountId);
+    useSettingsStore.setState({ emailNotificationsEnabled: true });
+    const on = reconcileCompanyPush(accountId);
+    release();
+
+    await blocker;
+    expect(await off).toEqual({ status: 'ACTIVE' });
+    expect(await on).toEqual({ status: 'ACTIVE' });
+    expect(methods).not.toContain('DELETE');
+    expect(JSON.parse(records.get('zyndmail.production.push.registration.v1')!)).toMatchObject({
+      accountId, registrationId: 'staff-registration',
+    });
+    expect(records.get('zyndmail.production.push.preference.v1')).toContain('staff-subject');
+  });
+
   it('retries pending revocation without staff authorization after switching to a personal account', async () => {
     const revocationKey = Buffer.from(Array.from({ length: 32 }, (_, index) => index + 1)).toString('base64url');
     let relayReady = false;
@@ -517,6 +556,55 @@ describe('company Expo push boundary', () => {
     expect(await reconcilePendingCompanyPushRevocation()).toBe(false);
     expect(records.has('zyndmail.production.push.registration.v1')).toBe(false);
     expect(JSON.parse(records.get('zyndmail.production.push.preference.v1')!).subjects).toEqual(['other-subject']);
+  });
+
+  it('clears only the removed staff consent when another staff account owns the registration', async () => {
+    const otherId = 'other@zyndpay.io@mail.zyndpay.io';
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => ({
+      ok: true, status: 200,
+      json: async () => url.includes('/v1/push-health?')
+        ? { status: 'ok', previewMode: 'sender-subject-snippet-v1' }
+        : { registrationId: 'first-registration' },
+    })));
+    expect(await registerCompanyPush(accountId, true)).toEqual({ status: 'ACTIVE' });
+    records.set('zyndmail.production.push.registration.v1', JSON.stringify({
+      subject: 'other-subject', accountId: otherId, registrationId: 'other-registration', renewedAt: Date.now(),
+    }));
+    records.set('zyndmail.production.push.preference.v1', JSON.stringify({
+      version: 2, subjects: ['staff-subject', 'other-subject'],
+    }));
+    session.getStoredOAuthTokens.mockRejectedValue(new Error('Unreadable tokens'));
+    const fetchMock = vi.fn(async () => ({ ok: true, status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    expect(await revokeCompanyPush(accountId, false, true)).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(JSON.parse(records.get('zyndmail.production.push.registration.v1')!)).toMatchObject({
+      accountId: otherId, registrationId: 'other-registration',
+    });
+    expect(JSON.parse(records.get('zyndmail.production.push.preference.v1')!).subjects).toEqual(['other-subject']);
+  });
+
+  it('drops unowned legacy consent when removed staff identity cannot be recovered', async () => {
+    const otherId = 'other@zyndpay.io@mail.zyndpay.io';
+    records.set('zyndmail.production.push.registration.v1', JSON.stringify({
+      subject: 'other-subject', accountId: otherId, registrationId: 'other-registration', renewedAt: Date.now(),
+    }));
+    records.set('zyndmail.production.push.preference.v1', JSON.stringify({
+      version: 2, subjects: ['staff-subject', 'other-subject', 'unmapped-subject'],
+    }));
+    useAccountStore.setState({ accounts: [
+      { id: accountId, serverUrl: 'https://mail.zyndpay.io' } as never,
+      { id: otherId, serverUrl: 'https://mail.zyndpay.io' } as never,
+    ] });
+    session.getStoredOAuthTokens.mockRejectedValue(new Error('Unreadable tokens'));
+    const fetchMock = vi.fn(async () => ({ ok: true, status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    expect(await revokeCompanyPush(accountId, false, true)).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(JSON.parse(records.get('zyndmail.production.push.preference.v1')!).subjects).toEqual(['other-subject']);
+    expect(JSON.parse(records.get('zyndmail.production.push.registration.v1')!).accountId).toBe(otherId);
   });
 
   it('keeps an evicted registration pending offline and retries without credentials', async () => {
